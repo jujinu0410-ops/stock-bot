@@ -119,9 +119,15 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
     t_stop = res.get("kiwoom_stop_tick_price", 0)
     t_target = res.get("kiwoom_target_tick_price", 0)
 
-    # 매수 승인 판정 및 상태
+    # 매수 승인 판정 및 상태 (우량 종목 과열 미발생 시 트레일링/눌림목 매수 승인)
     act_st = res.get("reason", "보유")
-    buy_approval = "ON (제한적 매수 승인)" if "제한적 분할추매 고려" in act_st else "OFF (매수 금지/관망)"
+    if final_sc >= 70.0 and f_sc >= 65.0 and t_sc >= 60.0 and daily_chg < 5.0:
+        buy_approval = "🔵 ON (트레일링/눌림목 분할매수 승인)"
+        act_st = f"우수한 펀더멘탈({f_sc:.1f}점)과 기술추세({t_sc:.1f}점)를 갖춘 우량 종목으로, 당일 과열 폭등 없는 안정 구간({daily_chg:+.2f}%)입니다. 1.5 ATR 트레일링 매수가({t_buy:,}원) 라인 또는 눌림목 분할 매수 진입이 매우 합리적입니다."
+    elif "제한적 분할추매 고려" in act_st:
+        buy_approval = "🔵 ON (제한적 매수 승인)"
+    else:
+        buy_approval = "🔴 OFF (매수 금지/관망)"
     
     time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S KST")
 
