@@ -1,0 +1,392 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <style>
+                body { margin:0; padding:0; background-color:#F3F4F6; font-family:'Apple SD Gothic Neo', 'Malgun Gothic', Arial, sans-serif; -webkit-text-size-adjust:100%; }
+                .container { max-width:600px; width:100%; margin:10px auto; background:#FFFFFF; border-radius:12px; overflow:hidden; box-shadow:0 4px 16px rgba(0,0,0,0.06); }
+                .table-responsive { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+                table { width:100%; border-collapse:collapse; font-size:11px; }
+                th, td { padding:6px 4px; text-align:left; }
+            </style>
+        </head>
+        <body style="margin:0; padding:4px; background-color:#F3F4F6;">
+            <div class="container">
+                <!-- Header -->
+                <div style="background:linear-gradient(135deg, #1E1E2E 0%, #2A2D3E 100%); color:#FFFFFF; padding:18px 14px; text-align:left;">
+                    <div style="font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#A78BFA; font-weight:bold; margin-bottom:4px;">Kiwoom REST & DART Integrated Analysis</div>
+                    <h1 style="margin:0; font-size:17px; font-weight:800; color:#FFFFFF;">📊 내 종목 정밀 평가 및 수치 종합점수 리포트</h1>
+                    <div style="margin-top:4px; font-size:11px; color:#9CA3AF;">기준일시: 2026-08-11 14:07</div>
+                </div>
+
+                <!-- Content Body -->
+                <div style="padding:10px;">
+                    <!-- Overview Summary Box -->
+                    <div style="display:flex; justify-content:space-around; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px; padding:16px; margin-bottom:24px; text-align:center;">
+                        <div>
+                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">내 보유 종목</div>
+                            <div style="font-size:20px; font-weight:bold; color:#0F172A;">0개</div>
+                        </div>
+                        <div style="border-left:1px solid #CBD5E1; padding-left:24px;">
+                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">스캔 대상</div>
+                            <div style="font-size:20px; font-weight:bold; color:#475569;">17개</div>
+                        </div>
+                        <div style="border-left:1px solid #CBD5E1; padding-left:24px;">
+                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">포착 매매신호</div>
+                            <div style="font-size:20px; font-weight:bold; color:#2563EB;">7개</div>
+                        </div>
+                    </div>
+
+                    <!-- 1. Held Portfolio Section -->
+                    
+
+                    <!-- 2. Signal Cards Section -->
+                    <h2 style="font-size:16px; color:#1E293B; border-left:4px solid #4F46E5; padding-left:10px; margin-bottom:16px;">🎯 신규 매매 포착 종목 리스트</h2>
+                    
+                <div style="background:#ffffff; border-radius:12px; padding:20px; margin-bottom:20px; border-left:6px solid #10B981; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; font-size:20px; color:#111827;">하이록코리아 <span style="font-size:14px; color:#6B7280;">(013030)</span></h3>
+                        <span style="background:#10B981; color:#ffffff; font-weight:bold; padding:6px 14px; border-radius:20px; font-size:14px;">1차 신규매수 (400만 원)</span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse; margin-bottom:12px; font-size:14px; color:#374151;">
+                        <tr style="background:#F9FAFB;">
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">종가</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#059669;">F점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#2563EB;">T점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#7C3AED;">종합점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">손절가(손절폭)</th>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px 12px; font-weight:bold; color:#111827;">34,450원</td>
+                            <td style="padding:10px 12px; color:#059669; font-weight:bold;">91.0점</td>
+                            <td style="padding:10px 12px; color:#2563EB; font-weight:bold;">75.0점</td>
+                            <td style="padding:10px 12px; font-weight:bold; color:#7C3AED; font-size:16px;">81.4점</td>
+                            <td style="padding:10px 12px; color:#DC2626; font-weight:bold;">32,658원 (5.2%)</td>
+                        </tr>
+                    </table>
+                    <div style="background:#F3F4F6; border-radius:8px; padding:12px; font-size:13px; color:#4B5563;">
+                        <strong>💡 분석 근거:</strong> 일목 1등급(20점: 구름대 상단 돌파 & 전환>기준) / VWAP 1등급(15점: 단기/중기 VWAP 우상향 정배열) / 볼린저 2등급(12점: 중심선~상단밴드 위치) / DMI 4등급(6점: DI- 우위 하락세) / OBV 2등급(8점: OBV 20일 이평 상회) / 채킨 5등급(2점: 매도 유출 심화) / 수급 2등급(12점: 외국인/기관 3일 누적 동반 순매수 양수) (완성도: 100%)
+                    </div>
+                </div>
+                
+                <div style="background:#ffffff; border-radius:12px; padding:20px; margin-bottom:20px; border-left:6px solid #10B981; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; font-size:20px; color:#111827;">두산에너빌리티 <span style="font-size:14px; color:#6B7280;">(034020)</span></h3>
+                        <span style="background:#10B981; color:#ffffff; font-weight:bold; padding:6px 14px; border-radius:20px; font-size:14px;">1차 신규매수 (400만 원)</span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse; margin-bottom:12px; font-size:14px; color:#374151;">
+                        <tr style="background:#F9FAFB;">
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">종가</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#059669;">F점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#2563EB;">T점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#7C3AED;">종합점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">손절가(손절폭)</th>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px 12px; font-weight:bold; color:#111827;">78,350원</td>
+                            <td style="padding:10px 12px; color:#059669; font-weight:bold;">73.0점</td>
+                            <td style="padding:10px 12px; color:#2563EB; font-weight:bold;">77.0점</td>
+                            <td style="padding:10px 12px; font-weight:bold; color:#7C3AED; font-size:16px;">75.4점</td>
+                            <td style="padding:10px 12px; color:#DC2626; font-weight:bold;">74,275원 (5.2%)</td>
+                        </tr>
+                    </table>
+                    <div style="background:#F3F4F6; border-radius:8px; padding:12px; font-size:13px; color:#4B5563;">
+                        <strong>💡 분석 근거:</strong> 일목 1등급(20점: 구름대 상단 돌파 & 전환>기준) / VWAP 1등급(15점: 단기/중기 VWAP 우상향 정배열) / 볼린저 2등급(12점: 중심선~상단밴드 위치) / DMI 4등급(6점: DI- 우위 하락세) / OBV 2등급(8점: OBV 20일 이평 상회) / 채킨 1등급(10점: 매수 유입 급증) / 수급 4등급(6점: 수급 약세 지속) (완성도: 100%)
+                    </div>
+                </div>
+                
+                <div style="background:#ffffff; border-radius:12px; padding:20px; margin-bottom:20px; border-left:6px solid #10B981; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; font-size:20px; color:#111827;">코데즈컴바인 <span style="font-size:14px; color:#6B7280;">(047770)</span></h3>
+                        <span style="background:#10B981; color:#ffffff; font-weight:bold; padding:6px 14px; border-radius:20px; font-size:14px;">1차 신규매수 (400만 원)</span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse; margin-bottom:12px; font-size:14px; color:#374151;">
+                        <tr style="background:#F9FAFB;">
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">종가</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#059669;">F점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#2563EB;">T점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#7C3AED;">종합점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">손절가(손절폭)</th>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px 12px; font-weight:bold; color:#111827;">2,695원</td>
+                            <td style="padding:10px 12px; color:#059669; font-weight:bold;">91.0점</td>
+                            <td style="padding:10px 12px; color:#2563EB; font-weight:bold;">68.0점</td>
+                            <td style="padding:10px 12px; font-weight:bold; color:#7C3AED; font-size:16px;">77.2점</td>
+                            <td style="padding:10px 12px; color:#DC2626; font-weight:bold;">2,554원 (5.2%)</td>
+                        </tr>
+                    </table>
+                    <div style="background:#F3F4F6; border-radius:8px; padding:12px; font-size:13px; color:#4B5563;">
+                        <strong>💡 분석 근거:</strong> 일목 1등급(20점: 구름대 상단 돌파 & 전환>기준) / VWAP 2등급(12점: 단기 VWAP 상회) / 볼린저 2등급(12점: 중심선~상단밴드 위치) / DMI 4등급(6점: DI- 우위 하락세) / OBV 1등급(10점: OBV 20일 이평 상회 & 우상향) / 채킨 5등급(2점: 매도 유출 심화) / 수급 4등급(6점: 수급 약세 지속) (완성도: 100%)
+                    </div>
+                </div>
+                
+                <div style="background:#ffffff; border-radius:12px; padding:20px; margin-bottom:20px; border-left:6px solid #10B981; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; font-size:20px; color:#111827;">테이팩스 <span style="font-size:14px; color:#6B7280;">(055490)</span></h3>
+                        <span style="background:#10B981; color:#ffffff; font-weight:bold; padding:6px 14px; border-radius:20px; font-size:14px;">1차 신규매수 (400만 원)</span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse; margin-bottom:12px; font-size:14px; color:#374151;">
+                        <tr style="background:#F9FAFB;">
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">종가</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#059669;">F점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#2563EB;">T점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#7C3AED;">종합점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">손절가(손절폭)</th>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px 12px; font-weight:bold; color:#111827;">14,030원</td>
+                            <td style="padding:10px 12px; color:#059669; font-weight:bold;">91.0점</td>
+                            <td style="padding:10px 12px; color:#2563EB; font-weight:bold;">63.0점</td>
+                            <td style="padding:10px 12px; font-weight:bold; color:#7C3AED; font-size:16px;">74.2점</td>
+                            <td style="padding:10px 12px; color:#DC2626; font-weight:bold;">13,300원 (5.2%)</td>
+                        </tr>
+                    </table>
+                    <div style="background:#F3F4F6; border-radius:8px; padding:12px; font-size:13px; color:#4B5563;">
+                        <strong>💡 분석 근거:</strong> 일목 2등급(16점: 구름대 상단 상회 또는 전환>기준) / VWAP 3등급(9점: VWAP 평형 유지) / 볼린저 2등급(12점: 중심선~상단밴드 위치) / DMI 4등급(6점: DI- 우위 하락세) / OBV 4등급(4점: OBV 이평 하회) / 채킨 1등급(10점: 매수 유입 급증) / 수급 4등급(6점: 수급 약세 지속) (완성도: 100%)
+                    </div>
+                </div>
+                
+                <div style="background:#ffffff; border-radius:12px; padding:20px; margin-bottom:20px; border-left:6px solid #10B981; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; font-size:20px; color:#111827;">유바이오로직스 <span style="font-size:14px; color:#6B7280;">(206650)</span></h3>
+                        <span style="background:#10B981; color:#ffffff; font-weight:bold; padding:6px 14px; border-radius:20px; font-size:14px;">1차 신규매수 (400만 원)</span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse; margin-bottom:12px; font-size:14px; color:#374151;">
+                        <tr style="background:#F9FAFB;">
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">종가</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#059669;">F점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#2563EB;">T점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#7C3AED;">종합점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">손절가(손절폭)</th>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px 12px; font-weight:bold; color:#111827;">9,110원</td>
+                            <td style="padding:10px 12px; color:#059669; font-weight:bold;">100.0점</td>
+                            <td style="padding:10px 12px; color:#2563EB; font-weight:bold;">74.0점</td>
+                            <td style="padding:10px 12px; font-weight:bold; color:#7C3AED; font-size:16px;">84.4점</td>
+                            <td style="padding:10px 12px; color:#DC2626; font-weight:bold;">8,636원 (5.2%)</td>
+                        </tr>
+                    </table>
+                    <div style="background:#F3F4F6; border-radius:8px; padding:12px; font-size:13px; color:#4B5563;">
+                        <strong>💡 분석 근거:</strong> 일목 2등급(16점: 구름대 상단 상회 또는 전환>기준) / VWAP 1등급(15점: 단기/중기 VWAP 우상향 정배열) / 볼린저 1등급(15점: 상단밴드 돌파/강한 상승파동) / DMI 4등급(6점: DI- 우위 하락세) / OBV 2등급(8점: OBV 20일 이평 상회) / 채킨 5등급(2점: 매도 유출 심화) / 수급 2등급(12점: 외국인/기관 3일 누적 동반 순매수 양수) (완성도: 100%)
+                    </div>
+                </div>
+                
+                <div style="background:#ffffff; border-radius:12px; padding:20px; margin-bottom:20px; border-left:6px solid #10B981; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; font-size:20px; color:#111827;">DSC인베스트먼트 <span style="font-size:14px; color:#6B7280;">(241520)</span></h3>
+                        <span style="background:#10B981; color:#ffffff; font-weight:bold; padding:6px 14px; border-radius:20px; font-size:14px;">1차 신규매수 (400만 원)</span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse; margin-bottom:12px; font-size:14px; color:#374151;">
+                        <tr style="background:#F9FAFB;">
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">종가</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#059669;">F점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#2563EB;">T점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#7C3AED;">종합점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">손절가(손절폭)</th>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px 12px; font-weight:bold; color:#111827;">8,400원</td>
+                            <td style="padding:10px 12px; color:#059669; font-weight:bold;">84.0점</td>
+                            <td style="padding:10px 12px; color:#2563EB; font-weight:bold;">69.0점</td>
+                            <td style="padding:10px 12px; font-weight:bold; color:#7C3AED; font-size:16px;">75.0점</td>
+                            <td style="padding:10px 12px; color:#DC2626; font-weight:bold;">7,963원 (5.2%)</td>
+                        </tr>
+                    </table>
+                    <div style="background:#F3F4F6; border-radius:8px; padding:12px; font-size:13px; color:#4B5563;">
+                        <strong>💡 분석 근거:</strong> 일목 1등급(20점: 구름대 상단 돌파 & 전환>기준) / VWAP 1등급(15점: 단기/중기 VWAP 우상향 정배열) / 볼린저 2등급(12점: 중심선~상단밴드 위치) / DMI 4등급(6점: DI- 우위 하락세) / OBV 2등급(8점: OBV 20일 이평 상회) / 채킨 5등급(2점: 매도 유출 심화) / 수급 4등급(6점: 수급 약세 지속) (완성도: 100%)
+                    </div>
+                </div>
+                
+                <div style="background:#ffffff; border-radius:12px; padding:20px; margin-bottom:20px; border-left:6px solid #10B981; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; font-size:20px; color:#111827;">HD현대일렉트릭 <span style="font-size:14px; color:#6B7280;">(267260)</span></h3>
+                        <span style="background:#10B981; color:#ffffff; font-weight:bold; padding:6px 14px; border-radius:20px; font-size:14px;">1차 신규매수 (400만 원)</span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse; margin-bottom:12px; font-size:14px; color:#374151;">
+                        <tr style="background:#F9FAFB;">
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">종가</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#059669;">F점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#2563EB;">T점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB; color:#7C3AED;">종합점수 (100만점)</th>
+                            <th style="padding:8px 12px; text-align:left; border-bottom:1px solid #E5E7EB;">손절가(손절폭)</th>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px 12px; font-weight:bold; color:#111827;">738,000원</td>
+                            <td style="padding:10px 12px; color:#059669; font-weight:bold;">92.0점</td>
+                            <td style="padding:10px 12px; color:#2563EB; font-weight:bold;">68.0점</td>
+                            <td style="padding:10px 12px; font-weight:bold; color:#7C3AED; font-size:16px;">77.6점</td>
+                            <td style="padding:10px 12px; color:#DC2626; font-weight:bold;">699,624원 (5.2%)</td>
+                        </tr>
+                    </table>
+                    <div style="background:#F3F4F6; border-radius:8px; padding:12px; font-size:13px; color:#4B5563;">
+                        <strong>💡 분석 근거:</strong> 일목 2등급(16점: 구름대 상단 상회 또는 전환>기준) / VWAP 1등급(15점: 단기/중기 VWAP 우상향 정배열) / 볼린저 2등급(12점: 중심선~상단밴드 위치) / DMI 3등급(9점: 팽팽한 혼조세) / OBV 5등급(2점: OBV 이평 하회 & 연속 유출) / 채킨 5등급(2점: 매도 유출 심화) / 수급 2등급(12점: 외국인/기관 3일 누적 동반 순매수 양수) (완성도: 100%)
+                    </div>
+                </div>
+                
+
+                    <!-- 3. All Stocks Table Section -->
+                    <h2 style="font-size:16px; color:#1E293B; border-left:4px solid #64748B; padding-left:10px; margin-top:32px; margin-bottom:16px;">🔍 전체 분석 대상 종목 요약</h2>
+                    <table style="width:100%; border-collapse:collapse; border-radius:8px; overflow:hidden; border:1px solid #E2E8F0;">
+                        <thead>
+                            <tr style="background:#F1F5F9; font-size:13px; color:#475569; text-align:left;">
+                                <th style="padding:10px 12px;">종목</th>
+                                <th style="padding:10px 12px;">신호</th>
+                                <th style="padding:10px 12px;">F점수</th>
+                                <th style="padding:10px 12px;">T점수</th>
+                                <th style="padding:10px 12px;">종합점수</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">한신기계 (011700)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">39.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">63.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">53.4점</td>
+            </tr>
+            
+            <tr style="background:#ECFDF5; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">하이록코리아 (013030)</td>
+                <td style="padding:8px 12px;">1차 신규매수</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">91.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">75.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">81.4점</td>
+            </tr>
+            
+            <tr style="background:#ECFDF5; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">두산에너빌리티 (034020)</td>
+                <td style="padding:8px 12px;">1차 신규매수</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">73.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">77.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">75.4점</td>
+            </tr>
+            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">포스코인터내셔널 (047050)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">78.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">64.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">69.6점</td>
+            </tr>
+            
+            <tr style="background:#ECFDF5; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">코데즈컴바인 (047770)</td>
+                <td style="padding:8px 12px;">1차 신규매수</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">91.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">68.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">77.2점</td>
+            </tr>
+            
+            <tr style="background:#ECFDF5; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">테이팩스 (055490)</td>
+                <td style="padding:8px 12px;">1차 신규매수</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">91.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">63.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">74.2점</td>
+            </tr>
+            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">알에스오토메이션 (140670)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">47.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">71.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">61.4점</td>
+            </tr>
+            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">PLUS 고배당주 (088500)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">50.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">30.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">30.0점</td>
+            </tr>
+            
+            <tr style="background:#ECFDF5; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">유바이오로직스 (206650)</td>
+                <td style="padding:8px 12px;">1차 신규매수</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">100.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">74.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">84.4점</td>
+            </tr>
+            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">자이글 (219550)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">31.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">55.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">45.4점</td>
+            </tr>
+            
+            <tr style="background:#ECFDF5; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">DSC인베스트먼트 (241520)</td>
+                <td style="padding:8px 12px;">1차 신규매수</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">84.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">69.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">75.0점</td>
+            </tr>
+            
+            <tr style="background:#ECFDF5; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">HD현대일렉트릭 (267260)</td>
+                <td style="padding:8px 12px;">1차 신규매수</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">92.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">68.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">77.6점</td>
+            </tr>
+            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">뉴로메카 (348340)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">23.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">64.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">47.6점</td>
+            </tr>
+            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">TIGER 차이나전기차SOLACTIVE (371460)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">50.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">53.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">53.0점</td>
+            </tr>
+            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">RISE 미국AI밸류체인TOP3Plus (484730)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">50.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">45.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">45.0점</td>
+            </tr>
+            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">대동 (000490)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">56.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">43.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">48.2점</td>
+            </tr>
+            
+            <tr style="background:#FFFFFF; border-bottom:1px solid #F3F4F6; font-size:13px;">
+                <td style="padding:8px 12px; font-weight:bold;">한신공영 (004960)</td>
+                <td style="padding:8px 12px;">관망</td>
+                <td style="padding:8px 12px; color:#059669; font-weight:bold;">71.0점</td>
+                <td style="padding:8px 12px; color:#2563EB; font-weight:bold;">68.0점</td>
+                <td style="padding:8px 12px; font-weight:bold; color:#7C3AED;">69.2점</td>
+            </tr>
+            
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Footer -->
+                <div style="background:#F8FAFC; padding:16px; text-align:center; font-size:12px; color:#94A3B8; border-top:1px solid #E2E8F0;">
+                    키움 REST API & DART API 연동 스윙 투자 자동 분석 및 보유 포트폴리오 관리 엔진
+                </div>
+            </div>
+        </body>
+        </html>
+        

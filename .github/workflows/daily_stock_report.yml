@@ -1,0 +1,44 @@
+name: Daily Stock Analysis Report (15:35 KST)
+
+on:
+  schedule:
+    # UTC 시간 기준 06:35 = 한국시간(KST) 15:35 (월~금 장마감 직후)
+    - cron: '35 6 * * 1-5'
+  workflow_dispatch: # GitHub 웹 UI에서 수동 즉시 실행 가능 버튼 추가
+
+jobs:
+  run-daily-analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Daily Stock Analysis & Email Dispatch
+        env:
+          OPENDART_API_KEY: ${{ secrets.OPENDART_API_KEY }}
+          GMAIL_SENDER_EMAIL: ${{ secrets.GMAIL_SENDER_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          TZ: Asia/Seoul
+        run: |
+          python main.py
+
+      - name: Upload Excel & HTML Logs Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-daily-reports-${{ github.run_number }}
+          path: |
+            logs/*.xlsx
+            logs/*.html
