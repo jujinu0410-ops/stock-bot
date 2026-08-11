@@ -17,8 +17,14 @@ def create_analysis_excel_report(date_str: str,
     kst_now = datetime.now()
     time_kst_str = kst_now.strftime("%Y-%m-%d %H:%M:%S KST")
     file_date = kst_now.strftime("%Y%m%d_%H%M%S")
-    excel_filename = f"주식정밀분석_종합데이터_{file_date}.xlsx"
+    excel_filename = f"stock_analysis_{file_date}.xlsx"
     excel_path = LOG_DIR / excel_filename
+
+    csv_held_filename = f"portfolio_monitoring_{file_date}.csv"
+    csv_held_path = LOG_DIR / csv_held_filename
+
+    csv_summary_filename = f"stock_summary_{file_date}.csv"
+    csv_summary_path = LOG_DIR / csv_summary_filename
 
     # 보유종목 코드별 계좌비중 매핑 딕셔너리 생성 (시트 간 불일치 원천 해소)
     held_weight_map = {h.get("stock_code"): h.get("eval_weight_pct", 0.0) for h in held_portfolio}
@@ -240,7 +246,11 @@ def create_analysis_excel_report(date_str: str,
 
     header_banner = f"데이터 수집 시각: {time_kst_str} | KRX 실시간 시세 및 OpenDART 공시 원천 연동"
 
-    # 엑셀 파일 저장 및 openpyxl 열 너비/셀 서식/배너 정밀 조정
+    # 1. CSV 보조 파일 저장 (Gmail API 백업용)
+    df_held.to_csv(csv_held_path, index=False, encoding="utf-8-sig")
+    df_summary.to_csv(csv_summary_path, index=False, encoding="utf-8-sig")
+
+    # 2. 엑셀 파일 저장 및 openpyxl 열 너비/셀 서식/배너 정밀 조정
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         df_held.to_excel(writer, sheet_name="보유종목_정밀평가", startrow=1, index=False)
         df_dart.to_excel(writer, sheet_name="DART_실제재무분석", startrow=1, index=False)
@@ -265,5 +275,5 @@ def create_analysis_excel_report(date_str: str,
                 col_letter = col[0].column_letter
                 ws.column_dimensions[col_letter].width = min(max(max_len + 4, 14), 45)
 
-    logger.info(f"[ExcelExporter] 엑셀 데이터 파일 생성 완료: {excel_path}")
+    logger.info(f"[ExcelExporter] 엑셀/CSV 데이터 파일 생성 완료: {excel_filename}, {csv_held_filename}, {csv_summary_filename}")
     return excel_path

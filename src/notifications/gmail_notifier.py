@@ -49,11 +49,14 @@ class GmailNotifier:
                 from email.mime.application import MIMEApplication
                 for att_path in attachments:
                     if att_path and Path(att_path).exists():
-                        with open(att_path, "rb") as f:
-                            part = MIMEApplication(f.read(), Name=Path(att_path).name)
-                            part['Content-Disposition'] = f'attachment; filename="{Path(att_path).name}"'
+                        p_path = Path(att_path)
+                        with open(p_path, "rb") as f:
+                            ext = p_path.suffix.lower()
+                            subtype = "vnd.openxmlformats-officedocument.spreadsheetml.sheet" if ext == ".xlsx" else "octet-stream"
+                            part = MIMEApplication(f.read(), _subtype=subtype)
+                            part.add_header('Content-Disposition', 'attachment', filename=p_path.name)
                             msg.attach(part)
-                            logger.info(f"[Gmail] 첨부 파일 추가 완료: {Path(att_path).name}")
+                            logger.info(f"[Gmail] 첨부 파일 추가 완료 (MIME: application/{subtype}): {p_path.name}")
 
             logger.info(f"[Gmail] Gmail SMTP 서버 접속 시도 중... ({self.gmail_user} -> {self.recipient_email})")
             
@@ -201,14 +204,22 @@ class GmailNotifier:
                     s_color = "#10B981" if s_chg >= 0 else "#EF4444"
                     s_sign = "+" if s_chg >= 0 else ""
 
-                    if "6대안전" in s_act or "추매" in s_act:
+                    if "미충족" in s_act or "추매금지" in s_act or "관망" in s_act:
+                        if s_tstop > 0:
+                            advice_detail = f"당일 {s_sign}{s_chg:.2f}% 조정 발생했으나 6대 안전조건 미충족으로 추매가 차단됩니다. (추매금지·관망 유지 / 2.0 ATR 손절가 {s_tstop:,}원 상시 감시)"
+                        else:
+                            advice_detail = f"⚠️ <strong>[데이터 오류/가격 미산출]</strong> 가격 지표가 0원이거나 누락되어 매매 조언을 중지하고 관망을 유지합니다."
+                    elif ("6대안전" in s_act or "추매" in s_act) and s_tbuy > 0:
                         advice_detail = f"당일 {s_sign}{s_chg:.2f}% 하락 조정. 6대 안전조건 충족 시 **ATR 1.5배격차 트레일링 매수 진입가 {s_tbuy:,}원 이하** 제한적 분할추매 고려 (단일종목 비중 20% 이내 엄수)."
-                    elif "매도" in s_act or "반등" in s_act:
+                    elif ("매도" in s_act or "반등" in s_act) and s_ttarget > 0:
                         advice_detail = f"T점수({s_t:.1f}점) 기술 반등 진행 중. **반등 목표가 {s_ttarget:,}원 부근** 기계적 분할 매도로 현금 확보 및 손실 축소 집중."
-                    elif "손절" in s_act:
+                    elif "손절" in s_act and s_tstop > 0:
                         advice_detail = f"기술 추세 붕괴 위험. **ATR 2.0배 손절 기준가 {s_tstop:,}원 이탈 시** 손절선 하향 재설정 없이 손절/비중축소 실행."
                     else:
-                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동 발생. 손절가({s_tstop:,}원) 및 목표가({s_ttarget:,}원) 범위 내에서 안심 관망하세요."
+                        if s_tstop > 0 and s_ttarget > 0:
+                            advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동 발생. 손절가({s_tstop:,}원) 및 목표가({s_ttarget:,}원) 범위 내에서 안심 관망하세요."
+                        else:
+                            advice_detail = f"⚠️ <strong>[데이터 오류/가격 미산출]</strong> 가격 지표가 0원이거나 누락되어 매매 조언을 중지하고 관망을 유지합니다."
 
                     swing_cards_html += f"""
                     <div style="background:#FFFFFF; border-left:5px solid {s_color}; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
@@ -270,6 +281,22 @@ class GmailNotifier:
                         {held_rows_html}
                     </tbody>
                 </table>
+                </div>
+            </div>
+            """
+        else:
+            held_section_html = """
+            <div style="background:#FEF2F2; border:2px solid #EF4444; border-radius:12px; padding:18px; margin-bottom:24px; box-shadow:0 4px 12px rgba(239,68,68,0.1);">
+                <div style="display:flex; align-items:center; margin-bottom:8px;">
+                    <span style="font-size:22px; margin-right:10px;">⚠️</span>
+                    <h3 style="margin:0; font-size:16px; color:#991B1B; font-weight:bold;">
+                        [경고] 보유현황 미동기화 / 매매 판단 전면 보류
+                    </h3>
+                </div>
+                <div style="font-size:13px; color:#7F1D1D; line-height:1.6; background:#FFFFFF; padding:12px; border-radius:8px; border:1px solid #FCA5A5;">
+                    • <strong>키움 계좌 보유종목 수집 결과가 0개로 표시되었습니다.</strong> (키움 OpenAPI 미접속 또는 로그인 미연동 상태)<br>
+                    • <strong>[안전 수칙 적용]</strong> 실제 계좌 보유 현황이 동기화되지 않은 상태에서는 매도·추매·비중조절 매매 판단이 왜곡될 수 있으므로 <strong>보유종목 매매 조언이 전면 보류(중지)</strong>됩니다.<br>
+                    • 아래 표출된 종목 신호(하이록코리아, 두산에너빌리티, 유바이오로직스, HD현대일렉트릭 등)는 보유종목 분석이 아닌 <strong>'관심 종목 신규매수 후보 신호'로만 구별 취급</strong>하십시오.
                 </div>
             </div>
             """
@@ -370,6 +397,27 @@ class GmailNotifier:
         </div>
         """
 
+        # 메일 본문 삽입용 기계 읽기 가능 1차 기준 [RAW MONITORING DATA CSV] 구축
+        csv_lines = ["종목코드,종목명,보유수량,평균단가,현재가,계좌비중(%),F점수,T점수,종합점수,14일ATR,손절가,익절가,추매가,매매대응전략"]
+        if held_portfolio:
+            for h in held_portfolio:
+                code = h.get('stock_code', '')
+                name = h.get('stock_name', '')
+                qty = h.get('quantity', 0)
+                avg_p = h.get('avg_buy_price', 0.0)
+                cur_p = h.get('current_price', 0)
+                w_pct = h.get('eval_weight_pct', 0.0)
+                f_sc = h.get('f_score', 0.0)
+                t_sc = h.get('t_score', 0.0)
+                final_sc = h.get('final_score', 0.0)
+                atr_v = h.get('atr_14', 0.0)
+                stop_p = h.get('confirmed_stop_price', 0)
+                target_p = h.get('trailing_target_price', 0)
+                buy_p = h.get('trailing_buy_price', 0)
+                act_st = h.get('action_status', '보유')
+                csv_lines.append(f"{code},{name},{qty},{avg_p:.1f},{cur_p},{w_pct:.1f},{f_sc:.1f},{t_sc:.1f},{final_sc:.1f},{atr_v:.1f},{stop_p},{target_p},{buy_p},{act_st}")
+        raw_csv_block_text = "\n".join(csv_lines)
+
         html_template = f"""
         <!DOCTYPE html>
         <html>
@@ -434,6 +482,13 @@ class GmailNotifier:
                             {summary_rows_html}
                         </tbody>
                     </table>
+
+                    <!-- 4. Raw CSV Data Section (Primary Audit Data for Automated API Inspection) -->
+                    <div style="margin-top:32px; background:#0F172A; color:#E2E8F0; padding:16px; border-radius:10px; font-family:Consolas, monospace; font-size:10px; line-height:1.5; overflow-x:auto;">
+                        <div style="color:#38BDF8; font-weight:bold; font-size:11px; margin-bottom:6px;">📋 [RAW DATA CSV - 메일 본문 감시용 1차 기준 데이터]</div>
+                        <div style="color:#94A3B8; font-size:9.5px; margin-bottom:10px;">※ 첨부파일 다운로드 실패 시에도 이 본문 CSV 데이터를 1차 감시 기준 자료로 100% 자동 사용합니다.</div>
+                        <pre style="margin:0; font-family:monospace; font-size:10px; color:#F1F5F9;">{raw_csv_block_text}</pre>
+                    </div>
                 </div>
 
                 <!-- Footer -->

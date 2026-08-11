@@ -1,0 +1,18 @@
+[
+  {"stock_code": "000490", "stock_name": "대동", "quantity": 100, "avg_buy_price": 9800.0},
+  {"stock_code": "011700", "stock_name": "한신기계", "quantity": 769, "avg_buy_price": 4282.0},
+  {"stock_code": "013030", "stock_name": "하이록코리아", "quantity": 90, "avg_buy_price": 38945.0},
+  {"stock_code": "034020", "stock_name": "두산에너빌리티", "quantity": 27, "avg_buy_price": 74800.0},
+  {"stock_code": "047050", "stock_name": "포스코인터내셔널", "quantity": 158, "avg_buy_price": 62806.0},
+  {"stock_code": "047770", "stock_name": "코데즈컴바인", "quantity": 989, "avg_buy_price": 4745.0},
+  {"stock_code": "055490", "stock_name": "테이팩스", "quantity": 4283, "avg_buy_price": 23365.0},
+  {"stock_code": "140670", "stock_name": "알에스오토메이션", "quantity": 531, "avg_buy_price": 18899.0},
+  {"stock_code": "088500", "stock_name": "PLUS 고배당주", "quantity": 250, "avg_buy_price": 28186.0},
+  {"stock_code": "206650", "stock_name": "유바이오로직스", "quantity": 418, "avg_buy_price": 15717.0},
+  {"stock_code": "219550", "stock_name": "자이글", "quantity": 9314, "avg_buy_price": 7518.0},
+  {"stock_code": "241520", "stock_name": "DSC인베스트먼트", "quantity": 115, "avg_buy_price": 17995.0},
+  {"stock_code": "267260", "stock_name": "HD현대일렉트릭", "quantity": 4, "avg_buy_price": 745000.0},
+  {"stock_code": "348340", "stock_name": "뉴로메카", "quantity": 124, "avg_buy_price": 80329.0},
+  {"stock_code": "371460", "stock_name": "TIGER 차이나전기차SOLACTIVE", "quantity": 137, "avg_buy_price": 14570.0},
+  {"stock_code": "484730", "stock_name": "RISE 미국AI밸류체인TOP3Plus", "quantity": 9114, "avg_buy_price": 16458.0}
+]

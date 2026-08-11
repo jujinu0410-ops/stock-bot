@@ -148,6 +148,9 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
             db_manager=db
         )
 
+        csv_held_path = excel_path.parent / excel_path.name.replace('stock_analysis_', 'portfolio_monitoring_').replace('.xlsx', '.csv')
+        csv_summary_path = excel_path.parent / excel_path.name.replace('stock_analysis_', 'stock_summary_').replace('.xlsx', '.csv')
+
         subject = f"[내 계좌 스윙 리포트] {datetime.now().month}월 {datetime.now().day}일 보유 종목 정밀 평가 & 관심 종목 리포트"
         
         notifier = GmailNotifier()
@@ -159,9 +162,13 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
             held_portfolio=held_status
         )
         
-        sent_success = notifier.send_email(subject, html_report, attachments=[excel_path])
+        sent_success = notifier.send_email(
+            subject=subject,
+            html_content=html_report,
+            attachments=[excel_path, csv_held_path, csv_summary_path]
+        )
         if sent_success:
-            logger.info("내 종목 정밀 평가 지메일 리포트 및 엑셀 첨부파일이 성공적으로 발송되었습니다!")
+            logger.info("내 종목 정밀 평가 지메일 리포트 (본문 CSV, 백업 CSV 및 ASCII XLSX 첨부) 성공 발송 완료!")
         else:
             logger.warning("지메일 발송에 실패했거나 설정이 미비합니다. 로컬 로그 파일을 확인하세요.")
 
