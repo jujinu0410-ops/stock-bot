@@ -72,22 +72,42 @@ def main_gui():
         
     full_report = process_stocks(stocks)
     
-    # 1. 바탕화면에 경량 텍스트 파일 저장 (Gemini Gems 첨부용)
-    desktop_path = get_desktop_path()
-    output_file = desktop_path / "Gemini_Gems_입력용_최신진단.txt"
+    # 1. 모든 바탕화면 후보 경로에 경량 텍스트 파일 저장 (Gemini Gems 첨부용)
+    primary_desktop = get_desktop_path()
+    output_file = primary_desktop / "Gemini_Gems_입력용_최신진단.txt"
     
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write(full_report)
-        
+    desktop_candidates = [
+        primary_desktop,
+        Path(os.path.expanduser("~/Desktop")),
+        Path(r"C:\Users\jooji\Desktop"),
+        Path(r"C:\Users\jooji\OneDrive\Desktop"),
+        Path(r"C:\Users\jooji\OneDrive\바탕 화면")
+    ]
+    
+    for d_path in desktop_candidates:
+        try:
+            if d_path.exists():
+                t_file = d_path / "Gemini_Gems_입력용_최신진단.txt"
+                with open(t_file, "w", encoding="utf-8") as f:
+                    f.write(full_report)
+        except Exception as e:
+            pass
+
     # 2. 클립보드에 자동 복사 (Ctrl+V 용)
     root.clipboard_clear()
     root.clipboard_append(full_report)
     root.update()
+
+    # 3. 사용자 화면에 메모장으로 1초 만에 자동 열기!
+    try:
+        os.startfile(output_file)
+    except Exception:
+        pass
     
     messagebox.showinfo(
         "🎉 정밀 진단 완료!",
         f"총 {len(stocks)}개 종목의 Kiwoom REST & OpenDART 수집이 완료되었습니다!\n\n"
-        f"1. 바탕화면에 경량 파일 저장 완료:\n   {output_file.name}\n\n"
+        f"1. 바탕화면에 경량 파일 저장 및 메모장 자동 열기 완료!\n   (Gemini_Gems_입력용_최신진단.txt)\n\n"
         f"2. 클립보드에 100% 자동 복사 완료!\n   Gemini Gems 챗봇 창에서 바로 [Ctrl + V] 누르시면 됩니다!"
     )
     root.destroy()
