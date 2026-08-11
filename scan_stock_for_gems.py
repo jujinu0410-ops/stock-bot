@@ -14,6 +14,43 @@ from src.api.dart_api import DartAPIClient
 from src.engine.trading_engine import TradingEngine
 from src.utils.logger import logger
 
+def resolve_stock_code(stock_input: str) -> tuple[str, str]:
+    """종목명 또는 종목코드를 6자리 코드 및 정식 종목명으로 변환"""
+    s = stock_input.strip()
+    if len(s) == 6 and s.isdigit():
+        return s, s
+
+    stock_dict = {
+        "삼성전자": "005930", "SK하이닉스": "000660", "현대차": "005380",
+        "삼성바이오로직스": "207940", "삼바": "207940", "셀트리온": "068270", "알테오젠": "196170",
+        "카카오": "035720", "NAVER": "035420", "네이버": "035420",
+        "한화에어로스페이스": "012450", "대동": "000490", "한신공영": "004960",
+        "한신기계": "011700", "하이록코리아": "013030", "두산에너빌리티": "034020",
+        "포스코인터내셔널": "047050", "코데즈컴바인": "047770", "테이팩스": "055490",
+        "알에스오토메이션": "140670", "유바이오로직스": "206650", "자이글": "219550",
+        "DSC인베스트먼트": "241520", "HD현대일렉트릭": "267260", "뉴로메카": "348340",
+        "PLUS 고배당주": "088500", "PLUS고배당주": "088500",
+        "TIGER 차이나전기차": "371460", "TIGER차이나전기차": "371460",
+        "RISE 미국AI밸류체인": "490590", "RISE미국AI밸류체인": "490590"
+    }
+    if s in stock_dict:
+        return stock_dict[s], s
+
+    try:
+        import FinanceDataReader as fdr
+        df = fdr.StockListing('KRX')
+        matched = df[df['Name'].str.replace(' ', '').str.lower() == s.replace(' ', '').lower()]
+        if len(matched) > 0:
+            return str(matched['Code'].iloc[0]).zfill(6), str(matched['Name'].iloc[0])
+        
+        contains = df[df['Name'].str.contains(s, case=False)]
+        if len(contains) > 0:
+            return str(contains['Code'].iloc[0]).zfill(6), str(contains['Name'].iloc[0])
+    except Exception as e:
+        logger.error(f"KRX 종목 자동검색 실패 ({s}): {e}")
+
+    return s, s
+
 def scan_stock_for_gems(stock_code_or_name: str) -> str:
     """
     관심 종목 1개(또는 종목코드)에 대해:
@@ -28,22 +65,10 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
     dart_api = DartAPIClient()
     engine = TradingEngine(db)
 
-    # 종목명 ➔ 종목코드 변환 사전 (주요 종목)
-    stock_dict = {
-        "삼성전자": "005930", "SK하이닉스": "000660", "현대차": "005380",
-        "대동": "000490", "한신공영": "004960", "한신기계": "011700",
-        "하이록코리아": "013030", "두산에너빌리티": "034020", "포스코인터내셔널": "047050",
-        "코데즈컴바인": "047770", "테이팩스": "055490", "알에스오토메이션": "140670",
-        "유바이오로직스": "206650", "자이글": "219550", "DSC인베스트먼트": "241520",
-        "HD현대일렉트릭": "267260", "뉴로메카": "348340",
-        "PLUS 고배당주": "088500", "PLUS고배당주": "088500",
-        "TIGER 차이나전기차": "371460", "TIGER차이나전기차": "371460",
-        "RISE 미국AI밸류체인": "490590", "RISE미국AI밸류체인": "490590"
-    }
+    code, resolved_name = resolve_stock_code(stock_code_or_name)
+    db.upsert_stock_info({"stock_code": code, "stock_name": resolved_name, "market_type": "KOSPI/KOSDAQ"})
 
-    code = stock_dict.get(stock_code_or_name.strip(), stock_code_or_name.strip())
-    
-    logger.info(f"=== [Gemini Gems 전용] {stock_code_or_name} ({code}) Kiwoom REST + DART 정밀 분석 시작 ===")
+    logger.info(f"=== [Gemini Gems 전용] {resolved_name} ({code}) Kiwoom REST + DART 정밀 분석 시작 ===")
 
     # 1. 키움 REST API / RealMarket 시세 수집
     candles = market_api.get_real_daily_candles(code, count=60)

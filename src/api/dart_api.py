@@ -42,7 +42,26 @@ class DartAPIClient:
             return self.CORP_CODE_MAP[stock_code]
         if stock_code in self.dynamic_map:
             return self.dynamic_map[stock_code]
-        return "00126380"  # 기본값
+        
+        # 동적 DART 고유코드 XML 전체 다운로드 및 캐싱
+        if not self.dynamic_map:
+            try:
+                url = f"{self.BASE_URL}/corpCode.xml"
+                res = requests.get(url, params={"crtfc_key": self.api_key}, timeout=15)
+                if res.status_code == 200:
+                    with zipfile.ZipFile(io.BytesIO(res.content)) as z:
+                        xml_bytes = z.read("CORPCODE.xml")
+                        tree = ET.fromstring(xml_bytes)
+                        for elem in tree.findall("list"):
+                            stk_cd = elem.findtext("stock_code", "").strip()
+                            crp_cd = elem.findtext("corp_code", "").strip()
+                            if stk_cd:
+                                self.dynamic_map[stk_cd] = crp_cd
+                        logger.info(f"[DART API] DART 고유코드 {len(self.dynamic_map)}개 동적 캐싱 완료")
+            except Exception as e:
+                logger.error(f"[DART API] DART 고유코드 동적다운로드 실패: {e}")
+
+        return self.dynamic_map.get(stock_code, "00126380")
 
     def get_financial_statement(self, stock_code: str, fiscal_year: int = 2025, reprt_code: str = "11011") -> Optional[Dict[str, Any]]:
         """
