@@ -131,6 +131,9 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
     
     time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S KST")
 
+    rebound_delta = int(atr_v * 0.5) if atr_v > 0 else 0
+    drop_delta = int(atr_v * 0.8) if atr_v > 0 else 0
+
     # Gemini Gems에 그대로 입력할 정밀 텍스트 리포트 생성
     gems_report = f"""
 ================================================================================
@@ -141,12 +144,22 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
 1. 📈 키움 REST & 실시간 시세 (Technical Analysis)
    • 현재가: {cur_p:,}원 (당일 등락률: {daily_chg:+.2f}%)
    • 14일 ATR (변동폭): {atr_v:,.0f}원 ({atr_pct:.2f}%)
-   • 키움 호가보정 2.0 ATR 손절가: {t_stop:,}원 (가격감시 ON / 주문전송 OFF)
-   • 키움 호가보정 2.5 ATR 목표가: {t_target:,}원 (가격감시 ON / 주문전송 OFF)
-   • 키움 호가보정 1.5 ATR 매수가: {t_buy if t_buy > 0 else '0 (매수금지)'}원
    • 기술 T점수 (100점 만점): {t_sc:.1f}점
 
-2. 🏢 OpenDART 2025년 공시 재무 (Fundamental Analysis)
+2. ⚙️ 키움 HTS/MTS 트레일링 주문 정밀 설정 파라미터 (Auto-Trading Rules)
+   🔹 [트레일링 매수 설정]:
+      - 감시 시작가: {t_buy:,}원 (1.5 ATR 눌림목 도달 시 감시 시작)
+      - 최저가 대비 반등폭: +{rebound_delta:,}원 (+0.5 ATR 반등 시 주문 발동)
+      - 1차 주문 수량 비중: 목표 수량의 50% 분할 매수 (2차 50% 추가 눌림목 대기)
+   🔹 [트레일링 익절 설정]:
+      - 감시 시작가 (목표가): {t_target:,}원 (2.5 ATR 상단 도달 시 감시 시작)
+      - 최고가 대비 추락폭: -{drop_delta:,}원 (-0.8 ATR 추락 시 이익실현 발동)
+      - 1차 익절 수량 비중: 보유 수량의 50% 차익 실현 (잔여 50% 추세 추적)
+   🔹 [스탑로스 손절 설정]:
+      - 감시 시작가 (손절가): {t_stop:,}원 (2.0 ATR 하단 이탈 시)
+      - 손절 매도 수량 비중: 보유 수량 100% 전량 이탈 손절
+
+3. 🏢 OpenDART 2025년 공시 재무 (Fundamental Analysis)
    • 공시 보고서 종류: 2025년 사업보고서 ({fs_div} 연결/별도)
    • 2025년 당기 매출액: {rev_val/1e8:,.1f}억 원 (전기: {prev_rev/1e8:,.1f}억 원)
    • 2025년 당기 영업이익: {op_val/1e8:,.1f}억 원 (전기: {prev_op/1e8:,.1f}억 원)
@@ -157,7 +170,7 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
      └ ① 성장성(25점): {growth_pts:.1f}점 | ② 현금흐름(20점): {ocf_pts:.1f}점
      └ ③ 모멘텀(20점): {momentum_pts:.1f}점 | ④ 재무안정(20점): {debt_pts:.1f}점 | ⑤ 밸류경영(15점): {gov_pts:.1f}점
 
-3. ⚖️ 100점 만점 가중 종합점수 & 5단계 매수 승인 최종 판정
+4. ⚖️ 100점 만점 가중 종합점수 & 5단계 매수 승인 최종 판정
    • 가중 종합점수: {final_sc:.1f}점 = (F점수 {f_sc:.1f} × 0.4) + (T점수 {t_sc:.1f} × 0.6)
    • 신규/추가 매수 승인 여부: {buy_approval}
    • 5단계 Decision Matrix 최종 대응 전략: [{act_st}]
@@ -165,7 +178,7 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
 ================================================================================
 💡 Gemini Gems 사용 방법:
 위 데이터 블록 전체를 복사하여 Gemini Gems 챗봇 질문창에 붙여넣으신 후
-"이 종목의 매수 승인 여부와 6대 안전조건 충족 평가를 요약해 줘" 라고 질문하세요!
+"이 종목의 키움 트레일링 매수/매도 설정가와 수량 비중 가이드를 요약해 줘" 라고 질문하세요!
 ================================================================================
 """
     return gems_report
