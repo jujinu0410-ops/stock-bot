@@ -75,8 +75,10 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
     if candles:
         db.insert_kiwoom_daily_batch(candles)
     
-    # 2. OpenDART 정식 2025년 공시 수집
+    # 2. OpenDART 정식 2025년 공시 수집 및 DB 저장
     dart_info = dart_api.get_financial_statement(code)
+    if dart_info:
+        db.upsert_dart_financials(dart_info)
 
     # 3. TradingEngine 통합 분석 (F점수 5세부 + T점수 14일 ATR + Decision Matrix)
     res = engine.analyze_stock(code)
@@ -93,10 +95,10 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
     
     # F점수 5대 세부 항목
     growth_pts = res.get("growth_pts", 0.0)
-    ocf_pts = res.get("ocf_pts", 0.0)
-    momentum_pts = res.get("momentum_pts", 0.0)
-    debt_pts = res.get("debt_pts", 0.0)
-    gov_pts = res.get("gov_pts", 0.0)
+    ocf_pts = res.get("cf_pts", 0.0)
+    momentum_pts = res.get("cat_pts", 0.0)
+    debt_pts = res.get("stab_pts", 0.0)
+    gov_pts = res.get("val_pts", 0.0)
     
     # DART 수치
     rev_val = dart_info.get("revenue", 0.0)
