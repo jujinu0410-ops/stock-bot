@@ -13,7 +13,10 @@ class DatabaseManager:
         self._init_db()
 
     def get_connection(self) -> sqlite3.Connection:
-        """데이터베이스 커넥션 생성 및 반환"""
+        """데이터베이스 커넥션 생성 및 반환 (디렉토리 자동 생성)"""
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row  # 딕셔너리 형태로 쿼리 결과 접근 가능
         return conn

@@ -29,7 +29,9 @@ def setup_logger(name: str = "stock_system") -> logging.Logger:
     console_handler.setLevel(logging.INFO)
     logger.addHandler(console_handler)
 
-    # 파일 핸들러
+    # 파일 핸들러 (디렉토리 자동 생성)
+    log_dir = LOG_FILE_PATH.parent
+    os.makedirs(log_dir, exist_ok=True)
     file_handler = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
     file_handler.setFormatter(formatter)
     file_handler.setLevel(logging.INFO)

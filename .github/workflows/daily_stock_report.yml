@@ -35,6 +35,7 @@ jobs:
           KIWOOM_ACCOUNT_NO: ${{ secrets.KIWOOM_ACCOUNT_NO }}
           TZ: Asia/Seoul
         run: |
+          mkdir -p data logs
           python main.py
 
       - name: Upload Excel & HTML Logs Artifacts
