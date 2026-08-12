@@ -151,10 +151,13 @@ class GmailNotifier:
 
                 atr_display = f"{atr_v:,.0f}원"
 
-                # 대응전략: 확정순위 제거, 핵심 전략 키워드 및 목:금액 / 트:금액 / 손:금액 간략 표기
+                # 대응전략: 확정순위 제거, 핵심 전략 키워드 및 목:금액 / 트:금액 / 손:금액 간략 표기 (데이터 미확정 시 안전 보류)
                 import re
                 clean_strategy = re.sub(r'^(확정|잠정|ETF)\s*\d+위\s*', '', action_st).strip('()[] ')
-                if "비중과다" in clean_strategy:
+                if not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
+                    action_kw = "⚠️ 재무미확정 (보류)"
+                elif "비중과다" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "비중과다 보유"
                 elif "익절" in clean_strategy or "차익" in clean_strategy:
@@ -183,11 +186,16 @@ class GmailNotifier:
                 else:
                     tr_text = f"트: -{d_delta:,}원"
 
+                if t_stop <= 0 or not f_confirmed or "보류" in action_kw:
+                    stop_str = "손: - (데이터보류)"
+                else:
+                    stop_str = f"손: {t_stop:,}원"
+
                 strategy_cell_html = f"""
                 <span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:2px 5px; border-radius:5px; font-weight:bold; font-size:9.5px; display:inline-block; margin-bottom:2px;">{action_kw}</span><br>
                 <span style="font-size:9px; color:#1D4ED8; font-weight:bold;">목: {t_target:,}원</span><br>
                 <span style="font-size:9px; color:#D97706;">{tr_text}</span><br>
-                <span style="font-size:9px; color:#DC2626;">손: {t_stop:,}원</span>
+                <span style="font-size:9px; color:#DC2626;">{stop_str}</span>
                 """
 
                 held_rows_html += f"""

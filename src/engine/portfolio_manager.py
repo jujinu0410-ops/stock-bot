@@ -53,8 +53,15 @@ class PortfolioManager:
         """키움 API에서 계좌 보유 종목을 조회하여 DB portfolio_positions 및 stock_info 동기화"""
         logger.info("[PortfolioManager] 키움 API 계좌 보유 종목 동기화 진행 중...")
         
-        # 1. 15개 사용자 보유 종목 리스트 기본 동기화
+        # 1. 17개 사용자 실제 보유 종목 리스트 기본 동기화
         mock_positions = self.kiwoom._get_mock_account_positions()
+
+        # portfolio_positions 테이블 내 중복/오래된 무효 종목 코드(088500, 219550, 484730 등) 완전 삭제
+        valid_codes = {p["stock_code"] for p in mock_positions}
+        if valid_codes:
+            valid_clause = ",".join(f"'{c}'" for c in valid_codes)
+            self.db.execute_non_query(f"DELETE FROM portfolio_positions WHERE stock_code NOT IN ({valid_clause})")
+
         for pos in mock_positions:
             self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
 
@@ -107,25 +114,28 @@ class PortfolioManager:
             atr_14 = analysis.get("atr_14", current_price * 0.03) if analysis else current_price * 0.03
             atr_pct = analysis.get("atr_pct", 3.0) if analysis else 3.0
 
-            # [트레일링 손절선 단방향 상향 고정 연산 (현재가 초과 오류 완벽 차단)]
+            # [손절가 안전 가드레일 연산 (0원, 151원 등 기형적 손절가 방지)]
             r_keys = r.keys()
             prev_highest = float(r["highest_close_price"] or 0.0) if "highest_close_price" in r_keys else 0.0
             highest_close_price = max(prev_highest, float(current_price))
-
             prev_confirmed_stop = float(r["confirmed_stop_price"] or 0.0) if "confirmed_stop_price" in r_keys else 0.0
 
-            if prev_confirmed_stop > 0:
-                initial_stop = prev_confirmed_stop
+            # 현재가 대비 -15% ~ -5% 범위 내 안전 손절선 캡
+            min_safe_stop = float(current_price * 0.85)
+            calc_stop = float(current_price - (2.0 * atr_14))
+
+            if calc_stop < min_safe_stop or calc_stop <= 0:
+                target_stop = float(current_price * 0.90)  # 현재가 대비 -10% 고정 안전 손절선
             else:
-                # 최초 감시일: 현재가 기준 2ATR 하단으로 안전 설정 (평단가 적용 시 현재가보다 높은 즉시매도 폭탄 오류 차단)
-                initial_stop = float(current_price - (2.0 * atr_14))
+                target_stop = calc_stop
 
-            candidate_stop = float(highest_close_price - (2.0 * atr_14))
-            confirmed_stop_price = max(prev_confirmed_stop, candidate_stop, initial_stop)
+            if prev_confirmed_stop > 0 and prev_confirmed_stop < current_price:
+                confirmed_stop_price = max(prev_confirmed_stop, target_stop)
+            else:
+                confirmed_stop_price = target_stop
 
-            # 확정 손절가가 현재가보다 높아지는 기형적 상태 안전 보호
-            if confirmed_stop_price >= current_price:
-                confirmed_stop_price = float(current_price - (2.0 * atr_14))
+            if confirmed_stop_price >= current_price or confirmed_stop_price <= 0:
+                confirmed_stop_price = float(current_price * 0.90)
 
             if prev_confirmed_stop == 0:
                 stop_update_status = "🆕 신규설정"
