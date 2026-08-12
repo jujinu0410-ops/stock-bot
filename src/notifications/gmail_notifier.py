@@ -198,10 +198,25 @@ class GmailNotifier:
                 <span style="font-size:9px; color:#DC2626;">{stop_str}</span>
                 """
 
+                # 9자 초과 긴 종목명 2줄 줄바꿈 처리
+                if len(name) > 8:
+                    if " " in name:
+                        words = name.split(" ")
+                        first_p = words[0]
+                        rest_p = " ".join(words[1:])
+                        if len(rest_p) > 8:
+                            name_formatted = f"{first_p} {rest_p[:7]}<br>{rest_p[7:]}"
+                        else:
+                            name_formatted = f"{first_p}<br>{rest_p}"
+                    else:
+                        name_formatted = f"{name[:7]}<br>{name[7:]}"
+                else:
+                    name_formatted = name
+
                 held_rows_html += f"""
                 <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
                     <td style="padding:6px 3px; text-align:center;">{rank_badge}</td>
-                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A;">{name}<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">({code})</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">{name_formatted}<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">({code})</span></td>
                     <td style="padding:6px 3px; text-align:center; background:#F5F3FF;">{score_combined_cell}</td>
                     <td style="padding:6px 3px; font-weight:bold;">{cur_p:,}원<br><span style="font-size:9.5px; color:{chg_color};">({chg_sign}{daily_chg:.2f}%)</span></td>
                     <td style="padding:6px 3px; color:#475569; font-weight:bold;">{atr_display}</td>
