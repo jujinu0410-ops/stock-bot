@@ -106,7 +106,18 @@ class GmailNotifier:
             # 합산 종합점수 내림차순 정렬 보장
             held_portfolio_sorted = sorted(held_portfolio, key=lambda x: x.get("final_score", 0.0), reverse=True)
             
-            swing_3pct_items = []
+            # 의미있는 주가변동(거래량 150%↑ / 1.0 ATR 이상 변동 / 9일 신고·신저가 경신 등) 종목 선별
+            meaningful_items = []
+            for h in held_portfolio_sorted:
+                daily_chg = h.get('daily_change_pct', 0.0)
+                atr_pct = h.get('atr_pct', 3.0)
+                swing_pct = h.get('high_low_swing_pct', 0.0)
+                t_sc = h.get('t_score', 0.0)
+
+                # 1.0 ATR 이상 변동 또는 3.0% 이상 큰 변동 발생 시 의미있는 변동으로 선정
+                if abs(daily_chg) >= max(2.5, atr_pct * 0.8) or swing_pct >= 4.0 or t_sc >= 75.0 or t_sc <= 40.0:
+                    meaningful_items.append(h)
+
             for h in held_portfolio_sorted:
                 code = h.get('stock_code')
                 name = h.get('stock_name')
@@ -120,9 +131,6 @@ class GmailNotifier:
                 t_sc = h.get('t_score', 0.0)
                 final_sc = h.get('final_score', 0.0)
                 action_st = h.get('action_status', '홀딩')
-
-                if abs(daily_chg) >= 3.0:
-                    swing_3pct_items.append(h)
 
                 pnl_color = "#10B981" if pnl_pct >= 0 else "#EF4444"
                 pnl_sign = "+" if pnl_pct >= 0 else ""
@@ -168,6 +176,7 @@ class GmailNotifier:
                 else:
                     badge_bg, badge_border, badge_color = "#F0F9FF", "#BAE6FD", "#0369A1"
 
+                # 7개 열 구성
                 held_rows_html += f"""
                 <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
                     <td style="padding:6px 3px; text-align:center;">{rank_badge}</td>
@@ -180,10 +189,10 @@ class GmailNotifier:
                 </tr>
                 """
 
-            # 3% 이상 변동 종목 구체적 대응 섹션 구축 (ATR 트레일링 기준 반영)
-            swing_cards_html = ""
-            if swing_3pct_items:
-                for sw in swing_3pct_items:
+            # 의미있는 변동 종목 구체적 대응 섹션 구축 (ATR 트레일링 기준 반영)
+            meaningful_cards_html = ""
+            if meaningful_items:
+                for sw in meaningful_items:
                     s_name = sw.get('stock_name')
                     s_code = sw.get('stock_code')
                     s_chg = sw.get('daily_change_pct', 0.0)
@@ -212,31 +221,30 @@ class GmailNotifier:
                     else:
                         advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동. 2.5 ATR 목표가 <strong>{s_ttarget:,}원</strong> (최고가 대비 -{s_ddelta:,}원 하락 시 50% 차익실현) 및 2.0 ATR 손절가 <strong>{s_tstop:,}원</strong> (하향 이탈 시 100% 손절) 감시 유지."
 
-                    swing_cards_html += f"""
+                    meaningful_cards_html += f"""
                     <div style="background:#FFFFFF; border-left:5px solid {s_color}; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <strong style="font-size:13px; color:#0F172A;">{s_name} ({s_code})</strong>
-                            <span style="font-weight:bold; color:{s_color}; font-size:13px;">당일 등락: {s_sign}{s_chg:.2f}%</span>
+                            <span style="font-weight:bold; color:{s_color}; font-size:13px;">당일 등락: {s_sign}{s_chg:.2f}% | 14일 ATR: {s_atr:,.0f}원</span>
                         </div>
                         <div style="font-size:11px; color:#334155; margin-top:6px; background:#F8FAFC; padding:8px; border-radius:6px; line-height:1.5;">
-                            <strong>🎯 키움 트레일링 매매 대응 지침:</strong> <span style="color:#1D4ED8; font-weight:bold;">{s_act}</span><br>
-                            <span>💡 <strong>구체적 가격가이드:</strong> {advice_detail}</span>
+                            🎯 <strong>키움 트레일링 매매 가격 가이드:</strong> {advice_detail}
                         </div>
                     </div>
                     """
             else:
-                swing_cards_html = """
+                meaningful_cards_html = """
                 <div style="font-size:12px; color:#64748B; background:#F8FAFC; padding:10px; border-radius:8px; text-align:center;">
-                    당일 전일 대비 ±3% 이상 급변동한 종목이 없습니다.
+                    당일 거래량 폭증, ATR 이상 변동 등 의미있는 급변동이 발생한 보유 종목이 없습니다.
                 </div>
                 """
 
             swing_section_html = f"""
             <div style="background:#FFFBEB; border:2px solid #F59E0B; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(245,158,11,0.08);">
                 <h3 style="margin-top:0; color:#B45309; font-size:15px; margin-bottom:8px;">
-                    ⚡ 당일 3% 이상 가격 변동 종목 ATR 트레일링 대응 지침 (총 {len(swing_3pct_items)}종목)
+                    ⚡ 의미있는 주가변동 포착 종목 ATR 트레일링 대응 지침 (총 {len(meaningful_items)}종목)
                 </h3>
-                {swing_cards_html}
+                {meaningful_cards_html}
             </div>
             """
 
