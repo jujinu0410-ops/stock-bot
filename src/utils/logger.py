@@ -1,5 +1,6 @@
 import logging
 import sys
+import os
 from config.settings import LOG_FILE_PATH
 
 def setup_logger(name: str = "stock_system") -> logging.Logger:

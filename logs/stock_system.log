@@ -8728,3 +8728,4 @@ function goHome() {
 [2026-08-12 15:49:22] [INFO] [stock_system:gmail_notifier.py:61] - [Gmail] Gmail SMTP 서버 접속 시도 중... (jujinu0410@gmail.com -> jujinu0410@gmail.com)
 [2026-08-12 15:49:25] [INFO] [stock_system:gmail_notifier.py:69] - [Gmail] 이메일 및 첨부 파일 발송 성공! (제목: [내 계좌 스윙 리포트] 8월 12일 보유 종목 정밀 평가 & 관심 종목 리포트)
 [2026-08-12 15:49:25] [INFO] [stock_system:main.py:171] - 내 종목 정밀 평가 지메일 리포트 (본문 CSV, 백업 CSV 및 ASCII XLSX 첨부) 성공 발송 완료!
+[2026-08-12 16:02:50] [INFO] [stock_system:<string>:1] - Logger import os test PASS!
