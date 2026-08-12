@@ -32,12 +32,12 @@ def load_env_vars(env_path: str = "C:/Users/jooji/.env") -> dict:
 _env_vars = load_env_vars()
 
 # GMAIL CONFIG
-GMAIL_USER = os.getenv("GMAIL_USER") or _env_vars.get("GMAIL_USER") or _env_vars.get("USER_EMAIL")
+GMAIL_USER = os.getenv("GMAIL_USER") or os.getenv("GMAIL_SENDER_EMAIL") or _env_vars.get("GMAIL_USER") or _env_vars.get("USER_EMAIL")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD") or _env_vars.get("GMAIL_APP_PASSWORD") or _env_vars.get("GMAIL_PASSWORD")
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_GMAIL") or _env_vars.get("RECIPIENT_GMAIL") or GMAIL_USER
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_GMAIL") or os.getenv("GMAIL_SENDER_EMAIL") or os.getenv("GMAIL_USER") or _env_vars.get("RECIPIENT_GMAIL") or GMAIL_USER
 
 # DART API CONFIG
-DART_API_KEY = os.getenv("DART_API_KEY") or _env_vars.get("DART_API_KEY") or "YOUR_DART_API_KEY_HERE"
+DART_API_KEY = os.getenv("DART_API_KEY") or os.getenv("OPENDART_API_KEY") or _env_vars.get("DART_API_KEY") or _env_vars.get("OPENDART_API_KEY") or "YOUR_DART_API_KEY_HERE"
 
 # KIWOOM REST TEST API CONFIG
 KIWOOM_APP_KEY = os.getenv("KIWOOM_APP_KEY") or _env_vars.get("KIWOOM_APP_KEY") or "YOUR_KIWOOM_APP_KEY_HERE"
