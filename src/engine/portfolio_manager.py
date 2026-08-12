@@ -156,6 +156,17 @@ class PortfolioManager:
             # KRX 호가단위 보정 손절가
             kiwoom_stop_p = adjust_krx_tick_size(confirmed_stop_price, "down")
 
+            # 14일 ATR 기반 원(Won) 단위 트레일링 기준가 및 반등/추락 폭 산출
+            rebound_delta = int(atr_14 * 0.5)
+            drop_delta = int(atr_14 * 0.8)
+
+            raw_tbuy = current_price - (1.5 * atr_14)
+            raw_ttarget = current_price + (2.5 * atr_14)
+
+            kiwoom_buy = adjust_krx_tick_size(raw_tbuy, "down") if raw_tbuy > 0 else 0
+            kiwoom_target = adjust_krx_tick_size(raw_ttarget, "up")
+            kiwoom_stop = kiwoom_stop_p if kiwoom_stop_p > 0 else adjust_krx_tick_size(confirmed_stop_price, "down")
+
             eval_list.append({
                 "stock_code": code,
                 "stock_name": name,
@@ -171,14 +182,19 @@ class PortfolioManager:
                 "pnl_pct": pnl_pct,
                 "highest_close_price": int(round(highest_close_price)),
                 "prev_confirmed_stop": int(round(prev_confirmed_stop)),
-                "confirmed_stop_price": int(round(confirmed_stop_price)),
+                "confirmed_stop_price": kiwoom_stop,
                 "stop_update_status": stop_update_status,
-                "target_profit_price": analysis.get("target_profit_price", int(current_price * 1.15)) if analysis else int(current_price * 1.15),
+                "target_profit_price": kiwoom_target,
                 "atr_14": atr_14,
                 "atr_pct": atr_pct,
-                "kiwoom_buy_tick_price": analysis.get("kiwoom_buy_tick_price", adjust_krx_tick_size(current_price - (1.5 * atr_14), "up")) if analysis else adjust_krx_tick_size(current_price - (1.5 * atr_14), "up"),
-                "kiwoom_stop_tick_price": kiwoom_stop_p,
-                "kiwoom_target_tick_price": analysis.get("kiwoom_target_tick_price", adjust_krx_tick_size(current_price + (2.5 * atr_14), "down")) if analysis else adjust_krx_tick_size(current_price + (2.5 * atr_14), "down"),
+                "rebound_delta": rebound_delta,
+                "drop_delta": drop_delta,
+                "trailing_buy_price": kiwoom_buy,
+                "trailing_stop_price": kiwoom_stop,
+                "trailing_target_price": kiwoom_target,
+                "kiwoom_buy_tick_price": kiwoom_buy,
+                "kiwoom_stop_tick_price": kiwoom_stop,
+                "kiwoom_target_tick_price": kiwoom_target,
                 "f_score": f_sc,
                 "t_score": t_sc,
                 "final_score": final_sc,

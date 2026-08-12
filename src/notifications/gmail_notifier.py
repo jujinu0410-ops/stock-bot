@@ -198,28 +198,26 @@ class GmailNotifier:
                     s_t = sw.get('t_score', 0.0)
                     s_act = sw.get('action_status', '보유')
                     s_atr = sw.get('atr_14', 0.0)
-                    s_tbuy = sw.get('trailing_buy_price', 0)
-                    s_tstop = sw.get('trailing_stop_price', 0)
-                    s_ttarget = sw.get('trailing_target_price', 0)
+                    s_tbuy = sw.get('trailing_buy_price', 0) or sw.get('kiwoom_buy_tick_price', 0)
+                    s_tstop = sw.get('confirmed_stop_price', 0) or sw.get('trailing_stop_price', 0) or sw.get('kiwoom_stop_tick_price', 0)
+                    s_ttarget = sw.get('target_profit_price', 0) or sw.get('trailing_target_price', 0) or sw.get('kiwoom_target_tick_price', 0)
+                    s_rdelta = sw.get('rebound_delta', int(s_atr * 0.5))
+                    s_ddelta = sw.get('drop_delta', int(s_atr * 0.8))
+                    s_buy_trigger = s_tbuy + s_rdelta if s_tbuy > 0 else 0
+                    s_sell_trigger = s_ttarget - s_ddelta if s_ttarget > 0 else 0
                     s_color = "#10B981" if s_chg >= 0 else "#EF4444"
                     s_sign = "+" if s_chg >= 0 else ""
 
-                    if "미충족" in s_act or "추매금지" in s_act or "관망" in s_act:
-                        if s_tstop > 0:
-                            advice_detail = f"당일 {s_sign}{s_chg:.2f}% 조정 발생했으나 6대 안전조건 미충족으로 추매가 차단됩니다. (추매금지·관망 유지 / 2.0 ATR 손절가 {s_tstop:,}원 상시 감시)"
-                        else:
-                            advice_detail = f"⚠️ <strong>[데이터 오류/가격 미산출]</strong> 가격 지표가 0원이거나 누락되어 매매 조언을 중지하고 관망을 유지합니다."
-                    elif ("6대안전" in s_act or "추매" in s_act) and s_tbuy > 0:
-                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 하락 조정. 6대 안전조건 충족 시 **ATR 1.5배격차 트레일링 매수 진입가 {s_tbuy:,}원 이하** 제한적 분할추매 고려 (단일종목 비중 20% 이내 엄수)."
-                    elif ("매도" in s_act or "반등" in s_act) and s_ttarget > 0:
-                        advice_detail = f"T점수({s_t:.1f}점) 기술 반등 진행 중. **반등 목표가 {s_ttarget:,}원 부근** 기계적 분할 매도로 현금 확보 및 손실 축소 집중."
+                    if "비중과다" in s_act or "추매금지" in s_act:
+                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동. 단일 비중 20% 초과 집중 위험으로 추매가 금지됩니다. (2.5 ATR 목표가 <strong>{s_ttarget:,}원</strong> 도달 후 최고가 대비 -{s_ddelta:,}원 하락 시 1차 50% 차익실현 | 2.0 ATR 손절가 <strong>{s_tstop:,}원</strong> 하향 이탈 시 100% 손절)"
+                    elif "추매" in s_act and s_tbuy > 0:
+                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 조정. 1.5 ATR 눌림목 감시가 <strong>{s_tbuy:,}원</strong> 도달 후 최저가 대비 +{s_rdelta:,}원 반등하여 <strong>{s_buy_trigger:,}원</strong> 도달 시 1차 50% 분할추매 고려 (손절가 <strong>{s_tstop:,}원</strong>)"
+                    elif ("매도" in s_act or "반등" in s_act or "익절" in s_act) and s_ttarget > 0:
+                        advice_detail = f"기술적 반등/익절 진행 중. 2.5 ATR 목표가 <strong>{s_ttarget:,}원</strong> 도달 후 최고가 대비 -{s_ddelta:,}원 하락하여 <strong>{s_sell_trigger:,}원</strong> 도달 시 1차 50% 분할매도/차익실현."
                     elif "손절" in s_act and s_tstop > 0:
-                        advice_detail = f"기술 추세 붕괴 위험. **ATR 2.0배 손절 기준가 {s_tstop:,}원 이탈 시** 손절선 하향 재설정 없이 손절/비중축소 실행."
+                        advice_detail = f"기술 추세 붕괴 위험. 2.0 ATR 손절가 <strong>{s_tstop:,}원</strong> 이하 하향 이탈 시 손절선 재설정 없이 100% 전량 손절 실행."
                     else:
-                        if s_tstop > 0 and s_ttarget > 0:
-                            advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동 발생. 손절가({s_tstop:,}원) 및 목표가({s_ttarget:,}원) 범위 내에서 안심 관망하세요."
-                        else:
-                            advice_detail = f"⚠️ <strong>[데이터 오류/가격 미산출]</strong> 가격 지표가 0원이거나 누락되어 매매 조언을 중지하고 관망을 유지합니다."
+                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동. 2.5 ATR 목표가 <strong>{s_ttarget:,}원</strong> (최고가 대비 -{s_ddelta:,}원 하락 시 50% 차익실현) 및 2.0 ATR 손절가 <strong>{s_tstop:,}원</strong> (하향 이탈 시 100% 손절) 감시 유지."
 
                     swing_cards_html += f"""
                     <div style="background:#FFFFFF; border-left:5px solid {s_color}; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">

@@ -121,6 +121,8 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
         stock_rows = db.execute_query("SELECT stock_code, stock_name FROM stock_info")
         total_count = len(stock_rows) if stock_rows else 0
 
+        held_codes = {item["stock_code"] for item in held_status} if held_status else set()
+
         for idx, row in enumerate(stock_rows, start=1):
             code = row['stock_code']
             name = row['stock_name']
@@ -128,7 +130,8 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
                 result = engine.analyze_stock(code)
                 if result:
                     all_results.append(result)
-                    if result['signal_type'] != "관망":
+                    # 이미 계좌에 보유 중인 종목은 '신규 매수 포착 리스트'에서 제외하고 오직 '보유 종목 관리'에서만 평가
+                    if result['signal_type'] != "관망" and code not in held_codes:
                         caught_signals.append(result)
             except Exception as e_stock:
                 logger.error(f"[{name}({code})] 개별 에러: {e_stock}", exc_info=True)
