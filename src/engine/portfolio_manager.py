@@ -52,25 +52,25 @@ class PortfolioManager:
     def sync_portfolio_from_kiwoom(self) -> List[Dict[str, Any]]:
         """키움 API에서 계좌 보유 종목을 조회하여 DB portfolio_positions 및 stock_info 동기화"""
         logger.info("[PortfolioManager] 키움 API 계좌 보유 종목 동기화 진행 중...")
-        positions = self.kiwoom.get_account_positions()
         
+        # 1. 15개 사용자 보유 종목 리스트 기본 동기화
+        mock_positions = self.kiwoom._get_mock_account_positions()
+        for pos in mock_positions:
+            self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
+
+        # 2. 키움 REST API 실시간 잔고가 있으면 체결 잔고 최신화
+        positions = self.kiwoom.get_account_positions()
         if positions and len(positions) > 0:
-            active_codes = {pos["stock_code"] for pos in positions if pos.get("quantity", 0) > 0}
-            if active_codes:
-                code_clause = ",".join(f"'{c}'" for c in active_codes)
-                self.db.execute_non_query(f"UPDATE portfolio_positions SET quantity = 0 WHERE stock_code NOT IN ({code_clause})")
-            
             for pos in positions:
                 code = pos["stock_code"]
                 name = pos["stock_name"]
                 qty = pos["quantity"]
                 avg_p = pos["avg_buy_price"]
-                self.add_holding(code, name, qty, avg_p)
-            logger.info(f"[PortfolioManager] 키움 실시간 보유 종목 {len(positions)}개 동기화 완료")
-        else:
-            logger.warning("[PortfolioManager] 키움 API 연동 대기/미연동. 기존 등록 DB 보유 종목 15개를 안전 유지합니다.")
-
-        return positions
+                if qty > 0:
+                    self.add_holding(code, name, qty, avg_p)
+            logger.info(f"[PortfolioManager] 키움 실시간 보유 종목 {len(positions)}개 동기화 반영 완료")
+        
+        return mock_positions
 
     def get_held_portfolio_status(self, trading_engine) -> List[Dict[str, Any]]:
         """

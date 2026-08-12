@@ -464,23 +464,6 @@ class GmailNotifier:
                     <h2 style="font-size:16px; color:#1E293B; border-left:4px solid #4F46E5; padding-left:10px; margin-bottom:16px;">🎯 신규 매매 포착 종목 리스트</h2>
                     {signal_cards_html}
 
-                    <!-- 3. All Stocks Table Section -->
-                    <h2 style="font-size:16px; color:#1E293B; border-left:4px solid #64748B; padding-left:10px; margin-top:32px; margin-bottom:16px;">🔍 전체 분석 대상 종목 요약</h2>
-                    <table style="width:100%; border-collapse:collapse; border-radius:8px; overflow:hidden; border:1px solid #E2E8F0;">
-                        <thead>
-                            <tr style="background:#F1F5F9; font-size:13px; color:#475569; text-align:left;">
-                                <th style="padding:10px 12px;">종목</th>
-                                <th style="padding:10px 12px;">신호</th>
-                                <th style="padding:10px 12px;">F점수</th>
-                                <th style="padding:10px 12px;">T점수</th>
-                                <th style="padding:10px 12px;">종합점수</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {summary_rows_html}
-                        </tbody>
-                    </table>
-
                     <!-- 4. Raw CSV Data Section (Primary Audit Data for Automated API Inspection) -->
                     <div style="margin-top:32px; background:#0F172A; color:#E2E8F0; padding:16px; border-radius:10px; font-family:Consolas, monospace; font-size:10px; line-height:1.5; overflow-x:auto;">
                         <div style="color:#38BDF8; font-weight:bold; font-size:11px; margin-bottom:6px;">📋 [RAW DATA CSV - 메일 본문 감시용 1차 기준 데이터]</div>

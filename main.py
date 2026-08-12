@@ -121,17 +121,26 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
         stock_rows = db.execute_query("SELECT stock_code, stock_name FROM stock_info")
         total_count = len(stock_rows) if stock_rows else 0
 
-        held_codes = {item["stock_code"] for item in held_status} if held_status else set()
+        # 보유 종목 코드 및 종목명 세트 (보유 중인 종목은 신규 매수 신호 리스트에서 100% 원천 예외 처리)
+        held_db_rows = db.execute_query("SELECT p.stock_code, s.stock_name FROM portfolio_positions p LEFT JOIN stock_info s ON p.stock_code = s.stock_code WHERE p.quantity > 0")
+        held_codes_set = {str(r['stock_code']).strip().zfill(6) for r in held_db_rows} if held_db_rows else set()
+        held_names_set = {str(r['stock_name']).strip() for r in held_db_rows if r['stock_name']} if held_db_rows else set()
+
+        if held_status:
+            for h in held_status:
+                held_codes_set.add(str(h['stock_code']).strip().zfill(6))
+                held_names_set.add(str(h['stock_name']).strip())
 
         for idx, row in enumerate(stock_rows, start=1):
-            code = row['stock_code']
-            name = row['stock_name']
+            code = str(row['stock_code']).strip().zfill(6)
+            name = str(row['stock_name']).strip()
             try:
                 result = engine.analyze_stock(code)
                 if result:
                     all_results.append(result)
-                    # 이미 계좌에 보유 중인 종목은 '신규 매수 포착 리스트'에서 제외하고 오직 '보유 종목 관리'에서만 평가
-                    if result['signal_type'] != "관망" and code not in held_codes:
+                    # 이미 계좌에 보유 중인 종목은 '신규 매수 포착 리스트'에서 100% 제외
+                    is_held = (code in held_codes_set) or (name in held_names_set) or any(n in name for n in held_names_set if len(n) > 2)
+                    if result['signal_type'] != "관망" and not is_held:
                         caught_signals.append(result)
             except Exception as e_stock:
                 logger.error(f"[{name}({code})] 개별 에러: {e_stock}", exc_info=True)
