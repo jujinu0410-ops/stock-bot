@@ -113,21 +113,28 @@ class PortfolioManager:
             # 14일 ATR 수치 수집
             atr_14 = analysis.get("atr_14", current_price * 0.03) if analysis else current_price * 0.03
             atr_pct = analysis.get("atr_pct", 3.0) if analysis else 3.0
+            # [손실 중증도별 차등 ATR 트레일링 수식 적용 (안 1 - 표준 실전 스윙 모델)]
+            # 대형 손실 종목(손실률 -25% 이하): 목표가 +1.2 ATR, 트레일링 매도폭 -0.5 ATR, 손절가 -10.0%
+            # 정상/수익 종목(손실률 -25% 초과): 목표가 +2.5 ATR, 트레일링 매도폭 -0.8 ATR, 손절가 -2.0 ATR
+            is_heavy_loss = (pnl_pct <= -25.0)
 
-            # [손절가 안전 가드레일 연산 (0원, 151원 등 기형적 손절가 방지)]
+            if is_heavy_loss:
+                rebound_delta = int(atr_14 * 0.5)
+                drop_delta = int(atr_14 * 0.5)
+                raw_tbuy = current_price - (1.0 * atr_14)
+                raw_ttarget = current_price + (1.2 * atr_14)
+                target_stop = float(current_price * 0.90)  # 현재가 대비 -10.0% 손절선
+            else:
+                rebound_delta = int(atr_14 * 0.5)
+                drop_delta = int(atr_14 * 0.8)
+                raw_tbuy = current_price - (1.5 * atr_14)
+                raw_ttarget = current_price + (2.5 * atr_14)
+                target_stop = max(float(current_price - (2.0 * atr_14)), float(current_price * 0.85))
+
             r_keys = r.keys()
             prev_highest = float(r["highest_close_price"] or 0.0) if "highest_close_price" in r_keys else 0.0
             highest_close_price = max(prev_highest, float(current_price))
             prev_confirmed_stop = float(r["confirmed_stop_price"] or 0.0) if "confirmed_stop_price" in r_keys else 0.0
-
-            # 현재가 대비 -15% ~ -5% 범위 내 안전 손절선 캡
-            min_safe_stop = float(current_price * 0.85)
-            calc_stop = float(current_price - (2.0 * atr_14))
-
-            if calc_stop < min_safe_stop or calc_stop <= 0:
-                target_stop = float(current_price * 0.90)  # 현재가 대비 -10% 고정 안전 손절선
-            else:
-                target_stop = calc_stop
 
             if prev_confirmed_stop > 0 and prev_confirmed_stop < current_price:
                 confirmed_stop_price = max(prev_confirmed_stop, target_stop)
@@ -135,7 +142,7 @@ class PortfolioManager:
                 confirmed_stop_price = target_stop
 
             if confirmed_stop_price >= current_price or confirmed_stop_price <= 0:
-                confirmed_stop_price = float(current_price * 0.90)
+                confirmed_stop_price = target_stop
 
             if prev_confirmed_stop == 0:
                 stop_update_status = "🆕 신규설정"
@@ -163,16 +170,8 @@ class PortfolioManager:
             else:
                 final_sc = round((f_sc * 0.4) + (t_sc * 0.6), 1)
 
-            # KRX 호가단위 보정 손절가
+            # KRX 호가단위 보정 손절가 및 목표가/매수가 산출
             kiwoom_stop_p = adjust_krx_tick_size(confirmed_stop_price, "down")
-
-            # 14일 ATR 기반 원(Won) 단위 트레일링 기준가 및 반등/추락 폭 산출
-            rebound_delta = int(atr_14 * 0.5)
-            drop_delta = int(atr_14 * 0.8)
-
-            raw_tbuy = current_price - (1.5 * atr_14)
-            raw_ttarget = current_price + (2.5 * atr_14)
-
             kiwoom_buy = adjust_krx_tick_size(raw_tbuy, "down") if raw_tbuy > 0 else 0
             kiwoom_target = adjust_krx_tick_size(raw_ttarget, "up")
             kiwoom_stop = kiwoom_stop_p if kiwoom_stop_p > 0 else adjust_krx_tick_size(confirmed_stop_price, "down")

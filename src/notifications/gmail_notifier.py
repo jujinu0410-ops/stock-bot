@@ -314,6 +314,11 @@ class GmailNotifier:
                     </tbody>
                 </table>
                 </div>
+                <div style="font-size:11px; color:#475569; background:#F8FAFC; border:1px solid #E2E8F0; padding:10px 12px; border-radius:8px; margin-top:12px; line-height:1.5;">
+                    💡 <strong>ATR 트레일링 가격 산출 기준 안내:</strong><br>
+                    • <strong>대형 손실 종목 (손실률 -25% 이하):</strong> 손실 최소화 탈출을 위해 목표가 <code>+1.2 ATR</code>, 트레일링 매도폭 <code>-0.5 ATR</code>, 손절가 <code>-10.0%</code> 산출<br>
+                    • <strong>정상/수익 종목 (손실률 -25% 초과):</strong> 수익 극대화 추세 추종을 위해 목표가 <code>+2.5 ATR</code>, 트레일링 매도폭 <code>-0.8 ATR</code>, 손절가 <code>-2.0 ATR</code> 산출
+                </div>
             </div>
             """
         else:
