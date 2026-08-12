@@ -243,15 +243,15 @@ class GmailNotifier:
                     s_sign = "+" if s_chg >= 0 else ""
 
                     if "비중과다" in s_act or "추매금지" in s_act:
-                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동. 단일 비중 20% 초과 집중 위험으로 추매가 금지됩니다. (2.5 ATR 목표가 <strong>{s_ttarget:,}원</strong> 도달 후 최고가 대비 -{s_ddelta:,}원 하락 시 1차 50% 차익실현 | 2.0 ATR 손절가 <strong>{s_tstop:,}원</strong> 하향 이탈 시 100% 손절)"
+                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동. 단일 비중 20% 초과 집중 위험으로 추매가 금지됩니다. (3.0 ATR 목표가 <strong>{s_ttarget:,}원</strong> 도달 후 최고가 대비 -{s_ddelta:,}원 하락 시 1차 50% 차익실현 | 1.5 ATR 손절가 <strong>{s_tstop:,}원</strong> 하향 이탈 시 100% 손절)"
                     elif "추매" in s_act and s_tbuy > 0:
                         advice_detail = f"당일 {s_sign}{s_chg:.2f}% 조정. 1.5 ATR 눌림목 감시가 <strong>{s_tbuy:,}원</strong> 도달 후 최저가 대비 +{s_rdelta:,}원 반등하여 <strong>{s_buy_trigger:,}원</strong> 도달 시 1차 50% 분할추매 고려 (손절가 <strong>{s_tstop:,}원</strong>)"
                     elif ("매도" in s_act or "반등" in s_act or "익절" in s_act) and s_ttarget > 0:
-                        advice_detail = f"기술적 반등/익절 진행 중. 2.5 ATR 목표가 <strong>{s_ttarget:,}원</strong> 도달 후 최고가 대비 -{s_ddelta:,}원 하락하여 <strong>{s_sell_trigger:,}원</strong> 도달 시 1차 50% 분할매도/차익실현."
+                        advice_detail = f"기술적 반등/익절 진행 중. 3.0 ATR 목표가 <strong>{s_ttarget:,}원</strong> 도달 후 최고가 대비 -{s_ddelta:,}원 하락하여 <strong>{s_sell_trigger:,}원</strong> 도달 시 1차 50% 분할매도/차익실현."
                     elif "손절" in s_act and s_tstop > 0:
-                        advice_detail = f"기술 추세 붕괴 위험. 2.0 ATR 손절가 <strong>{s_tstop:,}원</strong> 이하 하향 이탈 시 손절선 재설정 없이 100% 전량 손절 실행."
+                        advice_detail = f"기술 추세 붕괴 위험. 1.5 ATR 손절가 <strong>{s_tstop:,}원</strong> 이하 하향 이탈 시 손절선 재설정 없이 100% 전량 손절 실행."
                     else:
-                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동. 2.5 ATR 목표가 <strong>{s_ttarget:,}원</strong> (최고가 대비 -{s_ddelta:,}원 하락 시 50% 차익실현) 및 2.0 ATR 손절가 <strong>{s_tstop:,}원</strong> (하향 이탈 시 100% 손절) 감시 유지."
+                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동. 3.0 ATR 목표가 <strong>{s_ttarget:,}원</strong> (최고가 대비 -{s_ddelta:,}원 하락 시 50% 차익실현) 및 1.5 ATR 손절가 <strong>{s_tstop:,}원</strong> (하향 이탈 시 100% 손절) 감시 유지."
 
                     meaningful_cards_html += f"""
                     <div style="background:#FFFFFF; border-left:5px solid {s_color}; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
