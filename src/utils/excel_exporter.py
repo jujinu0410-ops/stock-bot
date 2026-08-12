@@ -52,10 +52,25 @@ def create_analysis_excel_report(date_str: str,
 
         # 매수 승인 여부와 관계없이 손절/익절 감시가격은 항상 계산 및 분리 유지!
         buy_status = "ON (주문대기)" if "제한적 분할추매 고려" in action_st else "OFF (조건미충족)"
-        stop_mon_status = "ON (상시감시)"
-        stop_order_status = "OFF (알림전용)"
-        target_mon_status = "ON (상시감시)"
-        target_order_status = "OFF (알림전용)"
+        
+        if not f_confirmed or "보류" in action_st or "미확정" in action_st:
+            stop_mon_status = "HOLD (재무미확정)"
+            stop_order_status = "OFF (HOLD)"
+            target_mon_status = "HOLD (재무미확정)"
+            target_order_status = "OFF (HOLD)"
+            conf_stop_val = "HOLD"
+            stop_tick_val = "HOLD"
+            target_tick_val = "HOLD"
+            buy_tick_val = "HOLD"
+        else:
+            stop_mon_status = "ON (상시감시)"
+            stop_order_status = "OFF (알림전용)"
+            target_mon_status = "ON (상시감시)"
+            target_order_status = "OFF (알림전용)"
+            conf_stop_val = h.get("confirmed_stop_price", 0)
+            stop_tick_val = h.get("kiwoom_stop_tick_price", 0)
+            target_tick_val = h.get("kiwoom_target_tick_price", 0)
+            buy_tick_val = h.get("kiwoom_buy_tick_price", 0)
 
         held_data.append({
             "순위": h.get("rank", "순위제외"),
@@ -78,14 +93,14 @@ def create_analysis_excel_report(date_str: str,
             "ATR 변동폭(%)": h.get("atr_pct", 0.0),
             "감시시작후 최고종가(원)": h.get("highest_close_price", h.get("current_price")),
             "전일확정 손절가(원)": h.get("prev_confirmed_stop", 0),
-            "금일확정 손절가(원)": h.get("confirmed_stop_price", 0),
+            "금일확정 손절가(원)": conf_stop_val,
             "손절선 갱신상태": h.get("stop_update_status", "유지"),
-            "추매 감시가격(원)": h.get("kiwoom_buy_tick_price", 0),
+            "추매 감시가격(원)": buy_tick_val,
             "추매 주문상태": buy_status,
-            "손절 감시가격(원)": h.get("kiwoom_stop_tick_price", 0),
+            "손절 감시가격(원)": stop_tick_val,
             "손절 가격감시": stop_mon_status,
             "손절 주문전송": stop_order_status,
-            "익절 감시가격(원)": h.get("kiwoom_target_tick_price", 0),
+            "익절 감시가격(원)": target_tick_val,
             "익절 가격감시": target_mon_status,
             "익절 주문전송": target_order_status,
             "총 매입금액(원)": h.get("total_invested"),

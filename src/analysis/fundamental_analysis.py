@@ -13,8 +13,13 @@ class FundamentalAnalysis:
     def evaluate(self) -> Dict[str, Any]:
         stock_name = str(self.data.get('stock_name', ''))
         stock_code = str(self.data.get('stock_code', ''))
-        etf_keywords = ['ETF', 'TIGER', 'RISE', 'PLUS', 'KODEX', 'ACE', 'SOL', 'KBSTAR', 'ARIRANG', 'HANARO']
-        is_etf = self.data.get("is_etf", False) or any(k in stock_name.upper() for k in etf_keywords) or stock_code in ['371460', '484730', '088500']
+        etf_keywords = ['ETF', 'TIGER', 'RISE', 'PLUS', 'KODEX', 'ACE', 'SOL', 'KBSTAR', 'ARIRANG', 'HANARO', '커버드콜', 'SOLACTIVE']
+        is_etf = (
+            self.data.get("is_etf", False) or
+            any(k in stock_name.upper() for k in etf_keywords) or
+            stock_code.startswith('3') or stock_code.startswith('4') or
+            stock_code in ['371460', '484730', '490590', '161510', '088500']
+        )
 
         # 1. ETF/ETN 상품 예외 처리 (기업 DART F점수 대상 제외)
         if is_etf:

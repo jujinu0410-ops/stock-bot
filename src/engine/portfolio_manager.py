@@ -113,10 +113,29 @@ class PortfolioManager:
             # 14일 ATR 수치 수집
             atr_14 = analysis.get("atr_14", current_price * 0.03) if analysis else current_price * 0.03
             atr_pct = analysis.get("atr_pct", 3.0) if analysis else 3.0
-            # [손실 중증도별 차등 ATR 트레일링 수식 적용 (안 1 - 표준 실전 스윙 모델)]
-            # 대형 손실 종목(손실률 -25% 이하): 목표가 +1.2 ATR, 트레일링 매도폭 -0.5 ATR, 손절가 -10.0%
-            # 정상/수익 종목(손실률 -25% 초과): 목표가 +2.5 ATR, 트레일링 매도폭 -0.8 ATR, 손절가 -2.0 ATR
-            is_heavy_loss = (pnl_pct <= -25.0)
+            f_sc = analysis.get("f_score", 0.0) if analysis else 0.0
+            t_sc = analysis.get("t_score_converted", 0.0) if analysis else 0.0
+            completeness = analysis.get("data_completeness", 100.0) if analysis else 0.0
+            f_confirmed = analysis.get("f_score_confirmed", True) if analysis else False
+            
+            # ETF/ETN/커버드콜 상품 100% 자동 판별 (3/4 시작 코드 및 키워드 연동)
+            is_etf = (
+                (analysis.get("is_etf", False) if analysis else False) or
+                code.startswith('3') or code.startswith('4') or
+                any(k in name.upper() for k in ['ETF', 'TIGER', 'RISE', 'PLUS', 'KODEX', 'ACE', 'SOL', 'KBSTAR', 'ARIRANG', 'HANARO', '커버드콜', 'SOLACTIVE'])
+            )
+
+            # ETF는 T점수 100% 적용, 일반기업은 (F*0.4 + T*0.6) 잠정/확정 종합점수 산출
+            if is_etf:
+                final_sc = t_sc
+                f_confirmed = True
+            else:
+                final_sc = round((f_sc * 0.4) + (t_sc * 0.6), 1)
+
+            # [손실 중증도별 차등 ATR 트레일링 수식 적용 (안 1 - 명확화)]
+            # 대형 손실 종목(손실률 -25% 이하 OR T점수 50미만): 목표가 +1.2 ATR, 트레일링 매도폭 -0.5 ATR, 손절가 -10.0%
+            # 정상/수익 종목(손실률 -25% 초과 AND T점수 50이상): 목표가 +2.5 ATR, 트레일링 매도폭 -0.8 ATR, 손절가 -2.0 ATR
+            is_heavy_loss = (pnl_pct <= -25.0 or (t_sc < 50.0 and not is_etf))
 
             if is_heavy_loss:
                 rebound_delta = int(atr_14 * 0.5)
@@ -144,6 +163,12 @@ class PortfolioManager:
             if confirmed_stop_price >= current_price or confirmed_stop_price <= 0:
                 confirmed_stop_price = target_stop
 
+            # DART 재무 미확정 종목 (뉴로메카 등)은 자동 감시 주문 오발동 방지를 위해 손절가 0원 보류 처리
+            if not f_confirmed:
+                confirmed_stop_price = 0.0
+                raw_ttarget = 0.0
+                raw_tbuy = 0.0
+
             if prev_confirmed_stop == 0:
                 stop_update_status = "🆕 신규설정"
             elif confirmed_stop_price > prev_confirmed_stop:
@@ -158,23 +183,16 @@ class PortfolioManager:
                 WHERE stock_code = ?
             """, (highest_close_price, confirmed_stop_price, code))
 
-            f_sc = analysis.get("f_score", 0.0) if analysis else 0.0
-            t_sc = analysis.get("t_score_converted", 0.0) if analysis else 0.0
-            completeness = analysis.get("data_completeness", 100.0) if analysis else 0.0
-            is_etf = analysis.get("is_etf", False) if analysis else False
-            f_confirmed = analysis.get("f_score_confirmed", True) if analysis else False
-
-            # ETF는 T점수 100% 적용, 일반기업은 (F*0.4 + T*0.6) 잠정/확정 종합점수 산출
-            if is_etf:
-                final_sc = t_sc
-            else:
-                final_sc = round((f_sc * 0.4) + (t_sc * 0.6), 1)
-
             # KRX 호가단위 보정 손절가 및 목표가/매수가 산출
-            kiwoom_stop_p = adjust_krx_tick_size(confirmed_stop_price, "down")
-            kiwoom_buy = adjust_krx_tick_size(raw_tbuy, "down") if raw_tbuy > 0 else 0
-            kiwoom_target = adjust_krx_tick_size(raw_ttarget, "up")
-            kiwoom_stop = kiwoom_stop_p if kiwoom_stop_p > 0 else adjust_krx_tick_size(confirmed_stop_price, "down")
+            if not f_confirmed:
+                kiwoom_stop = 0
+                kiwoom_target = 0
+                kiwoom_buy = 0
+            else:
+                kiwoom_stop_p = adjust_krx_tick_size(confirmed_stop_price, "down")
+                kiwoom_buy = adjust_krx_tick_size(raw_tbuy, "down") if raw_tbuy > 0 else 0
+                kiwoom_target = adjust_krx_tick_size(raw_ttarget, "up")
+                kiwoom_stop = kiwoom_stop_p if kiwoom_stop_p > 0 else adjust_krx_tick_size(confirmed_stop_price, "down")
 
             eval_list.append({
                 "stock_code": code,

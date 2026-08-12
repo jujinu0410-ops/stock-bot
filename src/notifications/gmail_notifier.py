@@ -198,16 +198,11 @@ class GmailNotifier:
                 <span style="font-size:9px; color:#DC2626;">{stop_str}</span>
                 """
 
-                # 9자 초과 긴 종목명 2줄 줄바꿈 처리
+                # 9자 초과 긴 종목명 단어 내부 임의 공백 분단 오타 방지 줄바꿈 처리
                 if len(name) > 8:
                     if " " in name:
-                        words = name.split(" ")
-                        first_p = words[0]
-                        rest_p = " ".join(words[1:])
-                        if len(rest_p) > 8:
-                            name_formatted = f"{first_p} {rest_p[:7]}<br>{rest_p[7:]}"
-                        else:
-                            name_formatted = f"{first_p}<br>{rest_p}"
+                        parts = name.split(" ", 1)
+                        name_formatted = f"{parts[0]}<br>{parts[1]}"
                     else:
                         name_formatted = f"{name[:7]}<br>{name[7:]}"
                 else:
@@ -315,9 +310,9 @@ class GmailNotifier:
                 </table>
                 </div>
                 <div style="font-size:11px; color:#475569; background:#F8FAFC; border:1px solid #E2E8F0; padding:10px 12px; border-radius:8px; margin-top:12px; line-height:1.5;">
-                    💡 <strong>ATR 트레일링 가격 산출 기준 안내:</strong><br>
-                    • <strong>대형 손실 종목 (손실률 -25% 이하):</strong> 손실 최소화 탈출을 위해 목표가 <code>+1.2 ATR</code>, 트레일링 매도폭 <code>-0.5 ATR</code>, 손절가 <code>-10.0%</code> 산출<br>
-                    • <strong>정상/수익 종목 (손실률 -25% 초과):</strong> 수익 극대화 추세 추종을 위해 목표가 <code>+2.5 ATR</code>, 트레일링 매도폭 <code>-0.8 ATR</code>, 손절가 <code>-2.0 ATR</code> 산출
+                    💡 <strong>ATR 트레일링 가격 산출 명기 기준 (동기화 완료):</strong><br>
+                    • <strong>대형 손실 / 기술 약세 종목 (손실률 -25% 이하 OR T점수 50미만):</strong> 손실 최소화 및 반등 시 빠른 비중 축소를 위해 목표가 <code>+1.2 ATR</code>, 트레일링 매도폭 <code>-0.5 ATR</code>, 손절가 <code>-10.0% 고정</code> 적용<br>
+                    • <strong>정상 / 수익 종목 (손실률 -25% 초과 AND T점수 50이상):</strong> 수익 극대화 추세 추종을 위해 목표가 <code>+2.5 ATR</code>, 트레일링 매도폭 <code>-0.8 ATR</code>, 손절가 <code>-2.0 ATR</code> 적용
                 </div>
             </div>
             """
@@ -452,7 +447,19 @@ class GmailNotifier:
                 target_p = h.get('trailing_target_price', 0)
                 buy_p = h.get('trailing_buy_price', 0)
                 act_st = h.get('action_status', '보유')
-                csv_lines.append(f"{code},{name},{qty},{avg_p:.1f},{cur_p},{w_pct:.1f},{f_sc:.1f},{t_sc:.1f},{final_sc:.1f},{atr_v:.1f},{stop_p},{target_p},{buy_p},{act_st}")
+                f_conf = h.get('f_score_confirmed', True)
+
+                # 자동매매 오발동 완벽 차단: 재무미확정/보류 종목은 CSV에 수치 대신 'HOLD' 문자열을 강제 배치
+                if not f_conf or stop_p == 0 or "보류" in str(act_st) or "미확정" in str(act_st):
+                    stop_str = "HOLD"
+                    target_str = "HOLD"
+                    buy_str = "HOLD"
+                else:
+                    stop_str = f"{int(stop_p)}"
+                    target_str = f"{int(target_p)}"
+                    buy_str = f"{int(buy_p)}"
+
+                csv_lines.append(f"{code},{name},{qty},{avg_p:.1f},{cur_p},{w_pct:.1f},{f_sc:.1f},{t_sc:.1f},{final_sc:.1f},{atr_v:.1f},{stop_str},{target_str},{buy_str},{act_st}")
         raw_csv_block_text = "\n".join(csv_lines)
 
         html_template = f"""
