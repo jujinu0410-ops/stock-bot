@@ -311,9 +311,9 @@ class GmailNotifier:
                 </table>
                 </div>
                 <div style="font-size:11px; color:#475569; background:#F8FAFC; border:1px solid #E2E8F0; padding:10px 12px; border-radius:8px; margin-top:12px; line-height:1.5;">
-                    💡 <strong>ATR 트레일링 가격 산출 명기 기준 (동기화 완료):</strong><br>
-                    • <strong>대형 손실 / 기술 약세 종목 (손실률 -25% 이하 OR T점수 50미만):</strong> 손실 최소화 및 반등 시 빠른 비중 축소를 위해 목표가 <code>+1.2 ATR</code>, 트레일링 매도폭 <code>-0.5 ATR</code>, 손절가 <code>-10.0% 고정</code> 적용<br>
-                    • <strong>정상 / 수익 종목 (손실률 -25% 초과 AND T점수 50이상):</strong> 수익 극대화 추세 추종을 위해 목표가 <code>+2.5 ATR</code>, 트레일링 매도폭 <code>-0.8 ATR</code>, 손절가 <code>-2.0 ATR</code> 적용
+                    💡 <strong>변동성 캡 적용 동적 ATR 트레일링 모델 (손익비 2.0:1 보장):</strong><br>
+                    • <strong>정상 / 수익 종목 (손실률 -25% 초과 & T점수 50이상):</strong> 손익비 2.0:1 보장을 위해 목표가 <code>+3.0 ATR (최대 +35% 캡)</code>, 트레일링 <code>-0.8 ATR</code>, 손절가 <code>-1.5 ATR (최소 -6%, 최대 -15% 캡)</code> 적용<br>
+                    • <strong>대형 손실 / 기술 약세 종목 (손실률 -25% 이하 OR T점수 50미만):</strong> 노이즈 털림 방지를 위해 손절가 <code>-1.0 ATR 최소거리 보장 (최대 -15% 캡)</code>, 목표가 <code>+1.5 ATR (최대 +20% 캡)</code>, 트레일링 <code>-0.5 ATR</code> 적용
                 </div>
             </div>
             """

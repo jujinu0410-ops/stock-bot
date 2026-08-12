@@ -133,23 +133,41 @@ class PortfolioManager:
             else:
                 final_sc = round((f_sc * 0.4) + (t_sc * 0.6), 1)
 
-            # [손실 중증도별 차등 ATR 트레일링 수식 적용 (안 1 - 순수 ATR 계산 보장)]
-            # 대형 손실 종목(손실률 -25% 이하 OR T점수 50미만): 목표가 +1.2 ATR, 트레일링 매도폭 -0.5 ATR, 손절가 -10.0% 고정
-            # 정상/수익 종목(손실률 -25% 초과 AND T점수 50이상): 목표가 +2.5 ATR, 트레일링 매도폭 -0.8 ATR, 손절가 -2.0 ATR 순수 차감
+            # [변동성 비율 캡 씌운 고급 ATR 모델 (손익비 2.0:1 보장)]
+            # 1. 정상/수익 종목 (손실률 > -25% & T >= 50):
+            #    - 목표가: +3.0 ATR (최대 +35% 캡)
+            #    - 손절가: -1.5 ATR (최소 -6%, 최대 -15% 캡) -> 손익비 2.0:1 (3.0 ATR : 1.5 ATR)
+            #    - 트레일링 매도폭: -0.8 ATR
+            # 2. 대형 손실 / 기술 약세 종목 (손실률 <= -25% OR T < 50):
+            #    - 목표가: +1.5 ATR (최대 +20% 캡, 초고변동성 비현실적 목표 방지)
+            #    - 손절가: -1.0 ATR 최소거리 보장 (최소 -8%, 최대 -15% 캡, -10% 고정 노이즈 제거)
+            #    - 트레일링 매도폭: -0.5 ATR
             is_heavy_loss = (pnl_pct <= -25.0 or (t_sc < 50.0 and not is_etf))
 
             if is_heavy_loss:
                 rebound_delta = int(atr_14 * 0.5)
                 drop_delta = int(atr_14 * 0.5)
                 raw_tbuy = current_price - (1.0 * atr_14)
-                raw_ttarget = current_price + (1.2 * atr_14)
-                target_stop = float(current_price * 0.90)  # 현재가 대비 -10.0% 손절선
+                
+                # 목표가 캡: +1.5 ATR 또는 최대 +20% (비현실적 극단치 억제)
+                target_dist = min(1.5 * atr_14, current_price * 0.20)
+                raw_ttarget = current_price + target_dist
+                
+                # 손절가 노이즈 방지 최소거리 1.0 ATR 보장 (최소 -8%, 최대 -15% 하한선)
+                stop_dist = min(max(1.0 * atr_14, current_price * 0.08), current_price * 0.15)
+                target_stop = float(current_price - stop_dist)
             else:
                 rebound_delta = int(atr_14 * 0.5)
                 drop_delta = int(atr_14 * 0.8)
                 raw_tbuy = current_price - (1.5 * atr_14)
-                raw_ttarget = current_price + (2.5 * atr_14)
-                target_stop = float(current_price - (2.0 * atr_14))  # 순수 2.0 ATR 차감 적용
+                
+                # 목표가: +3.0 ATR (최대 +35% 캡)
+                target_dist = min(3.0 * atr_14, current_price * 0.35)
+                raw_ttarget = current_price + target_dist
+                
+                # 손절가: -1.5 ATR (최소 -6%, 최대 -15% 캡) -> 손익비 2.0:1 보장
+                stop_dist = min(max(1.5 * atr_14, current_price * 0.06), current_price * 0.15)
+                target_stop = float(current_price - stop_dist)
 
             r_keys = r.keys()
             prev_highest = float(r["highest_close_price"] or 0.0) if "highest_close_price" in r_keys else 0.0
