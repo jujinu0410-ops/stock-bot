@@ -53,10 +53,10 @@ class PortfolioManager:
         """키움 API에서 계좌 보유 종목을 조회하여 DB portfolio_positions 및 stock_info 동기화"""
         logger.info("[PortfolioManager] 키움 API 계좌 보유 종목 동기화 진행 중...")
         
-        # 1. 17개 사용자 실제 보유 종목 리스트 기본 동기화
+        # 1. 15개 사용자 실질 계좌 보유 종목 리스트 동기화 (대동 000490, 한신기계 011700 등 미보유 종목 원천 제외)
         mock_positions = self.kiwoom._get_mock_account_positions()
 
-        # portfolio_positions 테이블 내 중복/오래된 무효 종목 코드(088500, 219550, 484730 등) 완전 삭제
+        # portfolio_positions 테이블 내 미보유/중복/오래된 무효 종목 코드(000490, 011700, 088500, 219550, 484730 등) 완전 삭제
         valid_codes = {p["stock_code"] for p in mock_positions}
         if valid_codes:
             valid_clause = ",".join(f"'{c}'" for c in valid_codes)

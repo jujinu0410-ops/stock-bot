@@ -1,5 +1,4 @@
 [
-  {"stock_code": "000490", "stock_name": "대동", "quantity": 100, "avg_buy_price": 9800.0},
   {"stock_code": "004960", "stock_name": "한신공영", "quantity": 48, "avg_buy_price": 8560.0},
   {"stock_code": "013030", "stock_name": "하이록코리아", "quantity": 90, "avg_buy_price": 38945.0},
   {"stock_code": "034020", "stock_name": "두산에너빌리티", "quantity": 27, "avg_buy_price": 74800.0},
