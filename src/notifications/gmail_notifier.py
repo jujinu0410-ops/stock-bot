@@ -105,18 +105,18 @@ class GmailNotifier:
 
             # 합산 종합점수 내림차순 정렬 보장
             held_portfolio_sorted = sorted(held_portfolio, key=lambda x: x.get("final_score", 0.0), reverse=True)
-            
-            # 의미있는 주가변동(1.2 ATR 이상 큰 주가변동 / 3.5% 이상 급등락 종목) 선별
+            profit_count = sum(1 for h in held_portfolio if h.get("pnl_pct", 0.0) >= 0)
+            loss_count = sum(1 for h in held_portfolio if h.get("pnl_pct", 0.0) < 0)
+
+            # 의미있는 주가변동(0.8 ATR 이상 변동 또는 2.5% 이상 변동 발생 종목) 선별
             meaningful_items = []
             for h in held_portfolio_sorted:
                 daily_chg = h.get('daily_change_pct', 0.0)
                 atr_pct = h.get('atr_pct', 3.0)
-
-                # 1.2 ATR 이상 변동 또는 3.5% 이상 급변동 발생 시 선별
-                if abs(daily_chg) >= max(3.5, atr_pct * 1.2):
+                if abs(daily_chg) >= max(2.5, atr_pct * 0.8):
                     meaningful_items.append(h)
 
-            for h in held_portfolio_sorted:
+            for rank_idx, h in enumerate(held_portfolio_sorted, start=1):
                 code = h.get('stock_code')
                 name = h.get('stock_name')
                 qty = h.get('quantity')
@@ -128,7 +128,7 @@ class GmailNotifier:
                 f_sc = h.get('f_score', 0.0)
                 t_sc = h.get('t_score', 0.0)
                 final_sc = h.get('final_score', 0.0)
-                action_st = h.get('action_status', '홀딩')
+                action_st = h.get('action_status', '보유')
 
                 pnl_color = "#10B981" if pnl_pct >= 0 else "#EF4444"
                 pnl_sign = "+" if pnl_pct >= 0 else ""
@@ -136,45 +136,60 @@ class GmailNotifier:
                 chg_color = "#10B981" if daily_chg >= 0 else "#EF4444"
                 chg_sign = "+" if daily_chg >= 0 else ""
 
-                rank_str = h.get("rank", "순위제외")
-                if "ETF" in str(rank_str):
-                    rank_badge = f"<span style='background:#0284C7; color:#FFFFFF; padding:2px 5px; border-radius:6px; font-weight:bold; font-size:10px;'>{rank_str}</span>"
-                elif "대기군" in str(rank_str):
-                    rank_badge = f"<span style='background:#D97706; color:#FFFFFF; padding:2px 5px; border-radius:6px; font-weight:bold; font-size:10px;'>{rank_str}</span>"
-                else:
-                    rank_badge = f"<span style='background:#1E293B; color:#FFFFFF; padding:2px 5px; border-radius:6px; font-weight:bold; font-size:10px;'>{rank_str}</span>"
+                # 순위: 깔끔한 아라비아 숫자 1, 2, 3...
+                rank_badge = f"<span style='font-weight:bold; font-size:12px; color:#0F172A;'>{rank_idx}</span>"
 
                 atr_v = h.get('atr_14', 0.0)
                 is_etf = h.get('is_etf', False)
                 f_confirmed = h.get('f_score_confirmed', True)
 
-                # 한 칸 세 줄(종합점수, F점수, T점수) 세로 배치
+                # 한 칸 세 줄(종합점수 80.2점 / F: 100.0 / T: 85.0 - 점수 단위 제거 후 숫자만 간략 표기)
                 if is_etf:
                     score_combined_cell = f"<strong style='font-size:12px; color:#6D28D9;'>{t_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#0284C7;'>(ETF T점수)</span>"
-                elif not f_confirmed:
-                    score_combined_cell = f"<strong style='font-size:12px; color:#6D28D9;'>{final_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#D97706;'>(F: {f_sc:.1f}점 잠정)</span><br><span style='font-size:9.5px; color:#1D4ED8;'>(T: {t_sc:.1f}점)</span>"
                 else:
-                    score_combined_cell = f"<strong style='font-size:12px; color:#6D28D9;'>{final_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#047857;'>(F: {f_sc:.1f}점)</span><br><span style='font-size:9.5px; color:#1D4ED8;'>(T: {t_sc:.1f}점)</span>"
+                    score_combined_cell = f"<strong style='font-size:12px; color:#6D28D9;'>{final_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#047857;'>F: {f_sc:.1f}</span><br><span style='font-size:9.5px; color:#1D4ED8;'>T: {t_sc:.1f}</span>"
 
-                # 깔끔한 ATR 표기
                 atr_display = f"{atr_v:,.0f}원"
 
-                # 순위 문구 제거 및 핵심 대응 전략만 표기
+                # 대응전략: 확정순위 제거, 핵심 전략 키워드 및 목:금액 / 트:금액 / 손:금액 간략 표기
                 import re
                 clean_strategy = re.sub(r'^(확정|잠정|ETF)\s*\d+위\s*', '', action_st).strip('()[] ')
-                if not clean_strategy:
-                    clean_strategy = "보유"
-
                 if "비중과다" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
-                elif "익절" in clean_strategy or "보유" in clean_strategy or "홀딩" in clean_strategy:
+                    action_kw = "비중과다 보유"
+                elif "익절" in clean_strategy or "차익" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#ECFDF5", "#6EE7B7", "#065F46"
-                elif "분할매도" in clean_strategy or "손절" in clean_strategy or "약세" in clean_strategy:
+                    action_kw = "익절/차익실현"
+                elif "추매" in clean_strategy or "분할매수" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#EFF6FF", "#93C5FD", "#1D4ED8"
+                    action_kw = "분할매수"
+                elif "분할매도" in clean_strategy or "비중축소" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FEF2F2", "#FCA5A5", "#991B1B"
+                    action_kw = "분할매도"
+                elif "손절" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FEF2F2", "#FCA5A5", "#991B1B"
+                    action_kw = "손절"
                 else:
                     badge_bg, badge_border, badge_color = "#F0F9FF", "#BAE6FD", "#0369A1"
+                    action_kw = "안정 보유"
 
-                # 7개 열 구성
+                t_target = h.get('kiwoom_target_tick_price', 0) or h.get('target_profit_price', 0)
+                t_stop = h.get('confirmed_stop_price', 0) or h.get('kiwoom_stop_tick_price', 0)
+                d_delta = h.get('drop_delta', int(atr_v * 0.8))
+                r_delta = h.get('rebound_delta', int(atr_v * 0.5))
+
+                if "매수" in action_kw:
+                    tr_text = f"트: +{r_delta:,}원"
+                else:
+                    tr_text = f"트: -{d_delta:,}원"
+
+                strategy_cell_html = f"""
+                <span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:2px 5px; border-radius:5px; font-weight:bold; font-size:9.5px; display:inline-block; margin-bottom:2px;">{action_kw}</span><br>
+                <span style="font-size:9px; color:#1D4ED8; font-weight:bold;">목: {t_target:,}원</span><br>
+                <span style="font-size:9px; color:#D97706;">{tr_text}</span><br>
+                <span style="font-size:9px; color:#DC2626;">손: {t_stop:,}원</span>
+                """
+
                 held_rows_html += f"""
                 <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
                     <td style="padding:6px 3px; text-align:center;">{rank_badge}</td>
@@ -183,7 +198,7 @@ class GmailNotifier:
                     <td style="padding:6px 3px; font-weight:bold;">{cur_p:,}원<br><span style="font-size:9.5px; color:{chg_color};">({chg_sign}{daily_chg:.2f}%)</span></td>
                     <td style="padding:6px 3px; color:#475569; font-weight:bold;">{atr_display}</td>
                     <td style="padding:6px 3px; font-weight:bold; color:{pnl_color};">{pnl_sign}{pnl_pct:.2f}%<br><span style="font-size:9.5px; font-weight:normal;">({pnl_sign}{pnl_amt:,}원)</span></td>
-                    <td style="padding:6px 3px;"><span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:3px 5px; border-radius:6px; font-weight:bold; font-size:9.5px; display:inline-block;">{clean_strategy}</span></td>
+                    <td style="padding:6px 3px;">{strategy_cell_html}</td>
                 </tr>
                 """
 
@@ -438,18 +453,18 @@ class GmailNotifier:
                 <!-- Content Body -->
                 <div style="padding:10px;">
                     <!-- Overview Summary Box -->
-                    <div style="display:flex; justify-content:space-around; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px; padding:16px; margin-bottom:24px; text-align:center;">
+                    <div style="display:flex; justify-content:space-around; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px; padding:14px; margin-bottom:20px; text-align:center;">
                         <div>
-                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">내 보유 종목</div>
-                            <div style="font-size:20px; font-weight:bold; color:#0F172A;">{held_count}개</div>
+                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">내 계좌 보유 종목</div>
+                            <div style="font-size:18px; font-weight:bold; color:#0F172A;">{held_count}개</div>
                         </div>
-                        <div style="border-left:1px solid #CBD5E1; padding-left:24px;">
-                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">스캔 대상</div>
-                            <div style="font-size:20px; font-weight:bold; color:#475569;">{total_count}개</div>
+                        <div style="border-left:1px solid #CBD5E1; padding-left:20px;">
+                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">수익 종목</div>
+                            <div style="font-size:18px; font-weight:bold; color:#10B981;">{profit_count}개</div>
                         </div>
-                        <div style="border-left:1px solid #CBD5E1; padding-left:24px;">
-                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">포착 매매신호</div>
-                            <div style="font-size:20px; font-weight:bold; color:#2563EB;">{action_count}개</div>
+                        <div style="border-left:1px solid #CBD5E1; padding-left:20px;">
+                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">손실 종목</div>
+                            <div style="font-size:18px; font-weight:bold; color:#EF4444;">{loss_count}개</div>
                         </div>
                     </div>
 
