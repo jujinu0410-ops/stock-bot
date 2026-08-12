@@ -123,12 +123,12 @@ class TechnicalAnalysis:
         chaikin_slow = adl.ewm(span=26, adjust=False).mean()
         df['chaikin_osc'] = chaikin_fast - chaikin_slow
 
-        # 7. ATR (Average True Range, 14일) 연산
+        # 7. ATR (Average True Range, 14일 - 키움 HTS/MTS 영웅문 표준 Wilder's EWM 적용)
         tr1 = df['high_price'] - df['low_price']
         tr2 = (df['high_price'] - df['close_price'].shift(1)).abs()
         tr3 = (df['low_price'] - df['close_price'].shift(1)).abs()
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        df['atr_14'] = tr.rolling(window=14).mean()
+        df['atr_14'] = tr.ewm(alpha=1.0/14.0, adjust=False).mean()
         df['atr_pct'] = (df['atr_14'] / (df['close_price'] + 1e-9)) * 100.0
 
         return df

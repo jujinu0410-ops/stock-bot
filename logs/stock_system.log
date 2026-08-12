@@ -8569,3 +8569,36 @@ function goHome() {
 [2026-08-12 14:44:17] [INFO] [stock_system:db_manager.py:117] - 대량 DB 입력 성공: 60건
 [2026-08-12 14:44:19] [INFO] [stock_system:dart_api.py:60] - [DART API] DART 고유코드 3981개 동적 캐싱 완료
 [2026-08-12 14:44:20] [INFO] [stock_system:dart_api.py:116] - [DART API] 207940 정밀 재무수집 (2025년 11011 CFS / 매출:4,556,971,695,180원, 영업이익:2,069,221,266,630원, OCF:2,247,807,426,551원, 검증성공:True)
+[2026-08-12 14:53:39] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-12 14:53:39] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-12 14:53:39] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-12 14:53:39] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-12 14:53:39] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-12 14:53:39] [INFO] [stock_system:db_manager.py:75] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-12 14:53:39] [INFO] [stock_system:scan_stock_for_gems.py:71] - === [Gemini Gems 전용] 대동 (000490) Kiwoom REST + DART 정밀 분석 시작 ===
+[2026-08-12 14:53:39] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 000490 실제 시세 60봉 수집 완료
+[2026-08-12 14:53:39] [INFO] [stock_system:db_manager.py:117] - 대량 DB 입력 성공: 60건
+[2026-08-12 14:53:40] [INFO] [stock_system:dart_api.py:116] - [DART API] 000490 정밀 재무수집 (2025년 11011 CFS / 매출:1,484,722,098,136원, 영업이익:31,224,606,429원, OCF:-56,725,188,304원, 검증성공:True)
+[2026-08-12 15:03:53] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-12 15:03:53] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-12 15:03:53] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-12 15:03:53] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-12 15:03:53] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-12 15:03:53] [INFO] [stock_system:db_manager.py:75] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-12 15:04:05] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-12 15:04:05] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-12 15:04:05] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-12 15:04:05] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-12 15:04:05] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-12 15:04:05] [INFO] [stock_system:db_manager.py:75] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-12 15:04:05] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 000490 실제 시세 60봉 수집 완료
+[2026-08-12 15:04:16] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-12 15:04:16] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-12 15:04:16] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-12 15:04:16] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-12 15:04:16] [INFO] [stock_system:db_manager.py:29] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-12 15:04:16] [INFO] [stock_system:db_manager.py:75] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-12 15:04:16] [INFO] [stock_system:scan_stock_for_gems.py:71] - === [Gemini Gems 전용] 대동 (000490) Kiwoom REST + DART 정밀 분석 시작 ===
+[2026-08-12 15:04:17] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 000490 실제 시세 60봉 수집 완료
+[2026-08-12 15:04:17] [INFO] [stock_system:db_manager.py:117] - 대량 DB 입력 성공: 60건
+[2026-08-12 15:04:17] [INFO] [stock_system:dart_api.py:116] - [DART API] 000490 정밀 재무수집 (2025년 11011 CFS / 매출:1,484,722,098,136원, 영업이익:31,224,606,429원, OCF:-56,725,188,304원, 검증성공:True)
