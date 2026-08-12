@@ -133,6 +133,8 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
 
     rebound_delta = int(atr_v * 0.5) if atr_v > 0 else 0
     drop_delta = int(atr_v * 0.8) if atr_v > 0 else 0
+    buy_trigger_example = t_buy + rebound_delta if t_buy > 0 else 0
+    sell_trigger_example = t_target - drop_delta if t_target > 0 else 0
 
     # Gemini Gems에 그대로 입력할 정밀 텍스트 리포트 생성
     gems_report = f"""
@@ -148,16 +150,17 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
 
 2. ⚙️ 키움 HTS/MTS 트레일링 주문 정밀 설정 파라미터 (Auto-Trading Rules)
    🔹 [트레일링 매수 설정]:
-      - 감시 시작가: {t_buy:,}원 (1.5 ATR 눌림목 도달 시 감시 시작)
-      - 최저가 대비 반등폭: +{rebound_delta:,}원 (+0.5 ATR 반등 시 주문 발동)
-      - 1차 주문 수량 비중: 목표 수량의 50% 분할 매수 (2차 50% 추가 눌림목 대기)
+      - 감시 시작가 (기준가): {t_buy:,}원 (1.5 ATR 눌림목 도달 시 감시 시작)
+      - 반등 발동 조건: 감시 시작 후 최저가 대비 +{rebound_delta:,}원 상승 시 발동 (예: 최저가 {t_buy:,}원에서 +{rebound_delta:,}원 상승하여 {buy_trigger_example:,}원 도달 시)
+      - 1차 매수 수량 비중: 목표 수량의 50% 분할 매수 (잔여 50%는 추가 2차 눌림목 대기)
    🔹 [트레일링 익절 설정]:
-      - 감시 시작가 (목표가): {t_target:,}원 (2.5 ATR 상단 도달 시 감시 시작)
-      - 최고가 대비 추락폭: -{drop_delta:,}원 (-0.8 ATR 추락 시 이익실현 발동)
+      - 감시 시작가 (목표가): {t_target:,}원 (2.5 ATR 목표가 도달 시 감시 시작)
+      - 추락 발동 조건: 감시 시작 후 최고가 대비 -{drop_delta:,}원 하락 시 발동 (예: 최고가 {t_target:,}원에서 -{drop_delta:,}원 하락하여 {sell_trigger_example:,}원 도달 시)
       - 1차 익절 수량 비중: 보유 수량의 50% 차익 실현 (잔여 50% 추세 추적)
    🔹 [스탑로스 손절 설정]:
-      - 감시 시작가 (손절가): {t_stop:,}원 (2.0 ATR 하단 이탈 시)
-      - 손절 매도 수량 비중: 보유 수량 100% 전량 이탈 손절
+      - 손절 기준 가격: {t_stop:,}원 (2.0 ATR 손절선 이탈 시)
+      - 손절 발동 조건: {t_stop:,}원 이하로 하락/이탈 시 즉시 발동
+      - 손절 매도 수량 비중: 보유 수량 100% 전량 손절
 
 3. 🏢 OpenDART 2025년 공시 재무 (Fundamental Analysis)
    • 공시 보고서 종류: 2025년 사업보고서 ({fs_div} 연결/별도)
