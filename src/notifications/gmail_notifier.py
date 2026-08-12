@@ -130,60 +130,53 @@ class GmailNotifier:
                 chg_color = "#10B981" if daily_chg >= 0 else "#EF4444"
                 chg_sign = "+" if daily_chg >= 0 else ""
 
-                if "손절" in action_st or "하위" in action_st or "비중축소" in action_st or "약세" in action_st:
-                    badge_bg = "#FEF2F2"
-                    badge_border = "#FCA5A5"
-                    badge_color = "#991B1B"
-                elif "익절" in action_st:
-                    badge_bg = "#ECFDF5"
-                    badge_border = "#6EE7B7"
-                    badge_color = "#065F46"
-                elif "비중과다" in action_st or "미수집" in action_st:
-                    badge_bg = "#FFFBEB"
-                    badge_border = "#FCD34D"
-                    badge_color = "#B45309"
-                else:
-                    badge_bg = "#F0F9FF"
-                    badge_border = "#BAE6FD"
-                    badge_color = "#0369A1"
-
                 rank_str = h.get("rank", "순위제외")
                 if "ETF" in str(rank_str):
-                    rank_badge = f"<span style='background:#0284C7; color:#FFFFFF; padding:2px 6px; border-radius:8px; font-weight:bold; font-size:10px;'>{rank_str}</span>"
+                    rank_badge = f"<span style='background:#0284C7; color:#FFFFFF; padding:2px 5px; border-radius:6px; font-weight:bold; font-size:10px;'>{rank_str}</span>"
                 elif "대기군" in str(rank_str):
-                    rank_badge = f"<span style='background:#D97706; color:#FFFFFF; padding:2px 6px; border-radius:8px; font-weight:bold; font-size:10px;'>{rank_str}</span>"
+                    rank_badge = f"<span style='background:#D97706; color:#FFFFFF; padding:2px 5px; border-radius:6px; font-weight:bold; font-size:10px;'>{rank_str}</span>"
                 else:
-                    rank_badge = f"<span style='background:#1E293B; color:#FFFFFF; padding:2px 6px; border-radius:8px; font-weight:bold; font-size:10px;'>{rank_str}</span>"
+                    rank_badge = f"<span style='background:#1E293B; color:#FFFFFF; padding:2px 5px; border-radius:6px; font-weight:bold; font-size:10px;'>{rank_str}</span>"
 
                 atr_v = h.get('atr_14', 0.0)
-                atr_p = h.get('atr_pct', 0.0)
-                t_stop = h.get('confirmed_stop_price', 0)
-                w_pct = h.get('eval_weight_pct', 0.0)
                 is_etf = h.get('is_etf', False)
                 f_confirmed = h.get('f_score_confirmed', True)
 
+                # 한 칸 세 줄(종합점수, F점수, T점수) 세로 배치
                 if is_etf:
-                    f_display = "<span style='font-size:10px; color:#6B7280;'>[ETF 제외]</span>"
-                    final_display = f"{t_sc:.1f}점<br><span style='font-size:9px; color:#6B7280;'>(ETF T점수)</span>"
+                    score_combined_cell = f"<strong style='font-size:12px; color:#6D28D9;'>{t_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#0284C7;'>(ETF T점수)</span>"
                 elif not f_confirmed:
-                    f_display = f"<span style='font-size:10px; color:#D97706;'>{f_sc:.1f}점<br>(잠정)</span>"
-                    final_display = f"{final_sc:.1f}점<br><span style='font-size:9px; color:#D97706;'>(잠정)</span>"
+                    score_combined_cell = f"<strong style='font-size:12px; color:#6D28D9;'>{final_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#D97706;'>(F: {f_sc:.1f}점 잠정)</span><br><span style='font-size:9.5px; color:#1D4ED8;'>(T: {t_sc:.1f}점)</span>"
                 else:
-                    f_display = f"{f_sc:.1f}점"
-                    final_display = f"{final_sc:.1f}점"
+                    score_combined_cell = f"<strong style='font-size:12px; color:#6D28D9;'>{final_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#047857;'>(F: {f_sc:.1f}점)</span><br><span style='font-size:9.5px; color:#1D4ED8;'>(T: {t_sc:.1f}점)</span>"
+
+                # 깔끔한 ATR 표기
+                atr_display = f"{atr_v:,.0f}원"
+
+                # 순위 문구 제거 및 핵심 대응 전략만 표기
+                import re
+                clean_strategy = re.sub(r'^(확정|잠정|ETF)\s*\d+위\s*', '', action_st).strip('()[] ')
+                if not clean_strategy:
+                    clean_strategy = "보유"
+
+                if "비중과다" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
+                elif "익절" in clean_strategy or "보유" in clean_strategy or "홀딩" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#ECFDF5", "#6EE7B7", "#065F46"
+                elif "분할매도" in clean_strategy or "손절" in clean_strategy or "약세" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FEF2F2", "#FCA5A5", "#991B1B"
+                else:
+                    badge_bg, badge_border, badge_color = "#F0F9FF", "#BAE6FD", "#0369A1"
 
                 held_rows_html += f"""
-                <tr style="border-bottom:1px solid #E2E8F0; font-size:12px;">
-                    <td style="padding:8px 4px; text-align:center;">{rank_badge}</td>
-                    <td style="padding:8px 4px; font-weight:bold; color:#0F172A;">{name} <span style="font-size:10px; color:#64748B;">({code})</span></td>
-                    <td style="padding:8px 4px; font-weight:bold; color:#7C3AED;">{w_pct:.1f}%</td>
-                    <td style="padding:8px 4px; font-size:11px; color:#047857; font-weight:bold;">{f_display}</td>
-                    <td style="padding:8px 4px; font-size:11px; color:#1D4ED8;">{t_sc:.1f}점</td>
-                    <td style="padding:8px 4px; font-weight:bold; color:#6D28D9; font-size:13px; background:#F5F3FF;">{final_display}</td>
-                    <td style="padding:8px 4px; font-weight:bold;">{cur_p:,}원 <br><span style="font-size:10px; color:{chg_color};">({chg_sign}{daily_chg:.2f}%)</span></td>
-                    <td style="padding:8px 4px; font-size:11px; color:#475569;">{atr_v:,.0f}원<br><span style="font-size:10px; color:#DC2626;">(손절:{t_stop:,}원)</span></td>
-                    <td style="padding:8px 4px; font-weight:bold; color:{pnl_color};">{pnl_sign}{pnl_pct:.2f}%<br><span style="font-size:10px; font-weight:normal;">({pnl_sign}{pnl_amt:,}원)</span></td>
-                    <td style="padding:8px 4px;"><span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:3px 6px; border-radius:6px; font-weight:bold; font-size:10px; display:inline-block;">{action_st}</span></td>
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 3px; text-align:center;">{rank_badge}</td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A;">{name}<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">({code})</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;">{score_combined_cell}</td>
+                    <td style="padding:6px 3px; font-weight:bold;">{cur_p:,}원<br><span style="font-size:9.5px; color:{chg_color};">({chg_sign}{daily_chg:.2f}%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; font-weight:bold;">{atr_display}</td>
+                    <td style="padding:6px 3px; font-weight:bold; color:{pnl_color};">{pnl_sign}{pnl_pct:.2f}%<br><span style="font-size:9.5px; font-weight:normal;">({pnl_sign}{pnl_amt:,}원)</span></td>
+                    <td style="padding:6px 3px;"><span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:3px 5px; border-radius:6px; font-weight:bold; font-size:9.5px; display:inline-block;">{clean_strategy}</span></td>
                 </tr>
                 """
 
@@ -459,10 +452,6 @@ class GmailNotifier:
 
                     <!-- 1. Held Portfolio Section -->
                     {held_section_html}
-
-                    <!-- 2. Signal Cards Section -->
-                    <h2 style="font-size:16px; color:#1E293B; border-left:4px solid #4F46E5; padding-left:10px; margin-bottom:16px;">🎯 신규 매매 포착 종목 리스트</h2>
-                    {signal_cards_html}
 
                     <!-- 4. Raw CSV Data Section (Primary Audit Data for Automated API Inspection) -->
                     <div style="margin-top:32px; background:#0F172A; color:#E2E8F0; padding:16px; border-radius:10px; font-family:Consolas, monospace; font-size:10px; line-height:1.5; overflow-x:auto;">
