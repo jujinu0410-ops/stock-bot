@@ -17,7 +17,6 @@ class FundamentalAnalysis:
         is_etf = (
             self.data.get("is_etf", False) or
             any(k in stock_name.upper() for k in etf_keywords) or
-            stock_code.startswith('3') or stock_code.startswith('4') or
             stock_code in ['371460', '484730', '490590', '161510', '088500']
         )
 

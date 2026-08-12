@@ -118,11 +118,12 @@ class PortfolioManager:
             completeness = analysis.get("data_completeness", 100.0) if analysis else 0.0
             f_confirmed = analysis.get("f_score_confirmed", True) if analysis else False
             
-            # ETF/ETN/커버드콜 상품 100% 자동 판별 (3/4 시작 코드 및 키워드 연동)
+            # ETF/ETN/커버드콜 상품 정밀 판별 (뉴로메카 등 3번대 일반 개별주식 오류 방지)
+            etf_keywords = ['ETF', 'TIGER', 'RISE', 'PLUS', 'KODEX', 'ACE', 'SOL', 'KBSTAR', 'ARIRANG', 'HANARO', '커버드콜', 'SOLACTIVE']
             is_etf = (
                 (analysis.get("is_etf", False) if analysis else False) or
-                code.startswith('3') or code.startswith('4') or
-                any(k in name.upper() for k in ['ETF', 'TIGER', 'RISE', 'PLUS', 'KODEX', 'ACE', 'SOL', 'KBSTAR', 'ARIRANG', 'HANARO', '커버드콜', 'SOLACTIVE'])
+                any(k in name.upper() for k in etf_keywords) or
+                code in ['371460', '484730', '490590', '161510', '088500']
             )
 
             # ETF는 T점수 100% 적용, 일반기업은 (F*0.4 + T*0.6) 잠정/확정 종합점수 산출
@@ -132,9 +133,9 @@ class PortfolioManager:
             else:
                 final_sc = round((f_sc * 0.4) + (t_sc * 0.6), 1)
 
-            # [손실 중증도별 차등 ATR 트레일링 수식 적용 (안 1 - 명확화)]
-            # 대형 손실 종목(손실률 -25% 이하 OR T점수 50미만): 목표가 +1.2 ATR, 트레일링 매도폭 -0.5 ATR, 손절가 -10.0%
-            # 정상/수익 종목(손실률 -25% 초과 AND T점수 50이상): 목표가 +2.5 ATR, 트레일링 매도폭 -0.8 ATR, 손절가 -2.0 ATR
+            # [손실 중증도별 차등 ATR 트레일링 수식 적용 (안 1 - 순수 ATR 계산 보장)]
+            # 대형 손실 종목(손실률 -25% 이하 OR T점수 50미만): 목표가 +1.2 ATR, 트레일링 매도폭 -0.5 ATR, 손절가 -10.0% 고정
+            # 정상/수익 종목(손실률 -25% 초과 AND T점수 50이상): 목표가 +2.5 ATR, 트레일링 매도폭 -0.8 ATR, 손절가 -2.0 ATR 순수 차감
             is_heavy_loss = (pnl_pct <= -25.0 or (t_sc < 50.0 and not is_etf))
 
             if is_heavy_loss:
@@ -148,7 +149,7 @@ class PortfolioManager:
                 drop_delta = int(atr_14 * 0.8)
                 raw_tbuy = current_price - (1.5 * atr_14)
                 raw_ttarget = current_price + (2.5 * atr_14)
-                target_stop = max(float(current_price - (2.0 * atr_14)), float(current_price * 0.85))
+                target_stop = float(current_price - (2.0 * atr_14))  # 순수 2.0 ATR 차감 적용
 
             r_keys = r.keys()
             prev_highest = float(r["highest_close_price"] or 0.0) if "highest_close_price" in r_keys else 0.0

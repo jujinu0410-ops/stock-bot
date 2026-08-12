@@ -146,6 +146,8 @@ class GmailNotifier:
                 # 한 칸 세 줄(종합점수 80.2점 / F: 100.0 / T: 85.0 - 점수 단위 제거 후 숫자만 간략 표기)
                 if is_etf:
                     score_combined_cell = f"<strong style='font-size:12px; color:#6D28D9;'>{t_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#0284C7;'>(ETF T점수)</span>"
+                elif not f_confirmed:
+                    score_combined_cell = f"<strong style='font-size:12px; color:#D97706;'>{final_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#D97706;'>F: {f_sc:.1f}(잠정)</span><br><span style='font-size:9.5px; color:#1D4ED8;'>T: {t_sc:.1f}</span>"
                 else:
                     score_combined_cell = f"<strong style='font-size:12px; color:#6D28D9;'>{final_sc:.1f}점</strong><br><span style='font-size:9.5px; color:#047857;'>F: {f_sc:.1f}</span><br><span style='font-size:9.5px; color:#1D4ED8;'>T: {t_sc:.1f}</span>"
 
@@ -156,7 +158,7 @@ class GmailNotifier:
                 clean_strategy = re.sub(r'^(확정|잠정|ETF)\s*\d+위\s*', '', action_st).strip('()[] ')
                 if not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
-                    action_kw = "⚠️ 재무미확정 (보류)"
+                    action_kw = "⚠️ DART 재무미확정 (보류)"
                 elif "비중과다" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "비중과다 보유"
@@ -199,12 +201,9 @@ class GmailNotifier:
                 """
 
                 # 9자 초과 긴 종목명 단어 내부 임의 공백 분단 오타 방지 줄바꿈 처리
-                if len(name) > 8:
-                    if " " in name:
-                        parts = name.split(" ", 1)
-                        name_formatted = f"{parts[0]}<br>{parts[1]}"
-                    else:
-                        name_formatted = f"{name[:7]}<br>{name[7:]}"
+                if len(name) > 9 and " " in name:
+                    parts = name.split(" ", 1)
+                    name_formatted = f"{parts[0]}<br>{parts[1]}"
                 else:
                     name_formatted = name
 
