@@ -156,10 +156,8 @@ class PortfolioManager:
             highest_close_price = max(prev_highest, float(current_price))
             prev_confirmed_stop = float(r["confirmed_stop_price"] or 0.0) if "confirmed_stop_price" in r_keys else 0.0
 
-            if prev_confirmed_stop > 0 and prev_confirmed_stop < current_price:
-                confirmed_stop_price = max(prev_confirmed_stop, target_stop)
-            else:
-                confirmed_stop_price = target_stop
+            # 확정 손절가 산출: 수식 계산된 target_stop(순수 2.0 ATR 또는 -10% 고정선)을 최우선 적용
+            confirmed_stop_price = target_stop
 
             if confirmed_stop_price >= current_price or confirmed_stop_price <= 0:
                 confirmed_stop_price = target_stop

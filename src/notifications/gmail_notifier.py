@@ -183,19 +183,21 @@ class GmailNotifier:
                 d_delta = h.get('drop_delta', int(atr_v * 0.8))
                 r_delta = h.get('rebound_delta', int(atr_v * 0.5))
 
-                if "매수" in action_kw:
-                    tr_text = f"트: +{r_delta:,}원"
-                else:
-                    tr_text = f"트: -{d_delta:,}원"
-
                 if t_stop <= 0 or not f_confirmed or "보류" in action_kw:
+                    target_str = "목: - (데이터보류)"
+                    tr_text = "트: - (데이터보류)"
                     stop_str = "손: - (데이터보류)"
                 else:
+                    target_str = f"목: {t_target:,}원"
+                    if "매수" in action_kw:
+                        tr_text = f"트: +{r_delta:,}원"
+                    else:
+                        tr_text = f"트: -{d_delta:,}원"
                     stop_str = f"손: {t_stop:,}원"
 
                 strategy_cell_html = f"""
                 <span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:2px 5px; border-radius:5px; font-weight:bold; font-size:9.5px; display:inline-block; margin-bottom:2px;">{action_kw}</span><br>
-                <span style="font-size:9px; color:#1D4ED8; font-weight:bold;">목: {t_target:,}원</span><br>
+                <span style="font-size:9px; color:#1D4ED8; font-weight:bold;">{target_str}</span><br>
                 <span style="font-size:9px; color:#D97706;">{tr_text}</span><br>
                 <span style="font-size:9px; color:#DC2626;">{stop_str}</span>
                 """
