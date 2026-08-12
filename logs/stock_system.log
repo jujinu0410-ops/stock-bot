@@ -9594,3 +9594,153 @@ NameError: name 'swing_3pct_items' is not defined
 [2026-08-12 16:57:00] [INFO] [stock_system:gmail_notifier.py:61] - [Gmail] Gmail SMTP 서버 접속 시도 중... (jujinu0410@gmail.com -> jujinu0410@gmail.com)
 [2026-08-12 16:57:04] [INFO] [stock_system:gmail_notifier.py:69] - [Gmail] 이메일 및 첨부 파일 발송 성공! (제목: [내 계좌 스윙 리포트] 8월 12일 보유 종목 정밀 평가 & 관심 종목 리포트)
 [2026-08-12 16:57:04] [INFO] [stock_system:main.py:183] - 내 종목 정밀 평가 지메일 리포트 (본문 CSV, 백업 CSV 및 ASCII XLSX 첨부) 성공 발송 완료!
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:78] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-12 17:01:29] [INFO] [stock_system:main.py:62] - ==================================================
+[2026-08-12 17:01:29] [INFO] [stock_system:main.py:63] -  [내 계좌 보유 종목 중심 실시간 정밀 평가 & 리포트 발송] - 2026-08-12 17:01:29
+[2026-08-12 17:01:29] [INFO] [stock_system:main.py:64] - ==================================================
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:32] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-12 17:01:29] [INFO] [stock_system:db_manager.py:78] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:54] - [PortfolioManager] 키움 API 계좌 보유 종목 동기화 진행 중...
+[2026-08-12 17:01:29] [INFO] [stock_system:kiwoom_api.py:126] - [Kiwoom API] config/portfolio_holdings.json 기반 최신 계좌 보유종목 16개 로드 성공
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 대동(000490) 100주 @ 9,800.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 한신기계(011700) 769주 @ 4,282.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 하이록코리아(013030) 90주 @ 38,945.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 두산에너빌리티(034020) 27주 @ 74,800.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 포스코인터내셔널(047050) 158주 @ 62,806.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 코데즈컴바인(047770) 989주 @ 4,745.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 테이팩스(055490) 4283주 @ 23,365.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 알에스오토메이션(140670) 531주 @ 18,899.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: PLUS 고배당주(088500) 250주 @ 28,186.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 유바이오로직스(206650) 418주 @ 15,717.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 자이글(219550) 9314주 @ 7,518.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: DSC인베스트먼트(241520) 115주 @ 17,995.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: HD현대일렉트릭(267260) 4주 @ 745,000.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 뉴로메카(348340) 124주 @ 80,329.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: TIGER 차이나전기차SOLACTIVE(371460) 137주 @ 14,570.0원
+[2026-08-12 17:01:29] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: RISE 미국AI밸류체인TOP3Plus(484730) 9114주 @ 16,458.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:kiwoom_api.py:44] - [Kiwoom API] OAuth 2.0 실시간 접근 토큰 발급 성공
+[2026-08-12 17:01:30] [INFO] [stock_system:kiwoom_api.py:105] - [Kiwoom API] 키움 REST API kt00018 실시간 계좌 잔고 13개 종목 수집 완료!
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 한신공영(004960) 952주 @ 11,051.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 하이록코리아(013030) 90주 @ 38,945.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 포스코인터내셔널(047050) 158주 @ 62,806.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 코데즈컴바인(047770) 989주 @ 4,745.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 테이팩스(055490) 4283주 @ 23,364.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 알에스오토메이션(140670) 531주 @ 18,899.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: PLUS 고배당주(161510) 250주 @ 28,186.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 유바이오로직스(206650) 293주 @ 15,716.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 자이글(234920) 9314주 @ 7,517.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: DSC인베스트먼트(241520) 115주 @ 17,995.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: HD현대일렉트릭(267260) 4주 @ 745,000.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: 뉴로메카(348340) 124주 @ 80,329.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:49] - [PortfolioManager] 실제 보유 종목 등록 완료: RISE 미국AI밸류체인데일리고정커버드콜(490590) 9114주 @ 16,458.0원
+[2026-08-12 17:01:30] [INFO] [stock_system:portfolio_manager.py:71] - [PortfolioManager] 키움 실시간 보유 종목 13개 동기화 반영 완료
+[2026-08-12 17:01:30] [INFO] [stock_system:main.py:29] - 실제 한국주식 시장 실시간 시세 및 DART 재무 데이터 수집 진행 중...
+[2026-08-12 17:01:31] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 011700 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:31] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:31] [INFO] [stock_system:dart_api.py:116] - [DART API] 011700 정밀 재무수집 (2025년 11011 CFS / 매출:52,718,857,507원, 영업이익:-1,477,530,957원, OCF:-1,486,021,356원, 검증성공:True)
+[2026-08-12 17:01:32] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 013030 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:32] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:32] [INFO] [stock_system:dart_api.py:116] - [DART API] 013030 정밀 재무수집 (2025년 11011 CFS / 매출:214,565,849,545원, 영업이익:58,910,839,555원, OCF:47,282,012,072원, 검증성공:True)
+[2026-08-12 17:01:33] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 034020 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:33] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:33] [INFO] [stock_system:dart_api.py:116] - [DART API] 034020 정밀 재무수집 (2025년 11011 CFS / 매출:17,057,876,000,000원, 영업이익:762,712,000,000원, OCF:751,801,000,000원, 검증성공:True)
+[2026-08-12 17:01:34] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 047050 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:34] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:35] [INFO] [stock_system:dart_api.py:116] - [DART API] 047050 정밀 재무수집 (2025년 11011 CFS / 매출:32,373,603,908,000원, 영업이익:1,165,316,105,000원, OCF:1,941,539,030,000원, 검증성공:True)
+[2026-08-12 17:01:35] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 047770 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:35] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:36] [INFO] [stock_system:dart_api.py:116] - [DART API] 047770 정밀 재무수집 (2025년 11011 CFS / 매출:39,722,870,931원, 영업이익:2,416,629,397원, OCF:4,563,075,091원, 검증성공:True)
+[2026-08-12 17:01:36] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 055490 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:36] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:37] [INFO] [stock_system:dart_api.py:116] - [DART API] 055490 정밀 재무수집 (2025년 11011 CFS / 매출:141,138,746,609원, 영업이익:2,508,409,995원, OCF:14,111,757,451원, 검증성공:True)
+[2026-08-12 17:01:37] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 140670 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:37] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:38] [INFO] [stock_system:dart_api.py:116] - [DART API] 140670 정밀 재무수집 (2025년 11011 CFS / 매출:67,038,479,474원, 영업이익:-3,560,799,616원, OCF:1,981,208,270원, 검증성공:True)
+[2026-08-12 17:01:38] [INFO] [stock_system:real_market_api.py:166] - [RealMarketAPI] Fallback 실제 종가(25,100원) 기반으로 088500 시세 생성 완료
+[2026-08-12 17:01:38] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:38] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 206650 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:38] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:40] [INFO] [stock_system:dart_api.py:116] - [DART API] 206650 정밀 재무수집 (2025년 11011 OFS / 매출:149,195,024,704원, 영업이익:60,663,218,448원, OCF:49,100,608,879원, 검증성공:True)
+[2026-08-12 17:01:40] [INFO] [stock_system:real_market_api.py:166] - [RealMarketAPI] Fallback 실제 종가(5,310원) 기반으로 219550 시세 생성 완료
+[2026-08-12 17:01:40] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:40] [INFO] [stock_system:dart_api.py:116] - [DART API] 219550 정밀 재무수집 (2025년 11011 CFS / 매출:44,903,125,580원, 영업이익:-489,699,688원, OCF:-1,636,844,575원, 검증성공:True)
+[2026-08-12 17:01:40] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 241520 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:40] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:41] [INFO] [stock_system:dart_api.py:116] - [DART API] 241520 정밀 재무수집 (2025년 11011 CFS / 매출:45,138,188,422원, 영업이익:22,339,147,639원, OCF:-11,672,883,057원, 검증성공:True)
+[2026-08-12 17:01:41] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 267260 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:41] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:42] [INFO] [stock_system:dart_api.py:116] - [DART API] 267260 정밀 재무수집 (2025년 11011 CFS / 매출:4,079,497,658,529원, 영업이익:995,313,437,790원, OCF:959,572,657,325원, 검증성공:True)
+[2026-08-12 17:01:42] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 348340 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:42] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:43] [INFO] [stock_system:dart_api.py:116] - [DART API] 348340 정밀 재무수집 (2025년 11011 CFS / 매출:18,954,203,205원, 영업이익:-14,856,577,614원, OCF:-11,358,377,537원, 검증성공:False)
+[2026-08-12 17:01:43] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 371460 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:43] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:43] [INFO] [stock_system:real_market_api.py:166] - [RealMarketAPI] Fallback 실제 종가(14,650원) 기반으로 484730 시세 생성 완료
+[2026-08-12 17:01:43] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:44] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 000490 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:44] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:45] [INFO] [stock_system:dart_api.py:116] - [DART API] 000490 정밀 재무수집 (2025년 11011 CFS / 매출:1,484,722,098,136원, 영업이익:31,224,606,429원, OCF:-56,725,188,304원, 검증성공:True)
+[2026-08-12 17:01:45] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 004960 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:45] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:46] [INFO] [stock_system:dart_api.py:116] - [DART API] 004960 정밀 재무수집 (2025년 11011 CFS / 매출:1,149,191,208,443원, 영업이익:64,521,039,255원, OCF:22,386,315,459원, 검증성공:True)
+[2026-08-12 17:01:46] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 161510 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:46] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:48] [INFO] [stock_system:dart_api.py:60] - [DART API] DART 고유코드 3981개 동적 캐싱 완료
+[2026-08-12 17:01:49] [INFO] [stock_system:dart_api.py:116] - [DART API] 161510 정밀 재무수집 (2025년 11011 CFS / 매출:333,605,938,000,000원, 영업이익:43,601,051,000,000원, OCF:85,315,148,000,000원, 검증성공:True)
+[2026-08-12 17:01:50] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 234920 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:50] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:52] [INFO] [stock_system:dart_api.py:116] - [DART API] 234920 정밀 재무수집 (2025년 11011 OFS / 매출:8,229,529,017원, 영업이익:-3,655,835,248원, OCF:-6,786,581,471원, 검증성공:True)
+[2026-08-12 17:01:52] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 490590 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:52] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:53] [INFO] [stock_system:dart_api.py:116] - [DART API] 490590 정밀 재무수집 (2025년 11011 CFS / 매출:333,605,938,000,000원, 영업이익:43,601,051,000,000원, OCF:85,315,148,000,000원, 검증성공:True)
+[2026-08-12 17:01:53] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 207940 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:53] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:54] [INFO] [stock_system:dart_api.py:116] - [DART API] 207940 정밀 재무수집 (2025년 11011 CFS / 매출:4,556,971,695,180원, 영업이익:2,069,221,266,630원, OCF:2,247,807,426,551원, 검증성공:True)
+[2026-08-12 17:01:54] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 214450 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:54] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:55] [INFO] [stock_system:dart_api.py:116] - [DART API] 214450 정밀 재무수집 (2025년 11011 CFS / 매출:536,289,118,812원, 영업이익:214,395,758,571원, OCF:183,162,279,104원, 검증성공:True)
+[2026-08-12 17:01:55] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 010140 실제 시세 60봉 수집 완료
+[2026-08-12 17:01:55] [INFO] [stock_system:db_manager.py:120] - 대량 DB 입력 성공: 60건
+[2026-08-12 17:01:56] [INFO] [stock_system:dart_api.py:116] - [DART API] 010140 정밀 재무수집 (2025년 11011 CFS / 매출:10,650,010,702,818원, 영업이익:862,210,880,029원, OCF:1,562,848,761,939원, 검증성공:True)
+[2026-08-12 17:01:56] [INFO] [stock_system:main.py:52] - 실시간 실제 시세 및 DART 재무 데이터 최신화 완료
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:98] - === [내 계좌 보유 종목 정밀 평가 결과] (F+T 종합점수 순위순 / 총 20개) ===
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 14위] 대동(000490) - F점수:56.0 | T점수:51.0 | 종합점수:53.0 | 평가손익률:-20.92% (-205,000원) | 대응전략: [⏸️ 확정 14위 펀더멘탈·기술 중립 (관망/신규매수금지)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 15위] 한신기계(011700) - F점수:39.0 | T점수:55.0 | 종합점수:48.6 | 평가손익률:-39.63% (-1,304,993원) | 대응전략: [⚠️ 펀더멘탈 약세/기술반등 (반등시 분할매도)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 5위] 하이록코리아(013030) - F점수:91.0 | T점수:61.0 | 종합점수:73.0 | 평가손익률:-13.47% (-472,050원) | 대응전략: [🟢 확정 5위 (안정 보유/홀딩)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 2위] 두산에너빌리티(034020) - F점수:73.0 | T점수:85.0 | 종합점수:80.2 | 평가손익률:7.35% (148,500원) | 대응전략: [🟢 확정 2위 (안정 보유/홀딩)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 7위] 포스코인터내셔널(047050) - F점수:78.0 | T점수:64.0 | 종합점수:69.6 | 평가손익률:-11.15% (-1,106,948원) | 대응전략: [🟢 확정 7위 (안정 보유/홀딩)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 11위] 코데즈컴바인(047770) - F점수:91.0 | T점수:39.0 | 종합점수:59.8 | 평가손익률:-42.68% (-2,002,725원) | 대응전략: [🎯 펀더멘탈유지/기술꺾임 (차익실현/익절)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 9위] 테이팩스(055490) - F점수:91.0 | T점수:52.0 | 종합점수:67.6 | 평가손익률:-39.35% (-39,377,902원) | 대응전략: [🟢 확정 9위 (안정 보유/홀딩)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 13위] 알에스오토메이션(140670) - F점수:47.0 | T점수:58.0 | 종합점수:53.6 | 평가손익률:-43.07% (-4,321,809원) | 대응전략: [⚠️ 펀더멘탈 약세/기술반등 (반등시 분할매도)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [ETF 3위] PLUS 고배당주(088500) - F점수:50.0 | T점수:30.0 | 종합점수:30.0 | 평가손익률:-10.95% (-771,500원) | 대응전략: [🚨 ETF 기술추세 약세 (손절/비중축소 검토)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 6위] 유바이오로직스(206650) - F점수:100.0 | T점수:53.0 | 종합점수:71.8 | 평가손익률:-42.99% (-1,979,508원) | 대응전략: [🟢 확정 6위 (안정 보유/홀딩)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 16위] 자이글(219550) - F점수:31.0 | T점수:55.0 | 종합점수:45.4 | 평가손익률:-29.37% (-20,565,312원) | 대응전략: [⚠️ 펀더멘탈 약세/기술반등 (반등시 분할매도)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 10위] DSC인베스트먼트(241520) - F점수:84.0 | T점수:47.0 | 종합점수:61.8 | 평가손익률:-53.99% (-1,117,225원) | 대응전략: [🎯 펀더멘탈유지/기술꺾임 (차익실현/익절)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 4위] HD현대일렉트릭(267260) - F점수:92.0 | T점수:67.0 | 종합점수:77.0 | 평가손익률:4.97% (148,000원) | 대응전략: [🟢 확정 4위 (안정 보유/홀딩)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [잠정 1위] 뉴로메카(348340) - F점수:23.0 | T점수:44.0 | 종합점수:35.6 | 평가손익률:-74.36% (-7,406,396원) | 대응전략: [⚠️ DART 재무 미확정 (추매금지/재수집필요)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [ETF 1위] TIGER 차이나전기차SOLACTIVE(371460) - F점수:50.0 | T점수:58.0 | 종합점수:58.0 | 평가손익률:-24.71% (-493,200원) | 대응전략: [⏸️ ETF 추세 중립 (조정 구간 관망)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [ETF 2위] RISE 미국AI밸류체인TOP3Plus(484730) - F점수:50.0 | T점수:45.0 | 종합점수:45.0 | 평가손익률:-10.99% (-16,478,112원) | 대응전략: [⚠️ 비중과다(27.5%) / 기술약세 (우선 분할축소)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 8위] 한신공영(004960) - F점수:71.0 | T점수:68.0 | 종합점수:69.2 | 평가손익률:0.08% (8,568원) | 대응전략: [🟢 확정 8위 (안정 보유/홀딩)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 3위] PLUS 고배당주(161510) - F점수:100.0 | T점수:67.0 | 종합점수:80.2 | 평가손익률:-11.50% (-810,250원) | 대응전략: [🟢 확정 3위 (안정 보유/홀딩)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 12위] 자이글(234920) - F점수:27.0 | T점수:73.0 | 종합점수:54.6 | 평가손익률:-29.36% (-20,555,998원) | 대응전략: [⚠️ 펀더멘탈 약세/기술반등 (반등시 분할매도)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:110] - • [확정 1위] RISE 미국AI밸류체인데일리고정커버드콜(490590) - F점수:100.0 | T점수:69.0 | 종합점수:81.4 | 평가손익률:-10.92% (-16,386,972원) | 대응전략: [⚠️ 비중과다(27.5%) 집중위험 (추매금지/보유)]
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:148] - ==================================================
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:149] -  [통합 평가 완료] 내 보유종목: 20개 | 매매 신호 포착: 3개
+[2026-08-12 17:01:57] [INFO] [stock_system:main.py:150] - ==================================================
+[2026-08-12 17:01:57] [INFO] [stock_system:excel_exporter.py:278] - [ExcelExporter] 엑셀/CSV 데이터 파일 생성 완료: stock_analysis_20260812_170157.xlsx, portfolio_monitoring_20260812_170157.csv, stock_summary_20260812_170157.csv
+[2026-08-12 17:01:57] [INFO] [stock_system:gmail_notifier.py:29] - [Gmail] 최신 리포트를 로컬 로그에 저장했습니다: C:\Users\jooji\.gemini\antigravity\scratch\stock_analysis_system\logs\latest_email_report.html
+[2026-08-12 17:01:57] [INFO] [stock_system:gmail_notifier.py:59] - [Gmail] 첨부 파일 추가 완료 (MIME: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet): stock_analysis_20260812_170157.xlsx
+[2026-08-12 17:01:57] [INFO] [stock_system:gmail_notifier.py:59] - [Gmail] 첨부 파일 추가 완료 (MIME: application/octet-stream): portfolio_monitoring_20260812_170157.csv
+[2026-08-12 17:01:57] [INFO] [stock_system:gmail_notifier.py:59] - [Gmail] 첨부 파일 추가 완료 (MIME: application/octet-stream): stock_summary_20260812_170157.csv
+[2026-08-12 17:01:57] [INFO] [stock_system:gmail_notifier.py:61] - [Gmail] Gmail SMTP 서버 접속 시도 중... (jujinu0410@gmail.com -> jujinu0410@gmail.com)
+[2026-08-12 17:02:01] [INFO] [stock_system:gmail_notifier.py:69] - [Gmail] 이메일 및 첨부 파일 발송 성공! (제목: [내 계좌 스윙 리포트] 8월 12일 보유 종목 정밀 평가 & 관심 종목 리포트)
+[2026-08-12 17:02:01] [INFO] [stock_system:main.py:183] - 내 종목 정밀 평가 지메일 리포트 (본문 CSV, 백업 CSV 및 ASCII XLSX 첨부) 성공 발송 완료!

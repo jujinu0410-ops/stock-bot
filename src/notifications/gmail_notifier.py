@@ -106,16 +106,14 @@ class GmailNotifier:
             # 합산 종합점수 내림차순 정렬 보장
             held_portfolio_sorted = sorted(held_portfolio, key=lambda x: x.get("final_score", 0.0), reverse=True)
             
-            # 의미있는 주가변동(거래량 150%↑ / 1.0 ATR 이상 변동 / 9일 신고·신저가 경신 등) 종목 선별
+            # 의미있는 주가변동(1.2 ATR 이상 큰 주가변동 / 3.5% 이상 급등락 종목) 선별
             meaningful_items = []
             for h in held_portfolio_sorted:
                 daily_chg = h.get('daily_change_pct', 0.0)
                 atr_pct = h.get('atr_pct', 3.0)
-                swing_pct = h.get('high_low_swing_pct', 0.0)
-                t_sc = h.get('t_score', 0.0)
 
-                # 1.0 ATR 이상 변동 또는 3.0% 이상 큰 변동 발생 시 의미있는 변동으로 선정
-                if abs(daily_chg) >= max(2.5, atr_pct * 0.8) or swing_pct >= 4.0 or t_sc >= 75.0 or t_sc <= 40.0:
+                # 1.2 ATR 이상 변동 또는 3.5% 이상 급변동 발생 시 선별
+                if abs(daily_chg) >= max(3.5, atr_pct * 1.2):
                     meaningful_items.append(h)
 
             for h in held_portfolio_sorted:
@@ -264,16 +262,13 @@ class GmailNotifier:
                 <table style="width:100%; border-collapse:collapse;">
                     <thead>
                         <tr style="background:#F8FAFC; font-size:11px; color:#64748B; text-align:left; border-bottom:1px solid #E2E8F0;">
-                            <th style="padding:6px 4px; text-align:center;">순위</th>
-                            <th style="padding:6px 4px;">종목명</th>
-                            <th style="padding:6px 4px; color:#7C3AED;">계좌비중</th>
-                            <th style="padding:6px 4px; color:#047857;">F점수</th>
-                            <th style="padding:6px 4px; color:#1D4ED8;">T점수</th>
-                            <th style="padding:6px 4px; background:#EDE9FE; color:#5B21B6;">종합점수</th>
-                            <th style="padding:6px 4px;">현재가(등락률)</th>
-                            <th style="padding:6px 4px; color:#D97706;">14일 ATR(변동폭)</th>
-                            <th style="padding:6px 4px;">평가손익(률)</th>
-                            <th style="padding:6px 4px;">대응 전략</th>
+                            <th style="padding:6px 3px; text-align:center;">순위</th>
+                            <th style="padding:6px 3px;">종목명</th>
+                            <th style="padding:6px 3px; background:#EDE9FE; color:#5B21B6; text-align:center;">종합점수<br><span style="font-size:9px; font-weight:normal; color:#64748B;">(F / T점수)</span></th>
+                            <th style="padding:6px 3px;">현재가(등락률)</th>
+                            <th style="padding:6px 3px; color:#D97706;">14일 ATR</th>
+                            <th style="padding:6px 3px;">평가손익(률)</th>
+                            <th style="padding:6px 3px;">대응 전략</th>
                         </tr>
                     </thead>
                     <tbody>
