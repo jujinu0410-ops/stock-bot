@@ -209,17 +209,59 @@ class GmailNotifier:
                 else:
                     name_formatted = name
 
+                adx_45m = h.get('adx_14_45m', 0.0)
+                obv_tr = h.get('obv_45m_trend', '중립')
+                cho_v = h.get('chaikin_osc_45m', 0)
+                sig_45m = h.get('signal_45m_text', '대기')
+
+                atr_display_html = f"""
+                <span style="font-weight:bold; color:#334155;">{atr_display}</span><br>
+                <span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: {adx_45m:.1f}</span><br>
+                <span style="font-size:9px; color:#059669;">CHO: {cho_v:+,d}</span>
+                """
+
                 held_rows_html += f"""
                 <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
                     <td style="padding:6px 3px; text-align:center;">{rank_badge}</td>
                     <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">{name_formatted}<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">({code})</span></td>
                     <td style="padding:6px 3px; text-align:center; background:#F5F3FF;">{score_combined_cell}</td>
                     <td style="padding:6px 3px; font-weight:bold;">{cur_p:,}원<br><span style="font-size:9.5px; color:{chg_color};">({chg_sign}{daily_chg:.2f}%)</span></td>
-                    <td style="padding:6px 3px; color:#475569; font-weight:bold;">{atr_display}</td>
+                    <td style="padding:6px 3px; color:#475569;">{atr_display_html}</td>
                     <td style="padding:6px 3px; font-weight:bold; color:{pnl_color};">{pnl_sign}{pnl_pct:.2f}%<br><span style="font-size:9.5px; font-weight:normal;">({pnl_sign}{pnl_amt:,}원)</span></td>
                     <td style="padding:6px 3px;">{strategy_cell_html}</td>
                 </tr>
                 """
+
+            # 45분봉 정밀 수급·추세 (ADX·OBV·Chaikin Oscillator) 전용 스마트 가이드 섹션 구축
+            intraday_cards_html = ""
+            if held_portfolio:
+                for h in held_portfolio:
+                    code = h.get('stock_code', '')
+                    name = h.get('stock_name', '')
+                    adx_45m = h.get('adx_14_45m', 0.0)
+                    p_di = h.get('plus_di_45m', 0.0)
+                    m_di = h.get('minus_di_45m', 0.0)
+                    obv_tr = h.get('obv_45m_trend', '중립')
+                    cho_v = h.get('chaikin_osc_45m', 0)
+                    sig_text = h.get('signal_45m_text', '대기')
+
+                    badge_bg = "#EFF6FF" if "상방" in sig_text or "우상향" in sig_text else "#FEF2F2" if "하방" in sig_text or "조정" in sig_text else "#F8FAFC"
+                    badge_border = "#93C5FD" if "상방" in sig_text or "우상향" in sig_text else "#FCA5A5" if "하방" in sig_text or "조정" in sig_text else "#E2E8F0"
+                    badge_color = "#1D4ED8" if "상방" in sig_text or "우상향" in sig_text else "#991B1B" if "하방" in sig_text or "조정" in sig_text else "#475569"
+
+                    intraday_cards_html += f"""
+                    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; margin-bottom:8px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                            <span style="font-weight:bold; font-size:12px; color:#0F172A;">{name} ({code})</span>
+                            <span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:9.5px;">{sig_text}</span>
+                        </div>
+                        <div style="font-size:10.5px; color:#475569; display:flex; justify-content:space-between; background:#F8FAFC; padding:6px 8px; border-radius:4px;">
+                            <span>📊 <strong>ADX (14):</strong> {adx_45m:.1f} (+DI: {p_di:.1f} / -DI: {m_di:.1f})</span>
+                            <span>📈 <strong>OBV 추세:</strong> {obv_tr}</span>
+                            <span>💧 <strong>Chaikin Osc:</strong> {cho_v:+,d}</span>
+                        </div>
+                    </div>
+                    """
 
             # 의미있는 변동 종목 구체적 대응 섹션 구축 (ATR 트레일링 기준 반영)
             meaningful_cards_html = ""
@@ -315,6 +357,15 @@ class GmailNotifier:
                     • <strong>정상 / 수익 종목 (손실률 -25% 초과 & T점수 50이상):</strong> 손익비 2.0:1 보장을 위해 목표가 <code>+3.0 ATR (최대 +35% 캡)</code>, 트레일링 <code>-0.8 ATR</code>, 손절가 <code>-1.5 ATR (최소 -6%, 최대 -15% 캡)</code> 적용<br>
                     • <strong>대형 손실 / 기술 약세 종목 (손실률 -25% 이하 OR T점수 50미만):</strong> 노이즈 털림 방지를 위해 손절가 <code>-1.0 ATR 최소거리 보장 (최대 -15% 캡)</code>, 목표가 <code>+1.5 ATR (최대 +20% 캡)</code>, 트레일링 <code>-0.5 ATR</code> 적용
                 </div>
+            </div>
+            <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
+                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">
+                    ⏱️ 45분봉(Intraday 45m) 정밀 기술 수급 및 추세 지표 (ADX · OBV · Chaikin Oscillator)
+                </h3>
+                <div style="font-size:11px; color:#64748B; margin-bottom:10px;">
+                    ※ 15분봉 3개 캔들 결합 45분 단기 파동 분석 (ADX 25 이상: 강력 방향성 추세 | Chaikin Oscillator: 스마트머니 실시간 자금 유입)
+                </div>
+                {intraday_cards_html}
             </div>
             """
         else:

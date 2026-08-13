@@ -211,6 +211,19 @@ class PortfolioManager:
                 kiwoom_target = adjust_krx_tick_size(raw_ttarget, "up")
                 kiwoom_stop = kiwoom_stop_p if kiwoom_stop_p > 0 else adjust_krx_tick_size(confirmed_stop_price, "down")
 
+            # 45분봉 ADX, OBV, Chaikin Oscillator 수집
+            try:
+                from src.analysis.intraday_analysis import Intraday45mAnalyzer
+                intra_analyzer = Intraday45mAnalyzer()
+                intra_res = intra_analyzer.analyze_45m_indicators(code)
+            except Exception as e_intra:
+                logger.error(f"45분봉 지표 수집 실패 ({code}): {e_intra}")
+                intra_res = {
+                    "adx_14_45m": 0.0, "plus_di_45m": 0.0, "minus_di_45m": 0.0,
+                    "obv_45m": 0, "obv_45m_trend": "미수집", "chaikin_osc_45m": 0,
+                    "chaikin_flow_45m": "미수집", "signal_45m_text": "대기"
+                }
+
             eval_list.append({
                 "stock_code": code,
                 "stock_name": name,
@@ -250,6 +263,14 @@ class PortfolioManager:
                 "data_completeness": completeness,
                 "is_etf": is_etf,
                 "f_score_confirmed": f_confirmed,
+                "adx_14_45m": intra_res.get("adx_14_45m", 0.0),
+                "plus_di_45m": intra_res.get("plus_di_45m", 0.0),
+                "minus_di_45m": intra_res.get("minus_di_45m", 0.0),
+                "obv_45m": intra_res.get("obv_45m", 0),
+                "obv_45m_trend": intra_res.get("obv_45m_trend", "미수집"),
+                "chaikin_osc_45m": intra_res.get("chaikin_osc_45m", 0),
+                "chaikin_flow_45m": intra_res.get("chaikin_flow_45m", "미수집"),
+                "signal_45m_text": intra_res.get("signal_45m_text", "대기"),
                 "action_status": "안정 보유 (홀딩)",
                 "reason": analysis.get("reason", "분석 데이터 정상") if analysis else "데이터 부족"
             })
