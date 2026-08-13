@@ -355,4 +355,14 @@ class PortfolioManager:
                 else:
                     item["action_status"] = f"🔄 {item['rank']} 펀더멘탈중립/기술반등 (안정홀딩/상승시 축소)"
 
+            # [안전 가드레일 5] 3일간 45분봉 OBV/Chaikin/ADX 수급이탈 신호 ➔ 대응전략표 강제 연동
+            is_45m_breakdown = item.get("is_45m_breakdown", False)
+            if is_45m_breakdown and "미확정" not in item["action_status"]:
+                if "비중과다" in item["action_status"]:
+                    item["action_status"] = f"🚨 45m 3일 수급이탈 ({weight_pct}%) / (우선 분할축소)"
+                elif "안정" in item["action_status"] or "홀딩" in item["action_status"]:
+                    item["action_status"] = f"⚠️ 45m 3일 수급이탈 / {item['rank']} (비중축소 고려)"
+                elif "조정" in item["action_status"] or "관망" in item["action_status"]:
+                    item["action_status"] = f"🚨 45m 3일 수급이탈 (분할매도/비중축소)"
+
         return eval_list

@@ -159,6 +159,9 @@ class GmailNotifier:
                 if not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ DART 재무미확정 (보류)"
+                elif "45m 3일 수급이탈" in clean_strategy or "수급이탈" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FEF2F2", "#FCA5A5", "#991B1B"
+                    action_kw = "🚨 45m 수급이탈 (비중축소)"
                 elif "비중과다" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "비중과다 보유"
