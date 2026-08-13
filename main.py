@@ -163,7 +163,14 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
         csv_held_path = excel_path.parent / excel_path.name.replace('stock_analysis_', 'portfolio_monitoring_').replace('.xlsx', '.csv')
         csv_summary_path = excel_path.parent / excel_path.name.replace('stock_analysis_', 'stock_summary_').replace('.xlsx', '.csv')
 
-        subject = f"[내 계좌 스윙 리포트] {datetime.now().month}월 {datetime.now().day}일 보유 종목 정밀 평가 & 관심 종목 리포트"
+        now_dt = datetime.now()
+        hour_now = now_dt.hour
+        if hour_now < 13:
+            dispatch_tag = "1차 장중 리포트(11:20)"
+        else:
+            dispatch_tag = "2차 장마감 정밀 리포트(15:35)"
+
+        subject = f"[{dispatch_tag}] {now_dt.month}월 {now_dt.day}일 내 계좌 보유 종목 정밀 평가 & 관심 종목 리포트"
         
         notifier = GmailNotifier()
         html_report = notifier.generate_html_report(
