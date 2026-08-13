@@ -326,11 +326,14 @@ class GmailNotifier:
             </div>
             """
 
+            sold_count = max(0, 15 - held_count)
+            sold_notice = f"(매도 완료된 {sold_count}개 종목 잔고 0주 확인 ➔ 분석 토큰 낭비 방지를 위해 100% 자동 정돈 완료)" if sold_count > 0 else "(전 종목 100% 실시간 보유 상태 확인)"
+
             held_section_html = f"""
             {swing_section_html}
             <div style="background:#EFF6FF; border:1px solid #93C5FD; color:#1D4ED8; border-radius:10px; padding:12px 14px; margin-bottom:16px; font-size:11.5px; line-height:1.45;">
                 📡 <strong>키움 REST API kt00018 실계좌 잔고 100% 실시간 연동 완료:</strong><br>
-                • 현재 주진우님의 키움 실계좌 보유 종목: <strong>총 {held_count}개 종목</strong> (매도 완료된 4개 종목 잔고 0주 확인 ➔ 분석 토큰 낭비 방지를 위해 100% 자동 정돈 완료)
+                • 현재 주진우님의 키움 실계좌 보유 종목: <strong>총 {held_count}개 종목</strong> {sold_notice}
             </div>
             <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:2px solid #E2E8F0; padding-bottom:8px;">

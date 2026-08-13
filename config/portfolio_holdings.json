@@ -13,36 +13,36 @@
     "stock_name": "테이팩스",
     "quantity": 4283,
     "avg_buy_price": 23364.0,
-    "current_price": 14300,
+    "current_price": 14650,
     "total_invested": 100071170.0,
-    "eval_pnl_pct": -38.94
+    "eval_pnl_pct": -37.45
   },
   {
     "stock_code": "140670",
     "stock_name": "알에스오토메이션",
     "quantity": 531,
     "avg_buy_price": 18899.0,
-    "current_price": 10630,
+    "current_price": 10710,
     "total_invested": 10035560.0,
-    "eval_pnl_pct": -43.89
+    "eval_pnl_pct": -43.47
   },
   {
     "stock_code": "161510",
     "stock_name": "PLUS 고배당주",
     "quantity": 250,
     "avg_buy_price": 28186.0,
-    "current_price": 24985,
+    "current_price": 24995,
     "total_invested": 7046560.0,
-    "eval_pnl_pct": -11.39
+    "eval_pnl_pct": -11.35
   },
   {
     "stock_code": "206650",
     "stock_name": "유바이오로직스",
     "quantity": 293,
     "avg_buy_price": 15716.0,
-    "current_price": 8890,
+    "current_price": 8880,
     "total_invested": 4604937.0,
-    "eval_pnl_pct": -43.57
+    "eval_pnl_pct": -43.64
   },
   {
     "stock_code": "234920",
@@ -58,35 +58,35 @@
     "stock_name": "DSC인베스트먼트",
     "quantity": 115,
     "avg_buy_price": 17995.0,
-    "current_price": 8420,
+    "current_price": 8450,
     "total_invested": 2069460.0,
-    "eval_pnl_pct": -53.33
+    "eval_pnl_pct": -53.16
   },
   {
     "stock_code": "267260",
     "stock_name": "HD현대일렉트릭",
     "quantity": 4,
     "avg_buy_price": 745000.0,
-    "current_price": 778000,
+    "current_price": 780000,
     "total_invested": 2980000.0,
-    "eval_pnl_pct": 4.19
+    "eval_pnl_pct": 4.46
   },
   {
     "stock_code": "348340",
     "stock_name": "뉴로메카",
     "quantity": 124,
     "avg_buy_price": 80329.0,
-    "current_price": 21450,
+    "current_price": 21500,
     "total_invested": 9960800.0,
-    "eval_pnl_pct": -73.37
+    "eval_pnl_pct": -73.31
   },
   {
     "stock_code": "490590",
     "stock_name": "RISE 미국AI밸류체인데일리고정커버드콜",
     "quantity": 9114,
     "avg_buy_price": 16458.0,
-    "current_price": 14815,
+    "current_price": 14840,
     "total_invested": 150001860.0,
-    "eval_pnl_pct": -10.01
+    "eval_pnl_pct": -9.86
   }
 ]
