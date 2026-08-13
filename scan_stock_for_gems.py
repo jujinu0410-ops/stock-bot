@@ -148,21 +148,28 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
    • 14일 ATR (변동폭): {atr_v:,.0f}원 ({atr_pct:.2f}%)
    • 기술 T점수 (100점 만점): {t_sc:.1f}점
 
-2. ⚙️ 키움 HTS/MTS 트레일링 주문 정밀 설정 파라미터 (Auto-Trading Rules)
+2. ⏱️ 5단계 매매 대응전략 원자값 연동 지표 (5-Tier Priority Strategy Rules)
+   • 일봉 OBV (데드발생일자): {res.get("obv_dead_date", "N/A")}
+   • 45분봉 OBV 추세: {res.get("obv_45m_trend", "📈 OBV(9) 매집 유지 (상승)")}
+   • 일봉 Chaikin(13,26) 최근 2봉: {res.get("daily_cho_recent2", [0, 0])}
+   • 45m Chaikin(13,26) 최근 2봉: {res.get("intraday_cho_recent2", [0, 0])}
+   • ADX +DI/-DI 우세방향: {res.get("adx_di_dominance", "-")}
+
+3. ⚙️ 키움 HTS/MTS 트레일링 주문 정밀 설정 파라미터 (Auto-Trading Rules)
    🔹 [트레일링 매수 설정]:
       - 감시 시작가 (기준가): {t_buy:,}원 (1.5 ATR 눌림목 도달 시 감시 시작)
       - 반등 발동 조건: 감시 시작 후 최저가 대비 +{rebound_delta:,}원 상승 시 발동 (예: 최저가 {t_buy:,}원에서 +{rebound_delta:,}원 상승하여 {buy_trigger_example:,}원 도달 시)
       - 1차 매수 수량 비중: 목표 수량의 50% 분할 매수 (잔여 50%는 추가 2차 눌림목 대기)
    🔹 [트레일링 익절 설정]:
-      - 감시 시작가 (목표가): {t_target:,}원 (2.5 ATR 목표가 도달 시 감시 시작)
+      - 감시 시작가 (목표가): {t_target:,}원 (3.0 ATR 목표가 도달 시 감시 시작)
       - 추락 발동 조건: 감시 시작 후 최고가 대비 -{drop_delta:,}원 하락 시 발동 (예: 최고가 {t_target:,}원에서 -{drop_delta:,}원 하락하여 {sell_trigger_example:,}원 도달 시)
       - 1차 익절 수량 비중: 보유 수량의 50% 차익 실현 (잔여 50% 추세 추적)
    🔹 [스탑로스 손절 설정]:
-      - 손절 기준 가격: {t_stop:,}원 (2.0 ATR 손절선 이탈 시)
+      - 손절 기준 가격: {t_stop:,}원 (1.5 ATR 손절선 이탈 시)
       - 손절 발동 조건: {t_stop:,}원 이하로 하락/이탈 시 즉시 발동
       - 손절 매도 수량 비중: 보유 수량 100% 전량 손절
 
-3. 🏢 OpenDART 2025년 공시 재무 (Fundamental Analysis)
+4. 🏢 OpenDART 2025년 공시 재무 (Fundamental Analysis)
    • 공시 보고서 종류: 2025년 사업보고서 ({fs_div} 연결/별도)
    • 2025년 당기 매출액: {rev_val/1e8:,.1f}억 원 (전기: {prev_rev/1e8:,.1f}억 원)
    • 2025년 당기 영업이익: {op_val/1e8:,.1f}억 원 (전기: {prev_op/1e8:,.1f}억 원)
@@ -173,7 +180,7 @@ def scan_stock_for_gems(stock_code_or_name: str) -> str:
      └ ① 성장성(25점): {growth_pts:.1f}점 | ② 현금흐름(20점): {ocf_pts:.1f}점
      └ ③ 모멘텀(20점): {momentum_pts:.1f}점 | ④ 재무안정(20점): {debt_pts:.1f}점 | ⑤ 밸류경영(15점): {gov_pts:.1f}점
 
-4. ⚖️ 100점 만점 가중 종합점수 & 5단계 매수 승인 최종 판정
+5. ⚖️ 100점 만점 가중 종합점수 & 5단계 매수 승인 최종 판정
    • 가중 종합점수: {final_sc:.1f}점 = (F점수 {f_sc:.1f} × 0.4) + (T점수 {t_sc:.1f} × 0.6)
    • 신규/추가 매수 승인 여부: {buy_approval}
    • 5단계 Decision Matrix 최종 대응 전략: [{act_st}]

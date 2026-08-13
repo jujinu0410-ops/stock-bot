@@ -16791,3 +16791,33 @@ sqlite3.OperationalError: table stock_info has no column named is_active
 [2026-08-13 16:08:08] [INFO] [stock_system:gmail_notifier.py:95] - [Gmail] Gmail SMTP 서버 접속 시도 중... (jujinu0410@gmail.com -> jujinu0410@gmail.com)
 [2026-08-13 16:08:13] [INFO] [stock_system:gmail_notifier.py:103] - [Gmail] 이메일 및 첨부 파일 발송 성공! (제목: [2차 장마감 정밀 리포트(15:35)] 8월 13일 내 계좌 보유 종목 정밀 평가 & 관심 종목 리포트)
 [2026-08-13 16:08:13] [INFO] [stock_system:main.py:210] - 내 종목 정밀 평가 지메일 리포트 (본문 CSV, 백업 CSV 및 ASCII XLSX 첨부) 성공 발송 완료!
+[2026-08-13 16:41:57] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-13 16:41:57] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-13 16:41:57] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-13 16:41:57] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-13 16:41:57] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-13 16:41:57] [INFO] [stock_system:db_manager.py:80] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-13 16:41:57] [INFO] [stock_system:scan_stock_for_gems.py:71] - === [Gemini Gems 전용] 대동 (000490) Kiwoom REST + DART 정밀 분석 시작 ===
+[2026-08-13 16:41:57] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 000490 실제 시세 60봉 수집 완료
+[2026-08-13 16:41:57] [INFO] [stock_system:db_manager.py:122] - 대량 DB 입력 성공: 60건
+[2026-08-13 16:41:58] [INFO] [stock_system:dart_api.py:116] - [DART API] 000490 정밀 재무수집 (2025년 11011 CFS / 매출:1,484,722,098,136원, 영업이익:31,224,606,429원, OCF:-56,725,188,304원, 검증성공:True)
+[2026-08-13 16:41:58] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-13 16:41:58] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-13 16:41:58] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-13 16:41:58] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-13 16:41:58] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-13 16:41:58] [INFO] [stock_system:db_manager.py:80] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-13 16:41:58] [INFO] [stock_system:scan_stock_for_gems.py:71] - === [Gemini Gems 전용] 한신공영 (004960) Kiwoom REST + DART 정밀 분석 시작 ===
+[2026-08-13 16:41:58] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 004960 실제 시세 60봉 수집 완료
+[2026-08-13 16:41:58] [INFO] [stock_system:db_manager.py:122] - 대량 DB 입력 성공: 60건
+[2026-08-13 16:41:59] [INFO] [stock_system:dart_api.py:116] - [DART API] 004960 정밀 재무수집 (2025년 11011 CFS / 매출:1,149,191,208,443원, 영업이익:64,521,039,255원, OCF:22,386,315,459원, 검증성공:True)
+[2026-08-13 16:52:23] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-13 16:52:23] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-13 16:52:23] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-13 16:52:23] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-13 16:52:23] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-13 16:52:23] [INFO] [stock_system:db_manager.py:80] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-13 16:52:23] [INFO] [stock_system:scan_stock_for_gems.py:71] - === [Gemini Gems 전용] HD현대일렉트릭 (267260) Kiwoom REST + DART 정밀 분석 시작 ===
+[2026-08-13 16:52:23] [INFO] [stock_system:real_market_api.py:77] - [RealMarketAPI] Naver fchart로 267260 실제 시세 60봉 수집 완료
+[2026-08-13 16:52:23] [INFO] [stock_system:db_manager.py:122] - 대량 DB 입력 성공: 60건
+[2026-08-13 16:52:24] [INFO] [stock_system:dart_api.py:116] - [DART API] 267260 정밀 재무수집 (2025년 11011 CFS / 매출:4,079,497,658,529원, 영업이익:995,313,437,790원, OCF:959,572,657,325원, 검증성공:True)
