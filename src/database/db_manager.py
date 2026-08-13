@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import pandas as pd
 from typing import List, Dict, Any, Optional
 from config.settings import DB_PATH, TABLE_SCHEMAS, INDEX_SCHEMAS
 from src.utils.logger import logger
@@ -220,3 +221,16 @@ class DatabaseManager:
             signal.get('score_stage3'), signal.get('position_stage', 0), signal.get('signal_type'), signal.get('reason')
         )
         return self.execute_non_query(query, params)
+
+    def get_daily_prices(self, stock_code: str) -> pd.DataFrame:
+        """특정 종목의 일봉 OHLCV 시세 데이터 반환 (날짜 오름차순)"""
+        code = str(stock_code).zfill(6)
+        rows = self.execute_query("""
+            SELECT stk_date, open_price, high_price, low_price, close_price, volume, foreign_net_buy, inst_net_buy
+            FROM kiwoom_daily
+            WHERE stock_code = ?
+            ORDER BY stk_date ASC
+        """, (code,))
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([dict(r) for r in rows])

@@ -76,40 +76,52 @@ class KiwoomAPIClient:
             "dmst_stex_tp": "KRX"
         }
 
-        try:
-            res = requests.post(url, headers=headers, json=body, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                items = data.get("acnt_evlt_remn_indv_tot", [])
-                positions = []
-                for item in items:
-                    raw_code = item.get("stk_cd", "").replace("A", "").strip()
-                    name = item.get("stk_nm", "").strip()
-                    qty = int(item.get("rmnd_qty", 0))
-                    if qty <= 0:
-                        continue
-                    avg_p = float(item.get("pur_pric", 0.0))
-                    cur_p = int(item.get("cur_prc", 0)) if item.get("cur_prc") else int(item.get("pred_close_pric", 0))
-                    inv_amt = float(item.get("pur_amt", 0.0))
-                    pnl_rt = float(item.get("prft_rt", 0.0))
+        import time
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                res = requests.post(url, headers=headers, json=body, timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    items = data.get("acnt_evlt_remn_indv_tot", [])
+                    positions = []
+                    for item in items:
+                        raw_code = item.get("stk_cd", "").replace("A", "").strip()
+                        name = item.get("stk_nm", "").strip()
+                        qty = int(item.get("rmnd_qty", 0))
+                        if qty <= 0:
+                            continue
+                        avg_p = float(item.get("pur_pric", 0.0))
+                        cur_p = int(item.get("cur_prc", 0)) if item.get("cur_prc") else int(item.get("pred_close_pric", 0))
+                        inv_amt = float(item.get("pur_amt", 0.0))
+                        pnl_rt = float(item.get("prft_rt", 0.0))
 
-                    positions.append({
-                        "stock_code": raw_code,
-                        "stock_name": name,
-                        "quantity": qty,
-                        "avg_buy_price": avg_p,
-                        "current_price": cur_p,
-                        "total_invested": inv_amt,
-                        "eval_pnl_pct": pnl_rt
-                    })
-                logger.info(f"[Kiwoom API] 키움 REST API kt00018 실시간 계좌 잔고 {len(positions)}개 종목 수집 완료!")
-                return positions
-            else:
-                logger.warning(f"[Kiwoom API] 잔고 조회 실패 (상태코드 {res.status_code}): {res.text}")
-                return self._get_mock_account_positions()
-        except Exception as e:
-            logger.error(f"[Kiwoom API] 잔고 조회 중 예외 발생: {e}", exc_info=True)
-            return self._get_mock_account_positions()
+                        positions.append({
+                            "stock_code": raw_code,
+                            "stock_name": name,
+                            "quantity": qty,
+                            "avg_buy_price": avg_p,
+                            "current_price": cur_p,
+                            "total_invested": inv_amt,
+                            "eval_pnl_pct": pnl_rt
+                        })
+
+                    if len(positions) > 0 or attempt == max_retries:
+                        logger.info(f"[Kiwoom API] 키움 REST API kt00018 실시간 계좌 잔고 {len(positions)}개 종목 수집 완료! (시도 {attempt}/{max_retries})")
+                        return positions
+                    else:
+                        logger.warning(f"[Kiwoom API] 실계좌 수집 0개 수신, 1초 후 재시도... (시도 {attempt}/{max_retries})")
+                        time.sleep(1)
+                else:
+                    logger.warning(f"[Kiwoom API] 잔고 조회 실패 (상태코드 {res.status_code}): {res.text}")
+                    if attempt < max_retries:
+                        time.sleep(1)
+            except Exception as e:
+                logger.error(f"[Kiwoom API] 잔고 조회 중 예외 발생 (시도 {attempt}/{max_retries}): {e}")
+                if attempt < max_retries:
+                    time.sleep(1)
+
+        return self._get_mock_account_positions()
 
     def _get_mock_account_positions(self) -> List[Dict[str, Any]]:
         """
