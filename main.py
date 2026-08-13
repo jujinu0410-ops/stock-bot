@@ -118,6 +118,23 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
     caught_signals = []
     all_results = []
     try:
+        STOCK_NAME_MAP = {
+            "000490": "대동", "004960": "한신공영", "047770": "코데즈컴바인", "055490": "테이팩스",
+            "140670": "알에스오토메이션", "161510": "PLUS 고배당주", "206650": "유바이오로직스",
+            "234920": "자이글", "241520": "DSC인베스트먼트", "267260": "HD현대일렉트릭",
+            "348340": "뉴로메카", "490590": "RISE 미국AI밸류체인데일리고정커버드콜",
+            "010120": "LS일렉트릭", "010140": "삼성중공업", "207940": "삼성바이오로직스",
+            "034020": "두산에너빌리티", "015540": "하이록코리아", "005930": "삼성전자",
+            "000660": "SK하이닉스", "035420": "NAVER", "035720": "카카오"
+        }
+
+        # DB stock_info 테이블 내 010120 등 종목명 누락 건 100% 보정
+        for code_k, name_v in STOCK_NAME_MAP.items():
+            db.execute_non_query(
+                "UPDATE stock_info SET stock_name = ? WHERE stock_code = ? AND (stock_name = ? OR stock_name IS NULL OR stock_name = '')",
+                (name_v, code_k, code_k)
+            )
+
         stock_rows = db.execute_query("SELECT stock_code, stock_name FROM stock_info")
         total_count = len(stock_rows) if stock_rows else 0
 
@@ -133,10 +150,13 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
 
         for idx, row in enumerate(stock_rows, start=1):
             code = str(row['stock_code']).strip().zfill(6)
-            name = str(row['stock_name']).strip()
+            raw_name = str(row['stock_name']).strip()
+            name = STOCK_NAME_MAP.get(code, raw_name if raw_name != code else code)
+
             try:
                 result = engine.analyze_stock(code)
                 if result:
+                    result['stock_name'] = name
                     all_results.append(result)
                     # 이미 계좌에 보유 중인 종목은 '신규 매수 포착 리스트'에서 100% 제외
                     is_held = (code in held_codes_set) or (name in held_names_set) or any(n in name for n in held_names_set if len(n) > 2)

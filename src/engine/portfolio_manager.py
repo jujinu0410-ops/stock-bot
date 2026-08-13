@@ -123,21 +123,16 @@ class PortfolioManager:
             from src.analysis.technical_analysis import TechnicalAnalysis, adjust_krx_tick_size
             daily_df = self.db.get_daily_prices(code)
 
-            analysis = None
-            current_price = avg_p
-            atr_14 = current_price * 0.03
-            atr_pct = 3.0
-            f_sc = 50.0
-            t_sc = 50.0
-            final_sc = 50.0
-            completeness = 100.0
-            is_etf = False
-            f_confirmed = True
+            cp_val = None
+            if not daily_df.empty:
+                cp_val = float(daily_df.iloc[-1]["close_price"])
 
             if engine:
                 try:
                     analysis = engine.analyze_stock(code, name)
-                    current_price = float(analysis.get("current_price", avg_p) or avg_p)
+                    if not cp_val and analysis:
+                        cp_val = float(analysis.get("current_price", 0) or analysis.get("latest_close", 0))
+                    current_price = float(cp_val) if cp_val and float(cp_val) > 0 else avg_p
                     atr_14 = float(analysis.get("atr_14", current_price * 0.03) or (current_price * 0.03))
                     atr_pct = float(analysis.get("atr_pct", 3.0) or 3.0)
                     f_sc = float(analysis.get("f_score", 50.0) or 50.0)
@@ -148,6 +143,9 @@ class PortfolioManager:
                     f_confirmed = bool(analysis.get("f_score_confirmed", True))
                 except Exception as e_an:
                     logger.error(f"종목 분석 중 예외 발생 ({code}): {e_an}")
+                    current_price = cp_val if cp_val and cp_val > 0 else avg_p
+            else:
+                current_price = cp_val if cp_val and cp_val > 0 else avg_p
 
             # 만약 DB 일봉 데이터가 충실하면 TechnicalAnalysis 직접 호출하여 검증 원자값 100% 확보
             tech_eval = {}
@@ -365,20 +363,8 @@ class PortfolioManager:
             elif is_45m_bearish_2plus and t_sc >= 50.0:
                 item["action_status"] = f"🎯 분할매수 ({rank} / 45m 단기조정 감지)"
 
-            # 5순위 — 그 외 전부 (단기 45분봉 차등 경고 라벨 100% 복원 및 계속 보유)
+            # 5순위 — 그 외 전부 (1~4순위 조건 미충족 종목 ➔ 계속 보유)
             else:
-                if is_45m_breakdown:
-                    item["action_status"] = f"🚨 단기 매도 ({rank} / OBV이탈·CHO유출)"
-                elif is_obv_dead:
-                    item["action_status"] = f"⚠️ OBV 이탈 ({rank} / 45m OBV 데드)"
-                elif is_cho_outflow:
-                    if t_sc < 50.0:
-                        item["action_status"] = f"🎯 차익실현 + ⚠️ CHO유출 ({rank})"
-                    else:
-                        item["action_status"] = f"⚠️ CHO 유출 ({rank} / 45m 자금유출)"
-                elif f_sc < 50.0 or t_sc < 50.0:
-                    item["action_status"] = f"⚠️ {rank} 펀더멘탈/기술약세 (반등시 분할매도)"
-                else:
-                    item["action_status"] = f"🟢 {rank} (계속 보유/홀딩)"
+                item["action_status"] = f"🟢 {rank} (계속 보유/홀딩)"
 
         return eval_list

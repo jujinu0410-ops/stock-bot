@@ -411,7 +411,7 @@ class GmailNotifier:
                 f_sc = s.get('f_score', 0.0)
                 t_sc = s.get('t_score_converted', s.get('t_score', 0.0))
                 sig_type = s.get('signal_type', '관찰')
-                cur_p = s.get('current_price', 0)
+                cur_p = s.get('current_price', 0) or s.get('latest_close', 0)
                 chg_p = s.get('daily_change_pct', 0.0)
                 chg_color = "#10B981" if chg_p >= 0 else "#EF4444"
                 chg_sign = "+" if chg_p >= 0 else ""
@@ -431,7 +431,7 @@ class GmailNotifier:
             code = item.get('stock_code')
             name = item.get('stock_name')
             f_sc = item.get('f_score', 0.0)
-            t_sc = item.get('t_score', 0.0)
+            t_sc = item.get('t_score_converted', item.get('t_score', 0.0))
             final_sc = item.get('final_score', 0.0)
 
             all_rows_html += f"""

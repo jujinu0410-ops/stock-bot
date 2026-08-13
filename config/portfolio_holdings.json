@@ -4,54 +4,45 @@
     "stock_name": "한신공영",
     "quantity": 1871,
     "avg_buy_price": 10962.0,
-    "current_price": 10960,
+    "current_price": 10930,
     "total_invested": 20510490.0,
-    "eval_pnl_pct": -0.25
-  },
-  {
-    "stock_code": "047770",
-    "stock_name": "코데즈컴바인",
-    "quantity": 975,
-    "avg_buy_price": 4745.0,
-    "current_price": 2600,
-    "total_invested": 4626435.0,
-    "eval_pnl_pct": -45.34
+    "eval_pnl_pct": -0.52
   },
   {
     "stock_code": "055490",
     "stock_name": "테이팩스",
     "quantity": 4283,
     "avg_buy_price": 23364.0,
-    "current_price": 14295,
+    "current_price": 14300,
     "total_invested": 100071170.0,
-    "eval_pnl_pct": -38.96
+    "eval_pnl_pct": -38.94
   },
   {
     "stock_code": "140670",
     "stock_name": "알에스오토메이션",
     "quantity": 531,
     "avg_buy_price": 18899.0,
-    "current_price": 10730,
+    "current_price": 10630,
     "total_invested": 10035560.0,
-    "eval_pnl_pct": -43.36
+    "eval_pnl_pct": -43.89
   },
   {
     "stock_code": "161510",
     "stock_name": "PLUS 고배당주",
     "quantity": 250,
     "avg_buy_price": 28186.0,
-    "current_price": 24970,
+    "current_price": 24985,
     "total_invested": 7046560.0,
-    "eval_pnl_pct": -11.44
+    "eval_pnl_pct": -11.39
   },
   {
     "stock_code": "206650",
     "stock_name": "유바이오로직스",
     "quantity": 293,
     "avg_buy_price": 15716.0,
-    "current_price": 8860,
+    "current_price": 8890,
     "total_invested": 4604937.0,
-    "eval_pnl_pct": -43.76
+    "eval_pnl_pct": -43.57
   },
   {
     "stock_code": "234920",
@@ -67,9 +58,9 @@
     "stock_name": "DSC인베스트먼트",
     "quantity": 115,
     "avg_buy_price": 17995.0,
-    "current_price": 8400,
+    "current_price": 8420,
     "total_invested": 2069460.0,
-    "eval_pnl_pct": -53.44
+    "eval_pnl_pct": -53.33
   },
   {
     "stock_code": "267260",
@@ -94,8 +85,8 @@
     "stock_name": "RISE 미국AI밸류체인데일리고정커버드콜",
     "quantity": 9114,
     "avg_buy_price": 16458.0,
-    "current_price": 14800,
+    "current_price": 14815,
     "total_invested": 150001860.0,
-    "eval_pnl_pct": -10.1
+    "eval_pnl_pct": -10.01
   }
 ]
