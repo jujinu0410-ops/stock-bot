@@ -322,78 +322,36 @@ class PortfolioManager:
             f_confirmed = item["f_score_confirmed"]
             completeness = item["data_completeness"]
 
-            # [안전 가드레일 1] 단일 종목 계좌 비중 20% 초과 집중위험 종목 ➔ 추매 절대 금지 및 우선 축소 권고
-            if weight_pct > 20.0:
-                if t_sc < 50.0:
-                    item["action_status"] = f"⚠️ 비중과다({weight_pct}%) / 기술약세 (우선 분할축소)"
+            # --- 🔥 [매매 대응전략 5단계 복합 판정 매트릭스 (1~5순위)] ---
+            is_tier3_sell = item.get("is_tier3_sell", False)
+            is_minus_di_dominant = item.get("is_minus_di_dominant", False)
+            adx_note = " (ADX -DI우세 확인)" if is_minus_di_dominant else " (ADX 방향 불일치, 참고)"
+            rank = item.get("rank", "순위")
+            is_45m_bearish_2plus = item.get("is_45m_bearish_2plus", False)
+
+            # 1순위 — DART 재무 미확정 종목 ("보류" 고정, 아래 2~5순위 무시)
+            if not f_confirmed or completeness < 90.0:
+                item["action_status"] = "⚠️ DART 재무 미확정 (보류)"
+
+            # 2순위 — 계좌비중 20% 초과 종목
+            elif weight_pct > 20.0:
+                if is_tier3_sell:
+                    # 매도 계열 신호 정상 적용하되 "추매금지/보유" 문구 유지 & "+" 병기
+                    item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + 🚨 매도조건 충족{adx_note}{intraday_cho_note} (추매금지/보유)"
                 else:
+                    # 매수 계열(4순위 분할매수) 무시
                     item["action_status"] = f"⚠️ 비중과다({weight_pct}%) 집중위험 (추매금지/보유)"
 
-            # [안전 가드레일 2] ETF 전용 트레이딩 평가 규칙 (DART 재무 손절 오류 방지)
-            elif is_etf:
-                if t_sc < 50.0:
-                    item["action_status"] = "🚨 ETF 기술추세 약세 (손절/비중축소 검토)"
-                elif 50.0 <= t_sc < 60.0:
-                    item["action_status"] = "⏸️ ETF 추세 중립 (조정 구간 관망)"
-                else:
-                    item["action_status"] = f"🟢 {item['rank']} (안정 보유/홀딩)"
+            # 3순위 — 매도 조건 (일봉 OBV 9일 데드 2일차 이상 AND 일봉 Chaikin 2봉 연속 <= 0)
+            elif is_tier3_sell:
+                item["action_status"] = f"🚨 매도{adx_note}{intraday_cho_note} ({rank})"
 
-            # [안전 가드레일 3] DART 재무 미확정 또는 Sanity Fail ➔ 추매 금지 및 잠정 지정
-            elif not f_confirmed or completeness < 90.0:
-                item["action_status"] = "⚠️ DART 재무 미확정 (추매금지/재수집필요)"
+            # 4순위 — 분할매수 조건 (일봉 3순위 미충족 AND 45분봉 지표 중 2개 이상 하락신호)
+            elif is_45m_bearish_2plus:
+                item["action_status"] = f"🎯 분할매수 ({rank} / 45m 단기조정 감지)"
 
-            # [안전 가드레일 4] 일반기업 3x3 펀더멘탈/기술 매트릭스
-            elif f_sc < 50.0:
-                if t_sc < 50.0:
-                    item["action_status"] = "🚨 펀더멘탈/기술 동시약세 (실질 손절/비중축소)"
-                else:
-                    item["action_status"] = "⚠️ 펀더멘탈 약세/기술반등 (반등시 분할매도)"
-            
-            elif f_sc >= 65.0:
-                # 6가지 엄격한 안전 조건 100% 동시 충족 (뉴스/수급 포함) 시에만 제한적 추매 고려
-                # 공시/뉴스 검증이 UNCONFIRMED(FAIL)인 경우 추매 승인 절대 불가
-                if chg_pct <= -3.0:
-                    item["action_status"] = "⚠️ -3% 조정이나 6대조건 미충족 (추매금지/관망)"
-                elif t_sc < 50.0:
-                    item["action_status"] = "🎯 펀더멘탈유지/기술꺾임 (차익실현/익절)"
-                elif 50.0 <= t_sc < 60.0:
-                    item["action_status"] = f"🟢 {item['rank']} (안정 보유/홀딩)"
-                else:
-                    item["action_status"] = f"🟢 {item['rank']} (안정 보유/홀딩)"
-            
-            else: # 50.0 <= f_sc < 65.0 (펀더멘탈 중립 구간 50~64점)
-                if t_sc < 50.0:
-                    item["action_status"] = "⚠️ 펀더멘탈중립/기술약세 (추매금지/비중축소)"
-                elif 50.0 <= t_sc < 60.0:
-                    item["action_status"] = f"⏸️ {item['rank']} 펀더멘탈·기술 중립 (관망/신규매수금지)"
-                else:
-                    item["action_status"] = f"🔄 {item['rank']} 펀더멘탈중립/기술반등 (안정홀딩/상승시 축소)"
-
-            # [안전 가드레일 5] 3일간 45분봉 OBV/Chaikin/ADX 수급이탈 세분화 및 다중 라벨 병기 (+ 연동)
-            is_45m_breakdown = item.get("is_45m_breakdown", False)
-            is_obv_dead = item.get("is_obv_dead", False)
-            is_cho_outflow = item.get("is_cho_outflow", False)
-
-            tech_suffix = ""
-            if is_45m_breakdown:
-                tech_suffix = " + 🚨 이중수급이탈"
-            elif is_obv_dead:
-                tech_suffix = " + ⚠️ OBV이탈"
-            elif is_cho_outflow:
-                tech_suffix = " + ⚠️ CHO유출"
-
-            if "미확정" not in item["action_status"]:
-                if "비중과다" in item["action_status"]:
-                    if tech_suffix:
-                        item["action_status"] = f"⚠️ 비중과다({weight_pct}%){tech_suffix} (추매금지/보유)"
-                elif is_45m_breakdown:
-                    item["action_status"] = f"🚨 단기 매도 ({item['rank']} / OBV이탈·CHO유출)"
-                elif is_obv_dead:
-                    item["action_status"] = f"⚠️ OBV 이탈 ({item['rank']} / 45m OBV 데드)"
-                elif is_cho_outflow:
-                    if "차익실현" in item["action_status"] or "익절" in item["action_status"]:
-                        item["action_status"] = f"🎯 차익실현 + ⚠️ CHO유출 ({item['rank']})"
-                    else:
-                        item["action_status"] = f"⚠️ CHO 유출 ({item['rank']} / 45m 자금유출)"
+            # 5순위 — 그 외 전부 (일봉·45분봉 모두 양호/관망)
+            else:
+                item["action_status"] = f"🟢 {rank} (계속 보유/홀딩)"
 
         return eval_list

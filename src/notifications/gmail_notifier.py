@@ -91,6 +91,8 @@ class GmailNotifier:
         """
         action_count = len(caught_signals)
         held_count = len(held_portfolio) if held_portfolio else 0
+        profit_count = 0
+        loss_count = 0
 
         # --- 1. 내 보유 종목 섹션 HTML ---
         held_section_html = ""
@@ -267,16 +269,22 @@ class GmailNotifier:
                     badge_border = "#93C5FD" if "상방" in sig_text or "우상향" in sig_text else "#FCA5A5" if "이탈" in sig_text or "하방" in sig_text else "#FCD34D" if "약세" in sig_text else "#E2E8F0"
                     badge_color = "#1D4ED8" if "상방" in sig_text or "우상향" in sig_text else "#991B1B" if "이탈" in sig_text or "하방" in sig_text else "#B45309" if "약세" in sig_text else "#475569"
 
+                    obv_d_date = h.get('obv_dead_date', 'N/A')
+                    obv_d_days = h.get('obv_dead_elapsed_days', 0)
+                    daily_cho2 = h.get('daily_cho_recent2', [0, 0])
+                    intra_cho2 = h.get('intraday_cho_recent2', [0, 0])
+                    di_dom = h.get('adx_di_dominance', '-')
+
                     intraday_cards_html += f"""
                     <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; margin-bottom:8px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
                             <span style="font-weight:bold; font-size:12px; color:#0F172A;">{name} ({code})</span>
                             <span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:9.5px;">{sig_text}</span>
                         </div>
-                        <div style="font-size:10.5px; color:#475569; display:flex; justify-content:space-between; background:#F8FAFC; padding:6px 8px; border-radius:4px;">
-                            <span>📊 <strong>ADX (14):</strong> {adx_45m:.1f} (+DI: {p_di:.1f} / -DI: {m_di:.1f})</span>
-                            <span>📈 <strong>OBV 추세:</strong> {obv_tr}</span>
-                            <span>💧 <strong>Chaikin Osc:</strong> {cho_v:+,d}</span>
+                        <div style="font-size:10.5px; color:#475569; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.5;">
+                            <div>📊 <strong>ADX (14) 우세방향:</strong> <span style="color:#1D4ED8; font-weight:bold;">{di_dom}</span> (45m ADX: {adx_45m:.1f})</div>
+                            <div>📉 <strong>OBV(9) 데드크로스:</strong> <span style="color:#DC2626; font-weight:bold;">{obv_d_date}</span> ({obv_d_days}일차 지속) | <strong>45m 추세:</strong> {obv_tr}</div>
+                            <div>💧 <strong>Chaikin Osc(13,26):</strong> 일봉최근2봉 <span style="color:#059669; font-weight:bold;">{daily_cho2}</span> | 45m최근2봉 <span style="color:#D97706; font-weight:bold;">{intra_cho2}</span></div>
                         </div>
                     </div>
                     """

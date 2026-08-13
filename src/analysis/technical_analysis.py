@@ -6,13 +6,6 @@ from src.utils.logger import logger
 def adjust_krx_tick_size(price: float, direction: str = "down") -> int:
     """
     한국거래소(KRX) 주식 호가단위 규칙에 맞게 가격을 보정합니다.
-    - 2,000원 미만: 1원 단위
-    - 2,000원 이상 ~ 5,000원 미만: 5원 단위
-    - 5,000원 이상 ~ 20,000원 미만: 10원 단위
-    - 20,000원 이상 ~ 50,000원 미만: 50원 단위
-    - 50,000원 이상 ~ 200,000원 미만: 100원 단위
-    - 200,000원 이상 ~ 500,000원 미만: 500원 단위
-    - 500,000원 이상: 1,000원 단위
     """
     p = float(price)
     if p <= 0:
@@ -42,20 +35,16 @@ def adjust_krx_tick_size(price: float, direction: str = "down") -> int:
 
 class TechnicalAnalysis:
     """
-    일봉 데이터를 기반으로 주요 보조지표를 산출하고 최근 3거래일 흐름을 종합하여 T_raw (-100~+100) 및 환산점수 T (0~100)를 산출합니다.
+    일봉 데이터를 기반으로 주요 보조지표를 산출하고 일봉/45분봉 복합 대응전략(1~5순위)을 평가합니다.
     """
     def __init__(self, daily_df: pd.DataFrame):
-        """
-        :param daily_df: 'stk_date', 'open_price', 'high_price', 'low_price', 'close_price', 'volume',
-                         'foreign_net_buy', 'inst_net_buy' 컬럼을 포함하는 DataFrame (날짜 오름차순 정렬 필수)
-        """
         self.df = daily_df.copy()
         if not self.df.empty:
             self.df['stk_date'] = pd.to_datetime(self.df['stk_date'])
             self.df = self.df.sort_values('stk_date').reset_index(drop=True)
 
     def calculate_indicators(self) -> pd.DataFrame:
-        """주요 보조지표 연산 (일목균형표 9/20/50, VWAP 9/26, BB 26/1.7, DMI/ADX 14, OBV, Chaikin 13/26)"""
+        """주요 보조지표 연산 (일목 9/20/50, VWAP 9/26, BB 26/1.7, DMI/ADX 14, OBV 9, Chaikin 13/26)"""
         df = self.df.copy()
         if len(df) < 10:
             logger.warning("일봉 데이터 수량이 부족하여 보조지표 연산을 정밀히 수행할 수 없습니다.")
@@ -109,12 +98,12 @@ class TechnicalAnalysis:
         df['minus_di'] = minus_di
         df['adx'] = dx.rolling(window=14).mean()
 
-        # 5. OBV (On Balance Volume, 일목 9 전환선 파동 연동 9일 이동평균 적용)
+        # 5. OBV (9일 MA 기준)
         price_diff = df['close_price'].diff()
         obv_direction = np.where(price_diff > 0, 1, np.where(price_diff < 0, -1, 0))
         df['obv'] = (obv_direction * df['volume']).cumsum()
         df['obv_ma9'] = df['obv'].rolling(window=9).mean()
-        df['obv_ma20'] = df['obv_ma9']  # 호환성 유지
+        df['obv_ma20'] = df['obv_ma9']
 
         # 6. 채킨 오실레이터 (13, 26)
         mfm = ((df['close_price'] - df['low_price']) - (df['high_price'] - df['close_price'])) / (df['high_price'] - df['low_price'] + 1e-9)
@@ -124,7 +113,7 @@ class TechnicalAnalysis:
         chaikin_slow = adl.ewm(span=26, adjust=False).mean()
         df['chaikin_osc'] = chaikin_fast - chaikin_slow
 
-        # 7. ATR (Average True Range, 14일 - 키움 HTS/MTS 영웅문 표준 Wilder's EWM 적용)
+        # 7. ATR (14일 Wilder's EWM)
         tr1 = df['high_price'] - df['low_price']
         tr2 = (df['high_price'] - df['close_price'].shift(1)).abs()
         tr3 = (df['low_price'] - df['close_price'].shift(1)).abs()
@@ -136,7 +125,7 @@ class TechnicalAnalysis:
 
     def evaluate_signals(self) -> Dict[str, Any]:
         """
-        최근 3거래일 데이터를 평가하여 T_raw (-100~+100), T 점수 (0~100) 및 ATR 트레일링 지표 산출
+        최근 일봉 데이터를 기반으로 T 점수 및 원자값 검증 데이터 연산
         """
         if len(self.df) < 5:
             logger.warning("기술적 분석을 위한 일봉 데이터 수가 극히 부족합니다 (최소 5봉 이상 필요).")
@@ -149,6 +138,15 @@ class TechnicalAnalysis:
                 "trailing_buy_price": 0,
                 "trailing_stop_price": 0,
                 "trailing_target_price": 0,
+                "obv_dead_date": "N/A",
+                "obv_dead_elapsed_days": 0,
+                "daily_cho_recent2": [0, 0],
+                "daily_cho_is_subzero_2bars": False,
+                "adx_di_dominance": "+DI: 0.0 / -DI: 0.0 (중립)",
+                "is_minus_di_dominant": False,
+                "is_tier3_sell_a": False,
+                "is_tier3_sell_b": False,
+                "is_tier3_sell": False,
                 "reason": "일봉 데이터 부족 (5봉 미만)"
             }
 
@@ -157,6 +155,44 @@ class TechnicalAnalysis:
         last_row = recent_3.iloc[-1]
         prev_row = recent_3.iloc[-2] if len(recent_3) >= 2 else last_row
 
+        # --- 🔍 원자값 검증 연산 ---
+        # 1. OBV 데드크로스(OBV < OBV_MA9) 연속 발생 거래일수 및 시작일자 추적
+        is_obv_dead_series = df_calc['obv'] < df_calc['obv_ma9']
+        obv_dead_elapsed_days = 0
+        obv_dead_date = "N/A (정상상승)"
+
+        if is_obv_dead_series.iloc[-1]:
+            # 최근 봉부터 역순으로 연속 dead일 수 카운트
+            for i in range(len(is_obv_dead_series) - 1, -1, -1):
+                if is_obv_dead_series.iloc[i]:
+                    obv_dead_elapsed_days += 1
+                else:
+                    break
+            dead_start_idx = len(df_calc) - obv_dead_elapsed_days
+            if 0 <= dead_start_idx < len(df_calc):
+                obv_dead_date = pd.to_datetime(df_calc.iloc[dead_start_idx]['stk_date']).strftime('%Y-%m-%d')
+
+        # 2. 일봉 Chaikin(13,26) 최근 2봉 값
+        ch_recent2_raw = [
+            int(df_calc['chaikin_osc'].iloc[-2]) if len(df_calc) >= 2 else int(last_row.get('chaikin_osc', 0)),
+            int(last_row.get('chaikin_osc', 0))
+        ]
+        daily_cho_is_subzero_2bars = (ch_recent2_raw[0] <= 0) and (ch_recent2_raw[1] <= 0)
+
+        # 3. ADX +DI / -DI 우세방향
+        p_di = round(float(last_row.get('plus_di', 0.0) or 0.0), 1)
+        m_di = round(float(last_row.get('minus_di', 0.0) or 0.0), 1)
+        is_minus_di_dominant = m_di > p_di
+        di_dom_str = f"+DI: {p_di} / -DI: {m_di} ({'-DI우세' if is_minus_di_dominant else '+DI우세'})"
+
+        # 4. 3순위 매도 조건 판정 (A AND B)
+        # A: 일봉 OBV(9) 데드크로스 발생 후 2거래일째까지 골든크로스 미회복 (obv_dead_elapsed_days >= 2)
+        # B: 일봉 Chaikin Oscillator(13,26) 최근 2봉 연속 종가 기준 0 이하 (daily_cho_is_subzero_2bars)
+        is_tier3_sell_a = (obv_dead_elapsed_days >= 2)
+        is_tier3_sell_b = daily_cho_is_subzero_2bars
+        is_tier3_sell = is_tier3_sell_a and is_tier3_sell_b
+
+        # --- 점수 연산 (기존 T점수 로직 유지) ---
         item_weights = {
             "ichimoku": 20.0,
             "vwap": 15.0,
@@ -166,222 +202,178 @@ class TechnicalAnalysis:
             "chaikin": 10.0,
             "supply_demand": 15.0
         }
-
-        total_max_weight = sum(item_weights.values())  # 100.0
+        total_max_weight = sum(item_weights.values())
         valid_weight = 0.0
         earned_raw_points = 0.0
         reasons = []
 
-        # 1. 일목균형표 점수 산출 (20점 만점 - 5단계: 20, 16, 12, 8, 4)
+        # 일목균형표
         if not pd.isna(last_row.get('senkou_span_a')) and not pd.isna(last_row.get('senkou_span_b')):
             valid_weight += item_weights['ichimoku']
             cloud_top = max(last_row['senkou_span_a'], last_row['senkou_span_b'])
             cloud_bottom = min(last_row['senkou_span_a'], last_row['senkou_span_b'])
             tenkan = last_row.get('tenkan_sen', 0)
             kijun = last_row.get('kijun_sen', 0)
-            close = last_row['close_price']
+            close_p = last_row.get('close_price', 0)
 
-            if close > cloud_top and tenkan > kijun:
-                earned_raw_points += 20.0  # 1등급
-                reasons.append("일목 1등급(20점: 구름대 상단 돌파 & 전환>기준)")
-            elif close > cloud_top or tenkan > kijun:
-                earned_raw_points += 16.0  # 2등급
-                reasons.append("일목 2등급(16점: 구름대 상단 상회 또는 전환>기준)")
-            elif close >= cloud_bottom:
-                earned_raw_points += 12.0  # 3등급
-                reasons.append("일목 3등급(12점: 구름대 내부 공방)")
-            elif close < cloud_bottom and tenkan < kijun:
-                earned_raw_points += 4.0   # 5등급
-                reasons.append("일목 5등급(4점: 구름대 하단 이탈 & 역배열 심화)")
+            if close_p > cloud_top and tenkan > kijun:
+                earned_raw_points += 20.0
+                reasons.append("일목 1등급(20점: 구름대 상회 & 호전)")
+            elif close_p > cloud_top:
+                earned_raw_points += 16.0
+                reasons.append("일목 2등급(16점: 구름대 상회)")
+            elif cloud_bottom <= close_p <= cloud_top:
+                earned_raw_points += 12.0
+                reasons.append("일목 3등급(12점: 구름대 내부 혼조)")
+            elif close_p < cloud_bottom and tenkan < kijun:
+                earned_raw_points += 4.0
+                reasons.append("일목 5등급(4점: 구름대 하회 & 역전)")
             else:
-                earned_raw_points += 8.0   # 4등급
-                reasons.append("일목 4등급(8점: 구름대 하단 이탈)")
-        else:
-            earned_raw_points += 10.0
-            reasons.append("일목 3등급(10점: 데이터 수량 부족 중립)")
+                earned_raw_points += 8.0
+                reasons.append("일목 4등급(8점: 구름대 하회)")
 
-        # 2. VWAP 점수 산출 (15점 만점 - 5단계: 15, 12, 9, 6, 3)
-        if not pd.isna(last_row.get('vwap_9')) and not pd.isna(last_row.get('vwap_26')):
+        # VWAP
+        if not pd.isna(last_row.get('vwap_9')):
             valid_weight += item_weights['vwap']
-            close = last_row['close_price']
-            v9 = last_row['vwap_9']
-            v26 = last_row['vwap_26']
-
-            if close > v9 >= v26:
-                earned_raw_points += 15.0  # 1등급
-                reasons.append("VWAP 1등급(15점: 단기/중기 VWAP 우상향 정배열)")
-            elif close > v9:
-                earned_raw_points += 12.0  # 2등급
+            vw9 = last_row['vwap_9']
+            vw26 = last_row['vwap_26']
+            close_p = last_row['close_price']
+            if close_p > vw9 and vw9 > vw26:
+                earned_raw_points += 15.0
+                reasons.append("VWAP 1등급(15점: 정배열 완벽)")
+            elif close_p > vw9:
+                earned_raw_points += 12.0
                 reasons.append("VWAP 2등급(12점: 단기 VWAP 상회)")
-            elif abs(close - v9) / v9 <= 0.01:
-                earned_raw_points += 9.0   # 3등급
-                reasons.append("VWAP 3등급(9점: VWAP 평형 유지)")
-            elif close < v9 < v26:
-                earned_raw_points += 3.0   # 5등급
-                reasons.append("VWAP 5등급(3점: VWAP 하회 역배열)")
+            elif close_p > vw26:
+                earned_raw_points += 9.0
+                reasons.append("VWAP 3등급(9점: 중기 VWAP 지지)")
+            elif close_p < vw9 and vw9 < vw26:
+                earned_raw_points += 3.0
+                reasons.append("VWAP 5등급(3점: 역배열 지속)")
             else:
-                earned_raw_points += 6.0   # 4등급
-                reasons.append("VWAP 4등급(6점: 단기 VWAP 하회)")
-        else:
-            earned_raw_points += 7.5
-            reasons.append("VWAP 3등급(7.5점: 데이터 미비 중립)")
+                earned_raw_points += 6.0
+                reasons.append("VWAP 4등급(6점: 단기 이탈)")
 
-        # 3. 볼린저밴드 점수 산출 (15점 만점 - 5단계: 15, 12, 9, 6, 3)
-        if not pd.isna(last_row.get('bb_upper')) and not pd.isna(last_row.get('bb_lower')):
+        # 볼린저 밴드
+        if not pd.isna(last_row.get('bb_middle')) and not pd.isna(last_row.get('bb_upper')):
             valid_weight += item_weights['bollinger']
-            close = last_row['close_price']
-            upper = last_row['bb_upper']
-            middle = last_row['bb_middle']
-            lower = last_row['bb_lower']
+            b_mid = last_row['bb_middle']
+            b_up = last_row['bb_upper']
+            b_low = last_row['bb_lower']
+            close_p = last_row['close_price']
 
-            if close >= upper:
-                earned_raw_points += 15.0  # 1등급
-                reasons.append("볼린저 1등급(15점: 상단밴드 돌파/강한 상승파동)")
-            elif close > middle:
-                earned_raw_points += 12.0  # 2등급
-                reasons.append("볼린저 2등급(12점: 중심선~상단밴드 위치)")
-            elif abs(close - middle) / middle <= 0.01:
-                earned_raw_points += 9.0   # 3등급
-                reasons.append("볼린저 3등급(9점: 중심선 수렴)")
-            elif close <= lower:
-                earned_raw_points += 3.0   # 5등급
-                reasons.append("볼린저 5등급(3점: 하단밴드 이탈)")
+            if close_p >= b_up:
+                earned_raw_points += 15.0
+                reasons.append("볼밴 1등급(15점: 상한선 돌파 상방 밴드위드 확장)")
+            elif close_p > b_mid:
+                earned_raw_points += 12.0
+                reasons.append("볼밴 2등급(12점: 중앙선 상회 유진)")
+            elif close_p == b_mid:
+                earned_raw_points += 9.0
+                reasons.append("볼밴 3등급(9점: 중심선 지지)")
+            elif close_p <= b_low:
+                earned_raw_points += 3.0
+                reasons.append("볼밴 5등급(3점: 하한선 이탈 하방 확장)")
             else:
-                earned_raw_points += 6.0   # 4등급
-                reasons.append("볼린저 4등급(6점: 하단밴드~중심선 위치)")
-        else:
-            earned_raw_points += 7.5
-            reasons.append("볼린저 3등급(7.5점: 데이터 미비 중립)")
+                earned_raw_points += 6.0
+                reasons.append("볼밴 4등급(6점: 중심선 하회)")
 
-        # 4. DMI / ADX 점수 산출 (15점 만점 - 5단계: 15, 12, 9, 6, 3)
-        if not pd.isna(last_row.get('plus_di')) and not pd.isna(last_row.get('adx')):
+        # DMI/ADX
+        if not pd.isna(last_row.get('adx')):
             valid_weight += item_weights['dmi_adx']
-            p_di = last_row['plus_di']
-            m_di = last_row['minus_di']
             adx = last_row['adx']
 
             if p_di > m_di and adx >= 25:
-                earned_raw_points += 15.0  # 1등급
-                reasons.append("DMI 1등급(15점: DI+ 우위 및 ADX 추세강화)")
-            elif p_di > m_di and adx >= 20:
-                earned_raw_points += 12.0  # 2등급
-                reasons.append("DMI 2등급(12점: DI+ 우위 상승진입)")
-            elif abs(p_di - m_di) <= 3:
-                earned_raw_points += 9.0   # 3등급
+                earned_raw_points += 15.0
+                reasons.append("DMI 1등급(15점: DI+ 우위 및 강한 추세)")
+            elif p_di > m_di:
+                earned_raw_points += 12.0
+                reasons.append("DMI 2등급(12점: DI+ 우위)")
+            elif abs(p_di - m_di) <= 5:
+                earned_raw_points += 9.0
                 reasons.append("DMI 3등급(9점: 팽팽한 혼조세)")
             elif p_di < m_di and adx >= 25:
-                earned_raw_points += 3.0   # 5등급
+                earned_raw_points += 3.0
                 reasons.append("DMI 5등급(3점: DI- 우위 및 강한 하락추세)")
             else:
-                earned_raw_points += 6.0   # 4등급
+                earned_raw_points += 6.0
                 reasons.append("DMI 4등급(6점: DI- 우위 하락세)")
-        else:
-            earned_raw_points += 7.5
-            reasons.append("DMI 3등급(7.5점: 데이터 미비 중립)")
 
-        # 5. OBV 점수 산출 (10점 만점 - 5단계: 10, 8, 6, 4, 2)
-        if not pd.isna(last_row.get('obv_ma20')):
+        # OBV
+        if not pd.isna(last_row.get('obv_ma9')):
             valid_weight += item_weights['obv']
             obv = last_row['obv']
-            obv_ma = last_row['obv_ma20']
-
+            obv_ma = last_row['obv_ma9']
             if obv > obv_ma and obv > prev_row.get('obv', obv):
-                earned_raw_points += 10.0  # 1등급
-                reasons.append("OBV 1등급(10점: OBV 20일 이평 상회 & 우상향)")
+                earned_raw_points += 10.0
+                reasons.append("OBV 1등급(10점: OBV 9일 이평 상회 & 우상향)")
             elif obv > obv_ma:
-                earned_raw_points += 8.0   # 2등급
-                reasons.append("OBV 2등급(8점: OBV 20일 이평 상회)")
-            elif abs(obv - obv_ma) / (abs(obv_ma) + 1e-9) <= 0.02:
-                earned_raw_points += 6.0   # 3등급
-                reasons.append("OBV 3등급(6점: OBV 이평 수렴)")
+                earned_raw_points += 8.0
+                reasons.append("OBV 2등급(8점: OBV 9일 이평 상회)")
             elif obv < obv_ma and obv < prev_row.get('obv', obv):
-                earned_raw_points += 2.0   # 5등급
-                reasons.append("OBV 5등급(2점: OBV 이평 하회 & 연속 유출)")
+                earned_raw_points += 2.0
+                reasons.append("OBV 5등급(2점: OBV 9일 이평 하회 & 연속 유출)")
             else:
-                earned_raw_points += 4.0   # 4등급
-                reasons.append("OBV 4등급(4점: OBV 이평 하회)")
-        else:
-            earned_raw_points += 5.0
-            reasons.append("OBV 3등급(5점: 데이터 미비 중립)")
+                earned_raw_points += 4.0
+                reasons.append("OBV 4등급(4점: OBV 9일 이평 하회)")
 
-        # 6. 채킨 오실레이터 점수 산출 (10점 만점 - 5단계: 10, 8, 6, 4, 2)
+        # 채킨 오실레이터
         if not pd.isna(last_row.get('chaikin_osc')):
             valid_weight += item_weights['chaikin']
             ch = last_row['chaikin_osc']
-
             if ch > 1000:
-                earned_raw_points += 10.0  # 1등급
+                earned_raw_points += 10.0
                 reasons.append("채킨 1등급(10점: 매수 유입 급증)")
             elif ch > 0:
-                earned_raw_points += 8.0   # 2등급
+                earned_raw_points += 8.0
                 reasons.append("채킨 2등급(8점: 매수세 우위)")
-            elif abs(ch) <= 100:
-                earned_raw_points += 6.0   # 3등급
-                reasons.append("채킨 3등급(6점: 평형 유입)")
             elif ch < -1000:
-                earned_raw_points += 2.0   # 5등급
+                earned_raw_points += 2.0
                 reasons.append("채킨 5등급(2점: 매도 유출 심화)")
             else:
-                earned_raw_points += 4.0   # 4등급
+                earned_raw_points += 4.0
                 reasons.append("채킨 4등급(4점: 매도세 우위)")
-        else:
-            earned_raw_points += 5.0
-            reasons.append("채킨 3등급(5점: 데이터 미비 중립)")
 
-        # 7. 외국인/기관 3일 수급 세분화 (15점 만점 - 5단계: 15, 12, 9, 6, 3)
+        # 수급
         supply_demand_pass = False
         if 'foreign_net_buy' in recent_3.columns and 'inst_net_buy' in recent_3.columns:
             valid_weight += item_weights['supply_demand']
             f_buy = recent_3['foreign_net_buy'].tolist()
             i_buy = recent_3['inst_net_buy'].tolist()
-
             f_consec_buy = all(x > 0 for x in f_buy)
             i_consec_buy = all(x > 0 for x in i_buy)
             f_consec_sell = all(x < 0 for x in f_buy)
             i_consec_sell = all(x < 0 for x in i_buy)
 
             if f_consec_buy and i_consec_buy:
-                earned_raw_points += 15.0  # 1등급: 3일 연속 동반 매수
+                earned_raw_points += 15.0
                 supply_demand_pass = True
-                reasons.append("수급 1등급(15점: 외국인/기관 3일 연속 동반 쌍쓸이 매수)")
+                reasons.append("수급 1등급(15점: 외국인/기관 3일 연속 동반 매수)")
             elif sum(f_buy) > 0 and sum(i_buy) > 0:
-                earned_raw_points += 12.0  # 2등급: 양 주체 모두 3일 누적 순매수 양수
+                earned_raw_points += 12.0
                 supply_demand_pass = True
-                reasons.append("수급 2등급(12점: 외국인/기관 3일 누적 동반 순매수 양수)")
-            elif f_consec_buy or i_consec_buy:
-                earned_raw_points += 9.0   # 3등급: 한 주체만 3일 연속 순매수
-                reasons.append("수급 3등급(9점: 외국인 또는 기관 3일 연속 매수 우세)")
+                reasons.append("수급 2등급(12점: 외국인/기관 3일 누적 순매수 양수)")
             elif f_consec_sell and i_consec_sell:
-                earned_raw_points += 3.0   # 5등급: 외국인/기관 3일 연속 동반 매도 폭탄
-                reasons.append("수급 5등급(3점: 외국인/기관 3일 연속 동반 매도 폭탄)")
+                earned_raw_points += 3.0
+                reasons.append("수급 5등급(3점: 외국인/기관 3일 연속 동반 매도)")
             else:
-                earned_raw_points += 6.0   # 4등급: 수급 혼조/약세
+                earned_raw_points += 6.0
                 reasons.append("수급 4등급(6점: 수급 약세 지속)")
-        else:
-            earned_raw_points += 7.5
-            reasons.append("수급 3등급(7.5점: 수급 데이터 미비 중립)")
 
-        # 데이터 완성도 (%)
         tech_completeness = round((valid_weight / total_max_weight) * 100.0, 2)
-
-        # 5단계 등간격 직접 합산 T 점수 (0 ~ 100점)
         t_score = round(max(0.0, min(100.0, earned_raw_points)), 1)
         t_raw = t_score
 
-        # 8. ATR 수치 및 KRX 호가단위 보정 트레일링 가격 산출
         atr_14 = float(last_row.get('atr_14', 0.0) or 0.0)
         close_p = float(last_row.get('close_price', 0.0) or 0.0)
         if pd.isna(atr_14) or atr_14 <= 0:
             atr_14 = close_p * 0.03
 
         atr_pct = round((atr_14 / (close_p + 1e-9)) * 100.0, 2)
-        
-        # 계산상의 트레일링 가격
         raw_trailing_buy_p = close_p - (1.5 * atr_14)
         raw_trailing_stop_p = close_p - (2.0 * atr_14)
         raw_trailing_target_p = close_p + (2.5 * atr_14)
 
-        # 키움 호가단위 보정 가격
         kiwoom_buy_tick_p = adjust_krx_tick_size(raw_trailing_buy_p, "down")
         kiwoom_stop_tick_p = adjust_krx_tick_size(raw_trailing_stop_p, "down")
         kiwoom_target_tick_p = adjust_krx_tick_size(raw_trailing_target_p, "up")
@@ -399,5 +391,14 @@ class TechnicalAnalysis:
             "kiwoom_stop_tick_price": kiwoom_stop_tick_p,
             "kiwoom_target_tick_price": kiwoom_target_tick_p,
             "supply_demand_pass": supply_demand_pass,
+            "obv_dead_date": obv_dead_date,
+            "obv_dead_elapsed_days": obv_dead_elapsed_days,
+            "daily_cho_recent2": ch_recent2_raw,
+            "daily_cho_is_subzero_2bars": daily_cho_is_subzero_2bars,
+            "adx_di_dominance": di_dom_str,
+            "is_minus_di_dominant": is_minus_di_dominant,
+            "is_tier3_sell_a": is_tier3_sell_a,
+            "is_tier3_sell_b": is_tier3_sell_b,
+            "is_tier3_sell": is_tier3_sell,
             "reason": " / ".join(reasons) if reasons else "보통 범위 흐름"
         }
