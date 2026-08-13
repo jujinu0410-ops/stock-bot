@@ -16133,3 +16133,19 @@ sqlite3.OperationalError: table stock_info has no column named is_active
 [2026-08-13 15:46:15] [INFO] [stock_system:gmail_notifier.py:74] - [Gmail] Gmail SMTP 서버 접속 시도 중... (jujinu0410@gmail.com -> jujinu0410@gmail.com)
 [2026-08-13 15:46:18] [INFO] [stock_system:gmail_notifier.py:82] - [Gmail] 이메일 및 첨부 파일 발송 성공! (제목: [2차 장마감 정밀 리포트(15:35)] 8월 13일 내 계좌 보유 종목 정밀 평가 & 관심 종목 리포트)
 [2026-08-13 15:46:18] [INFO] [stock_system:main.py:210] - 내 종목 정밀 평가 지메일 리포트 (본문 CSV, 백업 CSV 및 ASCII XLSX 첨부) 성공 발송 완료!
+[2026-08-13 15:49:03] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: stock_info
+[2026-08-13 15:49:03] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: dart_financials
+[2026-08-13 15:49:03] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: kiwoom_daily
+[2026-08-13 15:49:03] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: trading_signals
+[2026-08-13 15:49:03] [INFO] [stock_system:db_manager.py:33] - DB 테이블 확인/생성 완료: portfolio_positions
+[2026-08-13 15:49:03] [INFO] [stock_system:db_manager.py:80] - 모든 DB 테이블 및 인덱스 초기화 완료
+[2026-08-13 15:49:04] [INFO] [stock_system:intraday_analysis.py:181] - [Intraday45mAnalyzer] 004960 45분봉 정밀분석 - ADX:42.7, OBV9데드:False, CHO26최근2봉:[8191, 8129] ➔ 2개이상하락:False
+[2026-08-13 15:49:05] [INFO] [stock_system:intraday_analysis.py:181] - [Intraday45mAnalyzer] 055490 45분봉 정밀분석 - ADX:50.7, OBV9데드:True, CHO26최근2봉:[-95, -405] ➔ 2개이상하락:False
+[2026-08-13 15:49:05] [INFO] [stock_system:intraday_analysis.py:181] - [Intraday45mAnalyzer] 140670 45분봉 정밀분석 - ADX:28.5, OBV9데드:False, CHO26최근2봉:[3504, 2579] ➔ 2개이상하락:False
+[2026-08-13 15:49:05] [INFO] [stock_system:intraday_analysis.py:181] - [Intraday45mAnalyzer] 161510 45분봉 정밀분석 - ADX:24.6, OBV9데드:True, CHO26최근2봉:[-14607, -21460] ➔ 2개이상하락:False
+[2026-08-13 15:49:06] [INFO] [stock_system:intraday_analysis.py:181] - [Intraday45mAnalyzer] 206650 45분봉 정밀분석 - ADX:36.3, OBV9데드:False, CHO26최근2봉:[-3965, -4859] ➔ 2개이상하락:False
+[2026-08-13 15:49:06] [WARNING] [stock_system:intraday_analysis.py:63] - [Intraday45mAnalyzer] 234920 15분봉 데이터 수집 실패
+[2026-08-13 15:49:06] [INFO] [stock_system:intraday_analysis.py:181] - [Intraday45mAnalyzer] 241520 45분봉 정밀분석 - ADX:24.7, OBV9데드:False, CHO26최근2봉:[-2088, -4024] ➔ 2개이상하락:False
+[2026-08-13 15:49:06] [INFO] [stock_system:intraday_analysis.py:181] - [Intraday45mAnalyzer] 267260 45분봉 정밀분석 - ADX:43.1, OBV9데드:True, CHO26최근2봉:[-2375, -3201] ➔ 2개이상하락:True
+[2026-08-13 15:49:07] [INFO] [stock_system:intraday_analysis.py:181] - [Intraday45mAnalyzer] 348340 45분봉 정밀분석 - ADX:43.6, OBV9데드:False, CHO26최근2봉:[7922, 6473] ➔ 2개이상하락:False
+[2026-08-13 15:49:07] [INFO] [stock_system:intraday_analysis.py:181] - [Intraday45mAnalyzer] 490590 45분봉 정밀분석 - ADX:35.4, OBV9데드:False, CHO26최근2봉:[42929, 46321] ➔ 2개이상하락:False
