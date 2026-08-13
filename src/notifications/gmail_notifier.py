@@ -159,9 +159,12 @@ class GmailNotifier:
                 if not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ DART 재무미확정 (보류)"
-                elif "45m 3일 수급이탈" in clean_strategy or "수급이탈" in clean_strategy:
+                elif "단기 매도" in clean_strategy or "단기매도" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FEF2F2", "#FCA5A5", "#991B1B"
-                    action_kw = "🚨 45m 수급이탈 (비중축소)"
+                    action_kw = "🚨 단기 매도"
+                elif "분량축소" in clean_strategy or "비중축소" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
+                    action_kw = "⚠️ 분량축소"
                 elif "비중과다" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "비중과다 보유"
@@ -171,7 +174,7 @@ class GmailNotifier:
                 elif "추매" in clean_strategy or "분할매수" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#EFF6FF", "#93C5FD", "#1D4ED8"
                     action_kw = "분할매수"
-                elif "분할매도" in clean_strategy or "비중축소" in clean_strategy:
+                elif "분할매도" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FEF2F2", "#FCA5A5", "#991B1B"
                     action_kw = "분할매도"
                 elif "손절" in clean_strategy:
@@ -248,9 +251,9 @@ class GmailNotifier:
                     cho_v = h.get('chaikin_osc_45m', 0)
                     sig_text = h.get('signal_45m_text', '대기')
 
-                    badge_bg = "#EFF6FF" if "상방" in sig_text or "우상향" in sig_text else "#FEF2F2" if "하방" in sig_text or "조정" in sig_text else "#F8FAFC"
-                    badge_border = "#93C5FD" if "상방" in sig_text or "우상향" in sig_text else "#FCA5A5" if "하방" in sig_text or "조정" in sig_text else "#E2E8F0"
-                    badge_color = "#1D4ED8" if "상방" in sig_text or "우상향" in sig_text else "#991B1B" if "하방" in sig_text or "조정" in sig_text else "#475569"
+                    badge_bg = "#EFF6FF" if "상방" in sig_text or "우상향" in sig_text else "#FEF2F2" if "이탈" in sig_text or "하방" in sig_text else "#FFFBEB" if "약세" in sig_text else "#F8FAFC"
+                    badge_border = "#93C5FD" if "상방" in sig_text or "우상향" in sig_text else "#FCA5A5" if "이탈" in sig_text or "하방" in sig_text else "#FCD34D" if "약세" in sig_text else "#E2E8F0"
+                    badge_color = "#1D4ED8" if "상방" in sig_text or "우상향" in sig_text else "#991B1B" if "이탈" in sig_text or "하방" in sig_text else "#B45309" if "약세" in sig_text else "#475569"
 
                     intraday_cards_html += f"""
                     <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:10px 12px; margin-bottom:8px;">
@@ -363,10 +366,10 @@ class GmailNotifier:
             </div>
             <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
                 <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">
-                    ⏱️ 45분봉(Intraday 45m) 정밀 기술 수급 및 추세 지표 (ADX · OBV · Chaikin Oscillator)
+                    ⏱️ 최근 3~5영업일 45분봉(Intraday 45m) 정밀 기술 수급 및 추세 지표 (ADX · OBV · Chaikin Oscillator)
                 </h3>
                 <div style="font-size:11px; color:#64748B; margin-bottom:10px;">
-                    ※ 15분봉 3개 캔들 결합 45분 단기 파동 분석 (ADX 25 이상: 강력 방향성 추세 | Chaikin Oscillator: 스마트머니 실시간 자금 유입)
+                    ※ 최근 3~5영업일(40여개 45분봉) 누적 시세 기반 3일 다차원 수급 추세 (ADX 25 이상: 강력 방향성 추세 | Chaikin Oscillator &lt; 0 지속: 2일 연속 순매도 자금 유출)
                 </div>
                 {intraday_cards_html}
             </div>
