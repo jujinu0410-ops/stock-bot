@@ -369,17 +369,31 @@ class PortfolioManager:
                 else:
                     item["action_status"] = f"🔄 {item['rank']} 펀더멘탈중립/기술반등 (안정홀딩/상승시 축소)"
 
-            # [안전 가드레일 5] 3일간 45분봉 OBV/Chaikin/ADX 수급이탈 세분화 신호 ➔ 대응전략표 100% 강제 연동
+            # [안전 가드레일 5] 3일간 45분봉 OBV/Chaikin/ADX 수급이탈 세분화 및 다중 라벨 병기 (+ 연동)
             is_45m_breakdown = item.get("is_45m_breakdown", False)
             is_obv_dead = item.get("is_obv_dead", False)
             is_cho_outflow = item.get("is_cho_outflow", False)
 
+            tech_suffix = ""
+            if is_45m_breakdown:
+                tech_suffix = " + 🚨 이중수급이탈"
+            elif is_obv_dead:
+                tech_suffix = " + ⚠️ OBV이탈"
+            elif is_cho_outflow:
+                tech_suffix = " + ⚠️ CHO유출"
+
             if "미확정" not in item["action_status"]:
-                if is_45m_breakdown:
+                if "비중과다" in item["action_status"]:
+                    if tech_suffix:
+                        item["action_status"] = f"⚠️ 비중과다({weight_pct}%){tech_suffix} (추매금지/보유)"
+                elif is_45m_breakdown:
                     item["action_status"] = f"🚨 단기 매도 ({item['rank']} / OBV이탈·CHO유출)"
                 elif is_obv_dead:
                     item["action_status"] = f"⚠️ OBV 이탈 ({item['rank']} / 45m OBV 데드)"
                 elif is_cho_outflow:
-                    item["action_status"] = f"⚠️ CHO 유출 ({item['rank']} / 45m 자금유출)"
+                    if "차익실현" in item["action_status"] or "익절" in item["action_status"]:
+                        item["action_status"] = f"🎯 차익실현 + ⚠️ CHO유출 ({item['rank']})"
+                    else:
+                        item["action_status"] = f"⚠️ CHO 유출 ({item['rank']} / 45m 자금유출)"
 
         return eval_list

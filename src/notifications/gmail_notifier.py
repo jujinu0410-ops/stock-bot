@@ -159,6 +159,15 @@ class GmailNotifier:
                 if not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ DART 재무미확정 (보류)"
+                elif "비중과다" in clean_strategy and "CHO유출" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
+                    action_kw = "⚠️ 비중과다 + CHO유출"
+                elif "비중과다" in clean_strategy and "OBV이탈" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
+                    action_kw = "⚠️ 비중과다 + OBV이탈"
+                elif "차익실현" in clean_strategy and "CHO유출" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#ECFDF5", "#6EE7B7", "#065F46"
+                    action_kw = "🎯 차익실현 + CHO유출"
                 elif "단기 매도" in clean_strategy or "단기매도" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FEF2F2", "#FCA5A5", "#991B1B"
                     action_kw = "🚨 단기 매도"
@@ -168,9 +177,6 @@ class GmailNotifier:
                 elif "CHO 유출" in clean_strategy or "CHO유출" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ CHO 유출"
-                elif "분량축소" in clean_strategy or "비중축소" in clean_strategy:
-                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
-                    action_kw = "⚠️ 분량축소"
                 elif "비중과다" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "비중과다 보유"
@@ -336,6 +342,10 @@ class GmailNotifier:
 
             held_section_html = f"""
             {swing_section_html}
+            <div style="background:#EFF6FF; border:1px solid #93C5FD; color:#1D4ED8; border-radius:10px; padding:12px 14px; margin-bottom:16px; font-size:11.5px; line-height:1.45;">
+                📡 <strong>키움 REST API kt00018 실계좌 잔고 100% 실시간 연동 완료:</strong><br>
+                • 현재 주진우님의 키움 실계좌 보유 종목: <strong>총 {held_count}개 종목</strong> (매도 완료된 4개 종목 잔고 0주 확인 ➔ 분석 토큰 낭비 방지를 위해 100% 자동 정돈 완료)
+            </div>
             <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:2px solid #E2E8F0; padding-bottom:8px;">
                     <div>

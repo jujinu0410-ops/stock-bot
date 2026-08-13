@@ -9,9 +9,9 @@ class Intraday45mAnalyzer:
     """
     보유 종목의 최근 3~5영업일(24~40개 45분봉) 데이터를 수집하여
     일목균형표 파동(9, 26) 표준 수치로 통일된 보조지표를 연산합니다.
-    - OBV 마스킹/이동평균: 9 (1일 거래일 9봉 45분봉 기준)
-    - ADX: 14 (표준 14일/14봉 DMI/ADX)
-    - Chaikin Oscillator: (13, 26) (3일 거래일 26봉 및 일목 26 기준선 변곡점 연동)
+    - OBV 9봉 MA (1일 거래일 9봉 45분봉 기준)
+    - ADX 14 (표준 14일/14봉 DMI/ADX)
+    - Chaikin Oscillator (13, 26) (3일 거래일 26봉 및 일목 26 기준선 변곡점 연동)
     """
     def __init__(self):
         pass
@@ -36,9 +36,9 @@ class Intraday45mAnalyzer:
             "plus_di_45m": 0.0,
             "minus_di_45m": 0.0,
             "obv_45m": 0,
-            "obv_45m_trend": "데이터 미수집",
+            "obv_45m_trend": "데이터 대기",
             "chaikin_osc_45m": 0,
-            "chaikin_flow_45m": "데이터 미수집",
+            "chaikin_flow_45m": "데이터 대기",
             "is_45m_breakdown": False,
             "is_obv_dead": False,
             "is_cho_outflow": False,
@@ -91,16 +91,26 @@ class Intraday45mAnalyzer:
             dx = 100 * (plus_di_series - minus_di_series).abs() / (plus_di_series + minus_di_series + 1e-9)
             adx_series = dx.ewm(alpha=1/14, adjust=False).mean()
 
-            # 4. 45분봉 OBV (9) 및 1일(9봉)~3일(26봉) 데드크로스 미회복 검증
+            # 4. 45분봉 OBV (9) 및 정밀 데드크로스/이탈 연산
             obv_series = (np.sign(close.diff()) * vol).fillna(0).cumsum()
             obv_ema9 = obv_series.ewm(span=9, adjust=False).mean()
             
-            recent_18_obv = obv_series.iloc[-18:]
-            recent_18_obv_ema = obv_ema9.iloc[-18:]
-            obv_dead_count = (recent_18_obv < recent_18_obv_ema).sum()
-            obv_dead_flag = (obv_dead_count >= 11) and (obv_series.iloc[-1] < obv_series.iloc[-9])
+            recent_9_obv = obv_series.iloc[-9:]
+            recent_9_ema = obv_ema9.iloc[-9:]
+            
+            # OBV 데드크로스 정밀 판단: 현재 OBV < OBV_EMA9 이면서 최근 9봉 중 5봉 이상 EMA 하회 또는 9봉전 대비 하락
+            is_below_ema = obv_series.iloc[-1] < obv_ema9.iloc[-1]
+            dead_bars_count = (recent_9_obv < recent_9_ema).sum()
+            is_obv_falling = obv_series.iloc[-1] < obv_series.iloc[-9]
+            
+            obv_dead_flag = is_below_ema and (dead_bars_count >= 5 or is_obv_falling)
 
-            obv_trend_str = "📉 3일 OBV 이탈 (9봉 데드)" if obv_dead_flag else "📈 매집 유지 (상승)"
+            if obv_dead_flag:
+                obv_trend_str = "📉 OBV(9) 데드크로스 (이탈)"
+            elif is_below_ema:
+                obv_trend_str = "⚠️ OBV(9) 조정 약세"
+            else:
+                obv_trend_str = "📈 OBV(9) 매집 유지 (상승)"
 
             # 5. 45분봉 Chaikin Oscillator (13, 26) (일목 9, 26 변곡점 연동)
             hl_diff = high - low
@@ -112,10 +122,15 @@ class Intraday45mAnalyzer:
             recent_18_cho = cho_series.iloc[-18:]
             cho_negative_count = (recent_18_cho < 0).sum()
             
-            # Chaikin (13, 26) 음수 자금유출 지속성 판단
-            cho_dead_flag = (latest_cho < 0) and (cho_negative_count >= 10)
+            # Chaikin (13, 26) 음수 자금유출 지속성 판단 (CHO < 0 필수)
+            cho_dead_flag = (latest_cho < 0) and (cho_negative_count >= 8)
 
-            cho_flow_str = f"💸 CHO 자금유출 ({latest_cho:+,d})" if cho_dead_flag else f"💧 자금 유입 ({latest_cho:+,d})"
+            if cho_dead_flag:
+                cho_flow_str = f"💸 CHO 자금유출 ({latest_cho:+,d})"
+            elif latest_cho < 0:
+                cho_flow_str = f"⚠️ CHO 자금약세 ({latest_cho:+,d})"
+            else:
+                cho_flow_str = f"💧 CHO 자금유입 ({latest_cho:+,d})"
 
             latest_adx = float(adx_series.iloc[-1])
             latest_plus_di = float(plus_di_series.iloc[-1])
@@ -126,7 +141,7 @@ class Intraday45mAnalyzer:
             adx_diff_3 = adx_series.diff().iloc[-3:].sum()
             adx_bear_accel = (latest_adx >= 22.0) and (latest_minus_di > latest_plus_di) and (adx_diff_3 > 0) and (latest_cho < 0)
 
-            # 7. 🔥 [통일 수치 기준] OBV(9), ADX(14), Chaikin(13, 26) 복합 판단
+            # 7. 🔥 [통일 수치 세분화 판단]
             is_45m_breakdown = obv_dead_flag and cho_dead_flag  # 이중 수급이탈 ➔ 🚨 단기 매도
             is_obv_dead = obv_dead_flag and not cho_dead_flag   # OBV만 데드 (CHO 양수 유지) ➔ ⚠️ OBV 이탈
             is_cho_outflow = cho_dead_flag and not obv_dead_flag # CHO만 유출 ➔ ⚠️ CHO 유출
@@ -134,7 +149,7 @@ class Intraday45mAnalyzer:
             action_rec = ""
             if is_45m_breakdown:
                 sig_text = f"🚨 45m 이중수급이탈 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
-                action_rec = "🚨 단기 매도 (OBV9데드 + CHO26유출)"
+                action_rec = "🚨 단기 매도 (OBV이탈 + CHO유출)"
             elif is_obv_dead:
                 sig_text = f"⚠️ 45m OBV(9) 이탈 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
                 action_rec = "⚠️ OBV 이탈 (45m OBV 9데드)"
@@ -151,7 +166,7 @@ class Intraday45mAnalyzer:
                 sig_text = f"⏸️ 45m 조정/관망 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
                 action_rec = "⏸️ 45m 단기조정 (관망)"
 
-            logger.info(f"[Intraday45mAnalyzer] 통일 파동지표(OBV 9, ADX 14, CHO 13/26) {stock_code} 45분봉 정밀분석 - ADX:{latest_adx:.1f}, OBV9데드:{obv_dead_flag}, CHO26유출({latest_cho}):{cho_dead_flag} ➔ 이중이탈:{is_45m_breakdown}")
+            logger.info(f"[Intraday45mAnalyzer] {stock_code} 45분봉 정밀분석 - ADX:{latest_adx:.1f}, OBV9데드:{obv_dead_flag}, CHO26유출({latest_cho}):{cho_dead_flag} ➔ 이중이탈:{is_45m_breakdown}")
 
             return {
                 "stock_code": stock_code,

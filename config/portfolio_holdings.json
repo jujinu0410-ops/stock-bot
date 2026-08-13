@@ -4,54 +4,54 @@
     "stock_name": "한신공영",
     "quantity": 1871,
     "avg_buy_price": 10962.0,
-    "current_price": 10960,
+    "current_price": 11090,
     "total_invested": 20510490.0,
-    "eval_pnl_pct": -0.25
+    "eval_pnl_pct": 0.93
   },
   {
     "stock_code": "047770",
     "stock_name": "코데즈컴바인",
     "quantity": 989,
     "avg_buy_price": 4745.0,
-    "current_price": 2665,
+    "current_price": 2655,
     "total_invested": 4692865.0,
-    "eval_pnl_pct": -43.97
+    "eval_pnl_pct": -44.18
   },
   {
     "stock_code": "055490",
     "stock_name": "테이팩스",
     "quantity": 4283,
     "avg_buy_price": 23364.0,
-    "current_price": 14590,
+    "current_price": 14470,
     "total_invested": 100071170.0,
-    "eval_pnl_pct": -37.7
+    "eval_pnl_pct": -38.22
   },
   {
     "stock_code": "140670",
     "stock_name": "알에스오토메이션",
     "quantity": 531,
     "avg_buy_price": 18899.0,
-    "current_price": 10860,
+    "current_price": 10810,
     "total_invested": 10035560.0,
-    "eval_pnl_pct": -42.68
+    "eval_pnl_pct": -42.94
   },
   {
     "stock_code": "161510",
     "stock_name": "PLUS 고배당주",
     "quantity": 250,
     "avg_buy_price": 28186.0,
-    "current_price": 24910,
+    "current_price": 24995,
     "total_invested": 7046560.0,
-    "eval_pnl_pct": -11.65
+    "eval_pnl_pct": -11.35
   },
   {
     "stock_code": "206650",
     "stock_name": "유바이오로직스",
     "quantity": 293,
     "avg_buy_price": 15716.0,
-    "current_price": 8950,
+    "current_price": 8960,
     "total_invested": 4604937.0,
-    "eval_pnl_pct": -43.19
+    "eval_pnl_pct": -43.13
   },
   {
     "stock_code": "234920",
@@ -67,27 +67,27 @@
     "stock_name": "DSC인베스트먼트",
     "quantity": 115,
     "avg_buy_price": 17995.0,
-    "current_price": 8670,
+    "current_price": 8640,
     "total_invested": 2069460.0,
-    "eval_pnl_pct": -51.94
+    "eval_pnl_pct": -52.11
   },
   {
     "stock_code": "267260",
     "stock_name": "HD현대일렉트릭",
     "quantity": 4,
     "avg_buy_price": 745000.0,
-    "current_price": 785000,
+    "current_price": 787000,
     "total_invested": 2980000.0,
-    "eval_pnl_pct": 5.13
+    "eval_pnl_pct": 5.4
   },
   {
     "stock_code": "348340",
     "stock_name": "뉴로메카",
     "quantity": 124,
     "avg_buy_price": 80329.0,
-    "current_price": 21500,
+    "current_price": 21450,
     "total_invested": 9960800.0,
-    "eval_pnl_pct": -73.31
+    "eval_pnl_pct": -73.37
   },
   {
     "stock_code": "490590",
