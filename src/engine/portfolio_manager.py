@@ -272,7 +272,8 @@ class PortfolioManager:
                 "chaikin_flow_45m": intra_res.get("chaikin_flow_45m", "미수집"),
                 "signal_45m_text": intra_res.get("signal_45m_text", "대기"),
                 "is_45m_breakdown": intra_res.get("is_45m_breakdown", False),
-                "is_45m_weak": intra_res.get("is_45m_weak", False),
+                "is_obv_dead": intra_res.get("is_obv_dead", False),
+                "is_cho_outflow": intra_res.get("is_cho_outflow", False),
                 "action_status": "안정 보유 (홀딩)",
                 "reason": analysis.get("reason", "분석 데이터 정상") if analysis else "데이터 부족"
             })
@@ -357,13 +358,17 @@ class PortfolioManager:
                 else:
                     item["action_status"] = f"🔄 {item['rank']} 펀더멘탈중립/기술반등 (안정홀딩/상승시 축소)"
 
-            # [안전 가드레일 5] 3일간 45분봉 OBV/Chaikin/ADX 수급이탈 신호 ➔ 대응전략표 강제 연동
+            # [안전 가드레일 5] 3일간 45분봉 OBV/Chaikin/ADX 수급이탈 세분화 신호 ➔ 대응전략표 100% 강제 연동
             is_45m_breakdown = item.get("is_45m_breakdown", False)
-            is_45m_weak = item.get("is_45m_weak", False)
+            is_obv_dead = item.get("is_obv_dead", False)
+            is_cho_outflow = item.get("is_cho_outflow", False)
 
-            if is_45m_breakdown and "미확정" not in item["action_status"]:
-                item["action_status"] = f"🚨 단기 매도 ({item['rank']} / 45m 3일 수급이탈)"
-            elif is_45m_weak and "미확정" not in item["action_status"]:
-                item["action_status"] = f"⚠️ 분량축소 ({item['rank']} / 45m 3일 수급약세)"
+            if "미확정" not in item["action_status"]:
+                if is_45m_breakdown:
+                    item["action_status"] = f"🚨 단기 매도 ({item['rank']} / OBV이탈·CHO유출)"
+                elif is_obv_dead:
+                    item["action_status"] = f"⚠️ OBV 이탈 ({item['rank']} / 45m OBV 데드)"
+                elif is_cho_outflow:
+                    item["action_status"] = f"⚠️ CHO 유출 ({item['rank']} / 45m 자금유출)"
 
         return eval_list

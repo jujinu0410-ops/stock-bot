@@ -162,6 +162,12 @@ class GmailNotifier:
                 elif "단기 매도" in clean_strategy or "단기매도" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FEF2F2", "#FCA5A5", "#991B1B"
                     action_kw = "🚨 단기 매도"
+                elif "OBV 이탈" in clean_strategy or "OBV이탈" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
+                    action_kw = "⚠️ OBV 이탈"
+                elif "CHO 유출" in clean_strategy or "CHO유출" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
+                    action_kw = "⚠️ CHO 유출"
                 elif "분량축소" in clean_strategy or "비중축소" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ 분량축소"

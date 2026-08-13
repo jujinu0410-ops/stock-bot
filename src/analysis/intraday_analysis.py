@@ -37,7 +37,8 @@ class Intraday45mAnalyzer:
             "chaikin_osc_45m": 0,
             "chaikin_flow_45m": "데이터 미수집",
             "is_45m_breakdown": False,
-            "is_45m_weak": False,
+            "is_obv_dead": False,
+            "is_cho_outflow": False,
             "signal_45m_text": "45분봉 데이터 대기",
             "action_45m_recommendation": ""
         }
@@ -91,15 +92,14 @@ class Intraday45mAnalyzer:
             obv_series = (np.sign(close.diff()) * vol).fillna(0).cumsum()
             obv_ema10 = obv_series.ewm(span=10, adjust=False).mean()
             
-            # 최근 16봉(2영업일) 중 OBV < OBV_EMA10 횟수 및 3일전 대비 하락 검증
             recent_16_obv = obv_series.iloc[-16:]
             recent_16_obv_ema = obv_ema10.iloc[-16:]
             obv_dead_count = (recent_16_obv < recent_16_obv_ema).sum()
             obv_dead_flag = (obv_dead_count >= 10) and (obv_series.iloc[-1] < obv_series.iloc[-8])
 
-            obv_trend_str = "📉 3일 수급이탈 (데드크로스)" if obv_dead_flag else "📈 매집 유지 (상승)"
+            obv_trend_str = "📉 3일 OBV 이탈 (데드크로스)" if obv_dead_flag else "📈 매집 유지 (상승)"
 
-            # 5. 45분봉 Chaikin Oscillator 및 2일 이상(16봉) 음수 유출 (CHO < 0 필수) 검증
+            # 5. 45분봉 Chaikin Oscillator 및 2일 이상(16봉) 음수 유출 (CHO < 0) 검증
             hl_diff = high - low
             mfm = np.where(hl_diff == 0, 0, ((close - low) - (high - close)) / hl_diff)
             mfv = mfm * vol
@@ -109,32 +109,34 @@ class Intraday45mAnalyzer:
             recent_16_cho = cho_series.iloc[-16:]
             cho_negative_count = (recent_16_cho < 0).sum()
             
-            # 오동작 방지: Chaikin 오실레이터가 양수(CHO > 0)인 종목(포스코인터내셔널 등)은 절대 이탈 판정 제외!
             cho_dead_flag = (latest_cho < 0) and (cho_negative_count >= 10)
 
-            cho_flow_str = "💸 2일연속 자금유출 (-)" if cho_dead_flag else f"💧 자금 유입 ({latest_cho:+,d})"
+            cho_flow_str = f"💸 CHO 자금유출 ({latest_cho:+,d})" if cho_dead_flag else f"💧 자금 유입 ({latest_cho:+,d})"
 
             latest_adx = float(adx_series.iloc[-1])
             latest_plus_di = float(plus_di_series.iloc[-1])
             latest_minus_di = float(minus_di_series.iloc[-1])
             latest_obv = int(obv_series.iloc[-1])
 
-            # 6. ADX 하방 추세 강화 조건 (ADX >= 22.0 AND -DI > +DI AND ADX 상승세 AND CHO < 0 필수)
+            # 6. ADX 하방 추세 강화 조건
             adx_diff_3 = adx_series.diff().iloc[-3:].sum()
             adx_bear_accel = (latest_adx >= 22.0) and (latest_minus_di > latest_plus_di) and (adx_diff_3 > 0) and (latest_cho < 0)
 
-            # 7. 🔥 [핵심 정밀 로직] 3일간 45분봉 수급이탈/하방강화 최종 조건
-            # OBV 데드크로스 미회복 + Chaikin 2일 연속 음수유출(CHO < 0) 필수!
-            is_45m_breakdown = obv_dead_flag and (cho_dead_flag or adx_bear_accel)
-            is_45m_weak = cho_dead_flag or (obv_dead_flag and not is_45m_breakdown)
+            # 7. 🔥 [핵심 세분화 로직] OBV 데드크로스와 CHO 음수 유출을 명확히 구분
+            is_45m_breakdown = obv_dead_flag and cho_dead_flag  # 이중 수급이탈 ➔ 🚨 단기 매도
+            is_obv_dead = obv_dead_flag and not cho_dead_flag   # OBV만 이탈 (CHO 양수 유지) ➔ ⚠️ OBV 이탈
+            is_cho_outflow = cho_dead_flag and not obv_dead_flag # CHO만 유출 ➔ ⚠️ CHO 유출
 
             action_rec = ""
             if is_45m_breakdown:
-                sig_text = f"🚨 45m 3일 수급이탈 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
-                action_rec = "🚨 단기 매도 (45m 3일 수급이탈)"
-            elif is_45m_weak:
-                sig_text = f"⚠️ 45m 3일 수급약세 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
-                action_rec = "⚠️ 분량축소 (45m 3일 수급약세)"
+                sig_text = f"🚨 45m 이중수급이탈 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
+                action_rec = "🚨 단기 매도 (OBV이탈 + CHO유출)"
+            elif is_obv_dead:
+                sig_text = f"⚠️ 45m OBV 이탈 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
+                action_rec = "⚠️ OBV 이탈 (45m OBV 데드)"
+            elif is_cho_outflow:
+                sig_text = f"⚠️ 45m CHO 자금유출 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
+                action_rec = "⚠️ CHO 유출 (45m 자금유출)"
             elif latest_adx >= 25.0 and latest_plus_di > latest_minus_di:
                 sig_text = f"🟢 45m 강력 상방추세 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
                 action_rec = "🟢 45m 추세유지 (안정보유)"
@@ -145,7 +147,7 @@ class Intraday45mAnalyzer:
                 sig_text = f"⏸️ 45m 조정/관망 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})"
                 action_rec = "⏸️ 45m 단기조정 (관망)"
 
-            logger.info(f"[Intraday45mAnalyzer] {stock_code} 3~5영업일 45분봉 정밀분석 - ADX:{latest_adx:.1f}, OBV데드:{obv_dead_flag}, CHO유출({latest_cho}):{cho_dead_flag} ➔ 이탈:{is_45m_breakdown}")
+            logger.info(f"[Intraday45mAnalyzer] {stock_code} 3~5영업일 45분봉 세분화 분석 - ADX:{latest_adx:.1f}, OBV데드:{obv_dead_flag}, CHO유출({latest_cho}):{cho_dead_flag} ➔ 이중이탈:{is_45m_breakdown}, OBV단독:{is_obv_dead}, CHO단독:{is_cho_outflow}")
 
             return {
                 "stock_code": stock_code,
@@ -158,7 +160,8 @@ class Intraday45mAnalyzer:
                 "chaikin_osc_45m": latest_cho,
                 "chaikin_flow_45m": cho_flow_str,
                 "is_45m_breakdown": is_45m_breakdown,
-                "is_45m_weak": is_45m_weak,
+                "is_obv_dead": is_obv_dead,
+                "is_cho_outflow": is_cho_outflow,
                 "signal_45m_text": sig_text,
                 "action_45m_recommendation": action_rec
             }
