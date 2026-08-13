@@ -1,17 +1,101 @@
 [
-  {"stock_code": "004960", "stock_name": "한신공영", "quantity": 48, "avg_buy_price": 8560.0},
-  {"stock_code": "013030", "stock_name": "하이록코리아", "quantity": 90, "avg_buy_price": 38945.0},
-  {"stock_code": "034020", "stock_name": "두산에너빌리티", "quantity": 27, "avg_buy_price": 74800.0},
-  {"stock_code": "047050", "stock_name": "포스코인터내셔널", "quantity": 158, "avg_buy_price": 62806.0},
-  {"stock_code": "047770", "stock_name": "코데즈컴바인", "quantity": 989, "avg_buy_price": 4745.0},
-  {"stock_code": "055490", "stock_name": "테이팩스", "quantity": 4283, "avg_buy_price": 23365.0},
-  {"stock_code": "140670", "stock_name": "알에스오토메이션", "quantity": 531, "avg_buy_price": 18899.0},
-  {"stock_code": "161510", "stock_name": "PLUS 고배당주", "quantity": 250, "avg_buy_price": 28186.0},
-  {"stock_code": "206650", "stock_name": "유바이오로직스", "quantity": 418, "avg_buy_price": 15717.0},
-  {"stock_code": "234920", "stock_name": "자이글", "quantity": 9314, "avg_buy_price": 7518.0},
-  {"stock_code": "241520", "stock_name": "DSC인베스트먼트", "quantity": 115, "avg_buy_price": 17995.0},
-  {"stock_code": "267260", "stock_name": "HD현대일렉트릭", "quantity": 4, "avg_buy_price": 745000.0},
-  {"stock_code": "348340", "stock_name": "뉴로메카", "quantity": 124, "avg_buy_price": 80329.0},
-  {"stock_code": "371460", "stock_name": "TIGER 차이나전기차SOLACTIVE", "quantity": 137, "avg_buy_price": 14570.0},
-  {"stock_code": "490590", "stock_name": "RISE 미국AI밸류체인데일리고정커버드콜", "quantity": 9114, "avg_buy_price": 16458.0}
+  {
+    "stock_code": "004960",
+    "stock_name": "한신공영",
+    "quantity": 1871,
+    "avg_buy_price": 10962.0,
+    "current_price": 10960,
+    "total_invested": 20510490.0,
+    "eval_pnl_pct": -0.25
+  },
+  {
+    "stock_code": "047770",
+    "stock_name": "코데즈컴바인",
+    "quantity": 989,
+    "avg_buy_price": 4745.0,
+    "current_price": 2660,
+    "total_invested": 4692865.0,
+    "eval_pnl_pct": -44.08
+  },
+  {
+    "stock_code": "055490",
+    "stock_name": "테이팩스",
+    "quantity": 4283,
+    "avg_buy_price": 23364.0,
+    "current_price": 14460,
+    "total_invested": 100071170.0,
+    "eval_pnl_pct": -38.26
+  },
+  {
+    "stock_code": "140670",
+    "stock_name": "알에스오토메이션",
+    "quantity": 531,
+    "avg_buy_price": 18899.0,
+    "current_price": 10820,
+    "total_invested": 10035560.0,
+    "eval_pnl_pct": -42.89
+  },
+  {
+    "stock_code": "161510",
+    "stock_name": "PLUS 고배당주",
+    "quantity": 250,
+    "avg_buy_price": 28186.0,
+    "current_price": 24905,
+    "total_invested": 7046560.0,
+    "eval_pnl_pct": -11.67
+  },
+  {
+    "stock_code": "206650",
+    "stock_name": "유바이오로직스",
+    "quantity": 293,
+    "avg_buy_price": 15716.0,
+    "current_price": 8940,
+    "total_invested": 4604937.0,
+    "eval_pnl_pct": -43.25
+  },
+  {
+    "stock_code": "234920",
+    "stock_name": "자이글",
+    "quantity": 9314,
+    "avg_buy_price": 7517.0,
+    "current_price": 5310,
+    "total_invested": 70021890.0,
+    "eval_pnl_pct": -29.54
+  },
+  {
+    "stock_code": "241520",
+    "stock_name": "DSC인베스트먼트",
+    "quantity": 115,
+    "avg_buy_price": 17995.0,
+    "current_price": 8640,
+    "total_invested": 2069460.0,
+    "eval_pnl_pct": -52.11
+  },
+  {
+    "stock_code": "267260",
+    "stock_name": "HD현대일렉트릭",
+    "quantity": 4,
+    "avg_buy_price": 745000.0,
+    "current_price": 784500,
+    "total_invested": 2980000.0,
+    "eval_pnl_pct": 5.06
+  },
+  {
+    "stock_code": "348340",
+    "stock_name": "뉴로메카",
+    "quantity": 124,
+    "avg_buy_price": 80329.0,
+    "current_price": 21400,
+    "total_invested": 9960800.0,
+    "eval_pnl_pct": -73.43
+  },
+  {
+    "stock_code": "490590",
+    "stock_name": "RISE 미국AI밸류체인데일리고정커버드콜",
+    "quantity": 9114,
+    "avg_buy_price": 16458.0,
+    "current_price": 14785,
+    "total_invested": 150001860.0,
+    "eval_pnl_pct": -10.2
+  }
 ]

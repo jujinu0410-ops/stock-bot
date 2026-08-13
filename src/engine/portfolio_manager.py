@@ -50,24 +50,20 @@ class PortfolioManager:
         return success
 
     def sync_portfolio_from_kiwoom(self) -> List[Dict[str, Any]]:
-        """키움 API에서 계좌 보유 종목을 조회하여 DB portfolio_positions 및 stock_info 동기화"""
-        logger.info("[PortfolioManager] 키움 API 계좌 보유 종목 동기화 진행 중...")
-        
-        # 1. 15개 사용자 실질 계좌 보유 종목 리스트 동기화 (대동 000490, 한신기계 011700 등 미보유 종목 원천 제외)
-        mock_positions = self.kiwoom._get_mock_account_positions()
+        """키움 API에서 계좌 보유 종목을 실시간 우선 조회하여 DB portfolio_positions 및 stock_info 동기화"""
+        logger.info("[PortfolioManager] 키움 API 실시간 계좌 보유 종목 동기화 시작...")
+        import json
+        from pathlib import Path
 
-        # portfolio_positions 테이블 내 미보유/중복/오래된 무효 종목 코드(000490, 011700, 088500, 219550, 484730 등) 완전 삭제
-        valid_codes = {p["stock_code"] for p in mock_positions}
-        if valid_codes:
-            valid_clause = ",".join(f"'{c}'" for c in valid_codes)
-            self.db.execute_non_query(f"DELETE FROM portfolio_positions WHERE stock_code NOT IN ({valid_clause})")
-
-        for pos in mock_positions:
-            self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
-
-        # 2. 키움 REST API 실시간 잔고가 있으면 체결 잔고 최신화
+        # 1. 키움 REST API로 100% 실질 실계좌 잔고 수집 시도 (kt00018)
         positions = self.kiwoom.get_account_positions()
-        if positions and len(positions) > 0:
+        
+        if positions and len(positions) > 0 and self.kiwoom.is_valid_key():
+            logger.info(f"[PortfolioManager] 🔥 키움 REST API 실계좌 연동 성공! (실제 보유: {len(positions)}개 종목)")
+            
+            # DB 기존 보유 목록 완전 초기화 후 키움 실계좌 보유 종목만 새로 등록
+            self.clear_all_holdings()
+            
             for pos in positions:
                 code = pos["stock_code"]
                 name = pos["stock_name"]
@@ -75,9 +71,24 @@ class PortfolioManager:
                 avg_p = pos["avg_buy_price"]
                 if qty > 0:
                     self.add_holding(code, name, qty, avg_p)
-            logger.info(f"[PortfolioManager] 키움 실시간 보유 종목 {len(positions)}개 동기화 반영 완료")
-        
-        return mock_positions
+
+            # config/portfolio_holdings.json 백업 파일도 키움 실계좌와 100% 일치하도록 업데이트
+            cfg_path = Path(__file__).resolve().parent.parent.parent / "config" / "portfolio_holdings.json"
+            try:
+                with open(cfg_path, "w", encoding="utf-8") as f:
+                    json.dump(positions, f, ensure_ascii=False, indent=2)
+                logger.info(f"[PortfolioManager] config/portfolio_holdings.json 파일도 실계좌 잔고({len(positions)}개)로 동기화 완료")
+            except Exception as e_json:
+                logger.error(f"[PortfolioManager] portfolio_holdings.json 저장 중 오류: {e_json}")
+
+            return positions
+        else:
+            logger.warning("[PortfolioManager] 키움 API 미연동 상태로 portfolio_holdings.json 백업 데이터 사용")
+            mock_positions = self.kiwoom._get_mock_account_positions()
+            self.clear_all_holdings()
+            for pos in mock_positions:
+                self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
+            return mock_positions
 
     def get_held_portfolio_status(self, trading_engine) -> List[Dict[str, Any]]:
         """
