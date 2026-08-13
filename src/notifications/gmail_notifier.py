@@ -8,17 +8,38 @@ from config.settings import GMAIL_USER, GMAIL_APP_PASSWORD
 from src.utils.logger import logger
 
 def format_cho_array_html(arr):
-    """채킨 오실레이터 수치를 양수(붉은색) / 음수(파란색)로 시각화"""
+    """
+    채킨 오실레이터 수치를 양수(붉은색) / 음수(파란색)로 시각화하고,
+    2봉간 상승/하락 추세 화살표 (상승: 붉은색 ▲, 하락: 파란색 ▼) 표기
+    """
     if not arr or len(arr) < 2:
         return "[0, 0]"
-    formatted_parts = []
-    for val in arr:
-        v_int = int(val)
-        if v_int >= 0:
-            formatted_parts.append(f'<span style="color:#DC2626; font-weight:bold;">+{v_int:,}</span>')
-        else:
-            formatted_parts.append(f'<span style="color:#1D4ED8; font-weight:bold;">{v_int:,}</span>')
-    return f"[{formatted_parts[0]}, {formatted_parts[1]}]"
+    
+    v1 = int(arr[0])
+    v2 = int(arr[1])
+
+    c1_html = f'<span style="color:#DC2626; font-weight:bold;">+{v1:,}</span>' if v1 >= 0 else f'<span style="color:#1D4ED8; font-weight:bold;">{v1:,}</span>'
+    c2_html = f'<span style="color:#DC2626; font-weight:bold;">+{v2:,}</span>' if v2 >= 0 else f'<span style="color:#1D4ED8; font-weight:bold;">{v2:,}</span>'
+
+    if v2 > v1:
+        arrow_html = ' <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span>'
+    elif v2 < v1:
+        arrow_html = ' <span style="color:#1D4ED8; font-size:12px; font-weight:bold;">▼</span>'
+    else:
+        arrow_html = ''
+
+    return f"[{c1_html}, {c2_html}]{arrow_html}"
+
+def format_adx_di_dominance_html(di_dom_str):
+    """ADX +DI/-DI 우세방향을 +DI우세(붉은색), -DI우세(파란색)로 시각화"""
+    if not di_dom_str or di_dom_str == "-":
+        return "-"
+    if "-DI우세" in di_dom_str:
+        return f'<span style="color:#1D4ED8; font-weight:bold;">{di_dom_str}</span>'
+    elif "+DI우세" in di_dom_str:
+        return f'<span style="color:#DC2626; font-weight:bold;">{di_dom_str}</span>'
+    else:
+        return f'<span style="color:#475569;">{di_dom_str}</span>'
 
 def format_strategy_action_html(raw_action):
     """대응전략 텍스트 정제 및 매도(파란색), 매수(붉은색), 비중과다(주황색) 컬러링"""
@@ -233,27 +254,39 @@ class GmailNotifier:
                 </tr>
                 """
 
-            # 5단계 매매 대응전략 매트릭스 및 원자값 연동 요약 표 (맨 위에배치)
+            # 5단계 매매 대응전략 매트릭스 및 원자값 연동 요약 표 (맨 위에 배치)
             summary_matrix_rows_html = ""
             for rank_idx, h in enumerate(held_portfolio_sorted, start=1):
                 code = h.get('stock_code', '')
                 name = h.get('stock_name', '')
                 action_st = h.get('action_status', '보유')
                 
+                # 1. 일봉 OBV (데드발생일자)
                 obv_d_date = h.get('obv_dead_date', 'N/A')
                 obv_d_days = h.get('obv_dead_elapsed_days', 0)
-
                 if obv_d_date != "N/A" and "상승" not in obv_d_date and obv_d_days >= 1:
-                    obv_dead_html = f'<span style="color:#1D4ED8; font-weight:bold;">{obv_d_date} ({obv_d_days}일차)</span>'
+                    obv_daily_html = f'<span style="color:#1D4ED8; font-weight:bold;">{obv_d_date} ({obv_d_days}일차)</span>'
                 else:
-                    obv_dead_html = '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
+                    obv_daily_html = '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
 
+                # 2. 45m OBV (45분봉 OBV)
+                is_45m_obv_dead = h.get('is_obv_dead', False) or (h.get('obv_45m_trend', '') and '데드' in h.get('obv_45m_trend', ''))
+                if is_45m_obv_dead:
+                    obv_45m_html = '<span style="color:#1D4ED8; font-weight:bold;">45m 이탈</span>'
+                else:
+                    obv_45m_html = '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
+
+                # 3. 일봉 Chaikin 최근 2봉 & 45m Chaikin 최근 2봉
                 daily_cho2 = h.get('daily_cho_recent2', [0, 0])
                 intra_cho2 = h.get('intraday_cho_recent2', [0, 0])
-                di_dom = h.get('adx_di_dominance', '-')
-
                 daily_cho_html = format_cho_array_html(daily_cho2)
                 intra_cho_html = format_cho_array_html(intra_cho2)
+
+                # 4. ADX +DI/-DI 우세방향
+                di_dom = h.get('adx_di_dominance', '-')
+                di_dom_html = format_adx_di_dominance_html(di_dom)
+
+                # 5. 대응전략
                 colored_strategy_html = format_strategy_action_html(action_st)
 
                 summary_matrix_rows_html += f"""
@@ -261,10 +294,11 @@ class GmailNotifier:
                     <td style="padding:6px 4px; text-align:center; font-weight:bold; color:#0F172A;">{rank_idx}</td>
                     <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">{name} <span style="font-size:9.5px; color:#64748B; font-weight:normal;">({code})</span></td>
                     <td style="padding:6px 4px; background:#EFF6FF;">{colored_strategy_html}</td>
-                    <td style="padding:6px 4px; text-align:center;">{obv_dead_html}</td>
+                    <td style="padding:6px 4px; text-align:center;">{obv_daily_html}</td>
+                    <td style="padding:6px 4px; text-align:center;">{obv_45m_html}</td>
                     <td style="padding:6px 4px; text-align:center;">{daily_cho_html}</td>
                     <td style="padding:6px 4px; text-align:center;">{intra_cho_html}</td>
-                    <td style="padding:6px 4px; color:#475569;">{di_dom}</td>
+                    <td style="padding:6px 4px; color:#475569;">{di_dom_html}</td>
                 </tr>
                 """
 
@@ -326,6 +360,36 @@ class GmailNotifier:
             <div style="background:#EFF6FF; border:1px solid #93C5FD; color:#1D4ED8; border-radius:10px; padding:12px 14px; margin-bottom:16px; font-size:11.5px; line-height:1.45;">
                 📡 <strong>키움 REST API kt00018 실계좌 잔고 100% 실시간 연동 완료:</strong><br>
                 • 현재 주진우님의 키움 실계좌 보유 종목: <strong>총 {held_count}개 종목</strong> {sold_notice}
+            </div>
+
+            <!-- 🔥 [표 1 (상단)] 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표 -->
+            <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
+                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">
+                    ⏱️ 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표
+                </h3>
+                <div style="font-size:11px; color:#64748B; margin-bottom:10px;">
+                    ※ 1순위(DART미확정 보류) ➔ 2순위(20% 비중과다 추매금지) ➔ 3순위(일봉 매도A&B) ➔ 4순위(45m 분할매수) ➔ 5순위(보유/홀딩)
+                </div>
+                <div class="table-responsive">
+                <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                    <thead>
+                        <tr style="background:#F1F5F9; color:#334155; text-align:left; border-bottom:2px solid #CBD5E1;">
+                            <th style="padding:6px 4px; text-align:center;">순위</th>
+                            <th style="padding:6px 4px;">종목명 (코드)</th>
+                            <th style="padding:6px 4px; background:#EFF6FF; color:#1E40AF;">최종 대응전략</th>
+                            <th style="padding:6px 4px; text-align:center;">OBV (데드발생일자)</th>
+                            <th style="padding:6px 4px; text-align:center;">45m OBV</th>
+                            <th style="padding:6px 4px; text-align:center;">일봉 Chaikin 최근2봉</th>
+                            <th style="padding:6px 4px; text-align:center;">45m Chaikin 최근2봉</th>
+                            <th style="padding:6px 4px;">ADX +DI/-DI 우세방향</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {summary_matrix_rows_html}
+                    </tbody>
+                </table>
+                </div>
+            </div>ong> {sold_notice}
             </div>
 
             <!-- 🔥 [표 1 (상단)] 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 요약 표 -->
