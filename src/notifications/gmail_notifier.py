@@ -389,35 +389,6 @@ class GmailNotifier:
                     </tbody>
                 </table>
                 </div>
-            </div>ong> {sold_notice}
-            </div>
-
-            <!-- 🔥 [표 1 (상단)] 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 요약 표 -->
-            <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
-                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">
-                    ⏱️ 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표
-                </h3>
-                <div style="font-size:11px; color:#64748B; margin-bottom:10px;">
-                    ※ 1순위(DART미확정 보류) ➔ 2순위(20% 비중과다 추매금지) ➔ 3순위(일봉 매도A&B) ➔ 4순위(45m 분할매수) ➔ 5순위(보유/홀딩)
-                </div>
-                <div class="table-responsive">
-                <table style="width:100%; border-collapse:collapse; font-size:11px;">
-                    <thead>
-                        <tr style="background:#F1F5F9; color:#334155; text-align:left; border-bottom:2px solid #CBD5E1;">
-                            <th style="padding:6px 4px; text-align:center;">순위</th>
-                            <th style="padding:6px 4px;">종목명 (코드)</th>
-                            <th style="padding:6px 4px; background:#EFF6FF; color:#1E40AF;">최종 대응전략</th>
-                            <th style="padding:6px 4px; text-align:center;">OBV데드 발생일자</th>
-                            <th style="padding:6px 4px; text-align:center;">일봉 Chaikin 최근2봉</th>
-                            <th style="padding:6px 4px; text-align:center;">45m Chaikin 최근2봉</th>
-                            <th style="padding:6px 4px;">ADX +DI/-DI 우세방향</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {summary_matrix_rows_html}
-                    </tbody>
-                </table>
-                </div>
             </div>
 
             <!-- 🔥 [표 2 (하단)] 내 계좌 보유 종목 정밀 평가 (10종목) 매트릭스 표 -->
