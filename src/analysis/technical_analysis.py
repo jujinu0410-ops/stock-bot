@@ -372,7 +372,7 @@ class TechnicalAnalysis:
         atr_pct = round((atr_14 / (close_p + 1e-9)) * 100.0, 2)
         raw_trailing_buy_p = close_p - (1.5 * atr_14)
         raw_trailing_stop_p = close_p - (2.0 * atr_14)
-        raw_trailing_target_p = close_p + (2.5 * atr_14)
+        raw_trailing_target_p = close_p + (3.0 * atr_14)
 
         kiwoom_buy_tick_p = adjust_krx_tick_size(raw_trailing_buy_p, "down")
         kiwoom_stop_tick_p = adjust_krx_tick_size(raw_trailing_stop_p, "down")

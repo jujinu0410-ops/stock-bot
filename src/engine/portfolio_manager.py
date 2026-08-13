@@ -159,10 +159,10 @@ class PortfolioManager:
             pnl_amount = eval_amount - total_inv
             pnl_pct = round((pnl_amount / total_inv) * 100.0, 2) if total_inv > 0 else 0.0
 
-            # ATR 기반 트레일링 가격 수식 산출
+            # ATR 기반 트레일링 가격 수식 산출 (목표가 3.0 ATR 적용)
             raw_tbuy = current_price - (1.5 * atr_14)
             raw_tstop = current_price - (2.0 * atr_14)
-            raw_ttarget = current_price + (2.5 * atr_14)
+            raw_ttarget = current_price + (3.0 * atr_14)
 
             rebound_delta = int(round(atr_14 * 0.5))
             drop_delta = int(round(atr_14 * 0.8))
