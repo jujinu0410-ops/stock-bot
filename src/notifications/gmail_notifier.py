@@ -91,9 +91,8 @@ class GmailNotifier:
 
     def generate_html_report(self, date_str: str, total_count: int, caught_signals: List[Dict[str, Any]], all_results: List[Dict[str, Any]], held_portfolio: List[Dict[str, Any]] = None) -> str:
         """
-        보유 종목 중심 정밀 평가 리포트 HTML 생성
+        보유 종목 중심 정밀 평가 리포트 HTML 생성 (요청대로 딱 2개의 매트릭스 표만 순서 맞춰 출력)
         """
-        action_count = len(caught_signals)
         held_count = len(held_portfolio) if held_portfolio else 0
         profit_count = 0
         loss_count = 0
@@ -234,14 +233,13 @@ class GmailNotifier:
                 </tr>
                 """
 
-            # 🔥 [요청사항 반영] 5단계 매매 대응전략 매트릭스 및 원자값 연동 최종 요약 표 구축
+            # 5단계 매매 대응전략 매트릭스 및 원자값 연동 요약 표 (맨 위에배치)
             summary_matrix_rows_html = ""
             for rank_idx, h in enumerate(held_portfolio_sorted, start=1):
                 code = h.get('stock_code', '')
                 name = h.get('stock_name', '')
                 action_st = h.get('action_status', '보유')
                 
-                # OBV 데드 발생일자 시각화 (날짜는 파란색, N/A나 상승은 붉은색 위 화살표 ▲ 만 표시)
                 obv_d_date = h.get('obv_dead_date', 'N/A')
                 obv_d_days = h.get('obv_dead_elapsed_days', 0)
 
@@ -310,12 +308,6 @@ class GmailNotifier:
                         </div>
                     </div>
                     """
-            else:
-                meaningful_cards_html = """
-                <div style="font-size:12px; color:#64748B; background:#F8FAFC; padding:10px; border-radius:8px; text-align:center;">
-                    당일 거래량 폭증, ATR 이상 변동 등 의미있는 급변동이 발생한 보유 종목이 없습니다.
-                </div>
-                """
 
             swing_section_html = f"""
             <div style="background:#FFFBEB; border:2px solid #F59E0B; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(245,158,11,0.08);">
@@ -324,7 +316,7 @@ class GmailNotifier:
                 </h3>
                 {meaningful_cards_html}
             </div>
-            """
+            """ if meaningful_items else ""
 
             sold_count = max(0, 15 - held_count)
             sold_notice = f"(매도 완료된 {sold_count}개 종목 잔고 0주 확인 ➔ 분석 토큰 낭비 방지를 위해 100% 자동 정돈 완료)" if sold_count > 0 else "(전 종목 100% 실시간 보유 상태 확인)"
@@ -335,6 +327,36 @@ class GmailNotifier:
                 📡 <strong>키움 REST API kt00018 실계좌 잔고 100% 실시간 연동 완료:</strong><br>
                 • 현재 주진우님의 키움 실계좌 보유 종목: <strong>총 {held_count}개 종목</strong> {sold_notice}
             </div>
+
+            <!-- 🔥 [표 1 (상단)] 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 요약 표 -->
+            <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
+                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">
+                    ⏱️ 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표
+                </h3>
+                <div style="font-size:11px; color:#64748B; margin-bottom:10px;">
+                    ※ 1순위(DART미확정 보류) ➔ 2순위(20% 비중과다 추매금지) ➔ 3순위(일봉 매도A&B) ➔ 4순위(45m 분할매수) ➔ 5순위(보유/홀딩)
+                </div>
+                <div class="table-responsive">
+                <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                    <thead>
+                        <tr style="background:#F1F5F9; color:#334155; text-align:left; border-bottom:2px solid #CBD5E1;">
+                            <th style="padding:6px 4px; text-align:center;">순위</th>
+                            <th style="padding:6px 4px;">종목명 (코드)</th>
+                            <th style="padding:6px 4px; background:#EFF6FF; color:#1E40AF;">최종 대응전략</th>
+                            <th style="padding:6px 4px; text-align:center;">OBV데드 발생일자</th>
+                            <th style="padding:6px 4px; text-align:center;">일봉 Chaikin 최근2봉</th>
+                            <th style="padding:6px 4px; text-align:center;">45m Chaikin 최근2봉</th>
+                            <th style="padding:6px 4px;">ADX +DI/-DI 우세방향</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {summary_matrix_rows_html}
+                    </tbody>
+                </table>
+                </div>
+            </div>
+
+            <!-- 🔥 [표 2 (하단)] 내 계좌 보유 종목 정밀 평가 (10종목) 매트릭스 표 -->
             <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:2px solid #E2E8F0; padding-bottom:8px;">
                     <div>
@@ -364,34 +386,6 @@ class GmailNotifier:
                 </table>
                 </div>
             </div>
-
-            <!-- 🔥 [요청사항 100% 반영] 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 요약 표 -->
-            <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
-                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">
-                    ⏱️ 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표
-                </h3>
-                <div style="font-size:11px; color:#64748B; margin-bottom:10px;">
-                    ※ 1순위(DART미확정 보류) ➔ 2순위(20% 비중과다 추매금지) ➔ 3순위(일봉 매도A&B) ➔ 4순위(45m 분할매수) ➔ 5순위(보유/홀딩)
-                </div>
-                <div class="table-responsive">
-                <table style="width:100%; border-collapse:collapse; font-size:11px;">
-                    <thead>
-                        <tr style="background:#F1F5F9; color:#334155; text-align:left; border-bottom:2px solid #CBD5E1;">
-                            <th style="padding:6px 4px; text-align:center;">순위</th>
-                            <th style="padding:6px 4px;">종목명 (코드)</th>
-                            <th style="padding:6px 4px; background:#EFF6FF; color:#1E40AF;">최종 대응전략</th>
-                            <th style="padding:6px 4px; text-align:center;">OBV데드 발생일자</th>
-                            <th style="padding:6px 4px; text-align:center;">일봉 Chaikin 최근2봉</th>
-                            <th style="padding:6px 4px; text-align:center;">45m Chaikin 최근2봉</th>
-                            <th style="padding:6px 4px;">ADX +DI/-DI 우세방향</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {summary_matrix_rows_html}
-                    </tbody>
-                </table>
-                </div>
-            </div>
             """
         else:
             held_section_html = """
@@ -403,46 +397,6 @@ class GmailNotifier:
                     </h3>
                 </div>
             </div>
-            """
-
-        # 메인 관심종목 포착 테이블
-        signals_rows_html = ""
-        if caught_signals:
-            for s in caught_signals:
-                code = s.get('stock_code')
-                name = s.get('stock_name')
-                f_sc = s.get('f_score', 0.0)
-                t_sc = s.get('t_score_converted', s.get('t_score', 0.0))
-                sig_type = s.get('signal_type', '관찰')
-                cur_p = s.get('current_price', 0) or s.get('latest_close', 0)
-                chg_p = s.get('daily_change_pct', 0.0)
-                chg_color = "#10B981" if chg_p >= 0 else "#EF4444"
-                chg_sign = "+" if chg_p >= 0 else ""
-
-                signals_rows_html += f"""
-                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
-                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A;">{name}<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">({code})</span></td>
-                    <td style="padding:6px 3px; font-weight:bold; color:#059669;">F:{f_sc:.1f} / T:{t_sc:.1f}</td>
-                    <td style="padding:6px 3px;">{cur_p:,}원 <span style="font-size:9.5px; color:{chg_color};">({chg_sign}{chg_p:.2f}%)</span></td>
-                    <td style="padding:6px 3px;"><span style="background:#ECFDF5; border:1px solid #6EE7B7; color:#065F46; padding:2px 5px; border-radius:5px; font-weight:bold; font-size:9.5px;">{sig_type}</span></td>
-                </tr>
-                """
-
-        # 전 종목 요약 리스트
-        all_rows_html = ""
-        for item in all_results[:15]:
-            code = item.get('stock_code')
-            name = item.get('stock_name')
-            f_sc = item.get('f_score', 0.0)
-            t_sc = item.get('t_score_converted', item.get('t_score', 0.0))
-            final_sc = item.get('final_score', 0.0)
-
-            all_rows_html += f"""
-            <tr style="border-bottom:1px solid #E2E8F0; font-size:10.5px;">
-                <td style="padding:4px 3px; font-weight:bold; color:#0F172A;">{name} ({code})</td>
-                <td style="padding:4px 3px; font-weight:bold; color:#4338CA;">{final_sc:.1f}점</td>
-                <td style="padding:4px 3px; color:#64748B;">F: {f_sc:.1f} / T: {t_sc:.1f}</td>
-            </tr>
             """
 
         html_template = f"""
@@ -480,39 +434,6 @@ class GmailNotifier:
                     </div>
 
                     {held_section_html}
-
-                    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px; padding:14px; margin-bottom:20px;">
-                        <h3 style="margin-top:0; color:#0F172A; font-size:14px; margin-bottom:8px;">🎯 포착된 주요 관심 종목 (총 {action_count}개)</h3>
-                        <table style="width:100%; border-collapse:collapse;">
-                            <thead>
-                                <tr style="background:#F8FAFC; font-size:11px; color:#64748B; text-align:left;">
-                                    <th style="padding:6px 3px;">종목명</th>
-                                    <th style="padding:6px 3px;">점수</th>
-                                    <th style="padding:6px 3px;">현재가</th>
-                                    <th style="padding:6px 3px;">신호구분</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {signals_rows_html if signals_rows_html else '<tr><td colspan="4" style="padding:10px; text-align:center; color:#94A3B8;">현재 조건 충족 신호 없음</td></tr>'}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px; padding:14px;">
-                        <h3 style="margin-top:0; color:#0F172A; font-size:14px; margin-bottom:8px;">📋 전체 분석 종목 요약 (상위 15개)</h3>
-                        <table style="width:100%; border-collapse:collapse;">
-                            <thead>
-                                <tr style="background:#F8FAFC; font-size:11px; color:#64748B; text-align:left;">
-                                    <th style="padding:4px 3px;">종목명</th>
-                                    <th style="padding:4px 3px;">종합점수</th>
-                                    <th style="padding:4px 3px;">세부점수</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {all_rows_html}
-                            </tbody>
-                        </table>
-                    </div>
                 </div>
             </div>
         </body>
