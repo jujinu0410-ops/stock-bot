@@ -72,8 +72,9 @@ class DatabaseManager:
                 if "prev_total_equity" not in dart_cols:
                     cursor.execute("ALTER TABLE dart_financials ADD COLUMN prev_total_equity REAL DEFAULT 0;")
 
-                # 구버전 Q4 더미 데이터 삭제 (11011 정식 보고서 코드 정제)
+                # 구버전 Q4 더미 데이터 및 주말 비영업일 시세 데이터 정돈
                 cursor.execute("DELETE FROM dart_financials WHERE quarter_code = 'Q4'")
+                cursor.execute("DELETE FROM kiwoom_daily WHERE stk_date IN ('20260808', '20260809') OR strftime('%w', substr(stk_date, 1, 4) || '-' || substr(stk_date, 5, 2) || '-' || substr(stk_date, 7, 2)) IN ('0', '6')")
 
                 conn.commit()
                 logger.info("모든 DB 테이블 및 인덱스 초기화 완료")

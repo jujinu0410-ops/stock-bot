@@ -115,11 +115,12 @@ class Intraday45mAnalyzer:
             else:
                 obv_trend_str = "📈 OBV(9) 매집 유지 (상승)"
 
-            # 5. 45분봉 Chaikin Oscillator (13, 26) 연산 & 최근 2봉 원자값
+            # 5. 45분봉 Chaikin Oscillator (13, 26) 연산 (ADL cumsum 기반 HTS 표준 수식 적용)
             hl_diff = high - low
             mfm = np.where(hl_diff == 0, 0, ((close - low) - (high - close)) / hl_diff)
             mfv = mfm * vol
-            cho_series = pd.Series(mfv, index=df_45m.index).ewm(span=13, adjust=False).mean() - pd.Series(mfv, index=df_45m.index).ewm(span=26, adjust=False).mean()
+            adl_series = pd.Series(mfv, index=df_45m.index).cumsum()
+            cho_series = adl_series.ewm(span=13, adjust=False).mean() - adl_series.ewm(span=26, adjust=False).mean()
 
             latest_cho = int(cho_series.iloc[-1])
             intraday_cho_recent2 = [int(cho_series.iloc[-2]), int(cho_series.iloc[-1])]
