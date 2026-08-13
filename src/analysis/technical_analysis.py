@@ -109,11 +109,12 @@ class TechnicalAnalysis:
         df['minus_di'] = minus_di
         df['adx'] = dx.rolling(window=14).mean()
 
-        # 5. OBV (On Balance Volume)
+        # 5. OBV (On Balance Volume, 일목 9 전환선 파동 연동 9일 이동평균 적용)
         price_diff = df['close_price'].diff()
         obv_direction = np.where(price_diff > 0, 1, np.where(price_diff < 0, -1, 0))
         df['obv'] = (obv_direction * df['volume']).cumsum()
-        df['obv_ma20'] = df['obv'].rolling(window=20).mean()
+        df['obv_ma9'] = df['obv'].rolling(window=9).mean()
+        df['obv_ma20'] = df['obv_ma9']  # 호환성 유지
 
         # 6. 채킨 오실레이터 (13, 26)
         mfm = ((df['close_price'] - df['low_price']) - (df['high_price'] - df['close_price'])) / (df['high_price'] - df['low_price'] + 1e-9)

@@ -13,45 +13,45 @@
     "stock_name": "코데즈컴바인",
     "quantity": 989,
     "avg_buy_price": 4745.0,
-    "current_price": 2660,
+    "current_price": 2665,
     "total_invested": 4692865.0,
-    "eval_pnl_pct": -44.08
+    "eval_pnl_pct": -43.97
   },
   {
     "stock_code": "055490",
     "stock_name": "테이팩스",
     "quantity": 4283,
     "avg_buy_price": 23364.0,
-    "current_price": 14460,
+    "current_price": 14590,
     "total_invested": 100071170.0,
-    "eval_pnl_pct": -38.26
+    "eval_pnl_pct": -37.7
   },
   {
     "stock_code": "140670",
     "stock_name": "알에스오토메이션",
     "quantity": 531,
     "avg_buy_price": 18899.0,
-    "current_price": 10820,
+    "current_price": 10860,
     "total_invested": 10035560.0,
-    "eval_pnl_pct": -42.89
+    "eval_pnl_pct": -42.68
   },
   {
     "stock_code": "161510",
     "stock_name": "PLUS 고배당주",
     "quantity": 250,
     "avg_buy_price": 28186.0,
-    "current_price": 24905,
+    "current_price": 24910,
     "total_invested": 7046560.0,
-    "eval_pnl_pct": -11.67
+    "eval_pnl_pct": -11.65
   },
   {
     "stock_code": "206650",
     "stock_name": "유바이오로직스",
     "quantity": 293,
     "avg_buy_price": 15716.0,
-    "current_price": 8940,
+    "current_price": 8950,
     "total_invested": 4604937.0,
-    "eval_pnl_pct": -43.25
+    "eval_pnl_pct": -43.19
   },
   {
     "stock_code": "234920",
@@ -67,35 +67,35 @@
     "stock_name": "DSC인베스트먼트",
     "quantity": 115,
     "avg_buy_price": 17995.0,
-    "current_price": 8640,
+    "current_price": 8670,
     "total_invested": 2069460.0,
-    "eval_pnl_pct": -52.11
+    "eval_pnl_pct": -51.94
   },
   {
     "stock_code": "267260",
     "stock_name": "HD현대일렉트릭",
     "quantity": 4,
     "avg_buy_price": 745000.0,
-    "current_price": 784500,
+    "current_price": 785000,
     "total_invested": 2980000.0,
-    "eval_pnl_pct": 5.06
+    "eval_pnl_pct": 5.13
   },
   {
     "stock_code": "348340",
     "stock_name": "뉴로메카",
     "quantity": 124,
     "avg_buy_price": 80329.0,
-    "current_price": 21400,
+    "current_price": 21500,
     "total_invested": 9960800.0,
-    "eval_pnl_pct": -73.43
+    "eval_pnl_pct": -73.31
   },
   {
     "stock_code": "490590",
     "stock_name": "RISE 미국AI밸류체인데일리고정커버드콜",
     "quantity": 9114,
     "avg_buy_price": 16458.0,
-    "current_price": 14785,
+    "current_price": 14810,
     "total_invested": 150001860.0,
-    "eval_pnl_pct": -10.2
+    "eval_pnl_pct": -10.04
   }
 ]

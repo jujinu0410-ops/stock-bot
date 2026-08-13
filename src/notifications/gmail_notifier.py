@@ -372,10 +372,10 @@ class GmailNotifier:
             </div>
             <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
                 <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">
-                    ⏱️ 최근 3~5영업일 45분봉(Intraday 45m) 정밀 기술 수급 및 추세 지표 (ADX · OBV · Chaikin Oscillator)
+                    ⏱️ 최근 3~5영업일 45분봉(Intraday 45m) 통일 표준 기술 수급 지표 (OBV 9 · ADX 14 · Chaikin 13, 26)
                 </h3>
                 <div style="font-size:11px; color:#64748B; margin-bottom:10px;">
-                    ※ 최근 3~5영업일(40여개 45분봉) 누적 시세 기반 3일 다차원 수급 추세 (ADX 25 이상: 강력 방향성 추세 | Chaikin Oscillator &lt; 0 지속: 2일 연속 순매도 자금 유출)
+                    ※ 일목균형표 파동(전환선 9 / 기준선 26) 연동 통일 지표 (OBV: 1일 9봉 MA 기준 | ADX: 14 | Chaikin Oscillator: 13, 26변곡점)
                 </div>
                 {intraday_cards_html}
             </div>
