@@ -407,11 +407,18 @@ class DartAPIClient:
             target_date = datetime.now().strftime("%Y%m%d")
 
         disclosures = []
+        seen_rcept_nos = set()
         logger.info(f"[DART API] {len(stock_list)}개 보유 종목의 {target_date} DART 신규 공시 검색 시작...")
 
         for stock in stock_list:
             code = str(stock.get("stock_code", "")).zfill(6)
             name = str(stock.get("stock_name", code))
+            
+            # 🔥 ETF 종목은 개별 기업 공시가 없으므로 DART 검색에서 100% 원천 제외
+            is_etf = stock.get("is_etf", False) or any(k in name for k in ["ETF", "PLUS", "RISE", "KODEX", "TIGER", "ACE", "SOL", "고배당주", "밸류체인"]) or code in ("161510", "490590")
+            if is_etf:
+                continue
+
             corp_code = self.get_corp_code(code)
 
             url = f"{self.BASE_URL}/list.json"
@@ -429,12 +436,17 @@ class DartAPIClient:
                     if data.get("status") == "000" and data.get("list"):
                         for item in data["list"]:
                             r_nm = str(item.get("report_nm", "")).strip()
-                            r_no = item.get("rcept_no", "")
+                            r_no = str(item.get("rcept_no", "")).strip()
                             r_dt = item.get("rcept_dt", target_date)
                             
                             # 일상적/사소한 행정 보고 필터링
                             if any(ign in r_nm for ign in ["지급수단별", "임원ㆍ주요주주", "약식"]):
                                 continue
+                            
+                            # 중복 접수번호 방지
+                            if r_no in seen_rcept_nos:
+                                continue
+                            seen_rcept_nos.add(r_no)
                             
                             briefing = self._generate_disclosure_briefing(name, code, r_nm, r_no, r_dt)
                             disclosures.append(briefing)
