@@ -462,11 +462,25 @@ class DartAPIClient:
         link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 
         if any(k in report_nm for k in ["반기보고서", "분기보고서", "사업보고서"]):
-            summary = f"2026년 상반기(반기) 확정 재무제표 및 사업보고서 공시 접수."
+            if "사업보고서" in report_nm:
+                rep_title = "2025년 사업보고서 (연간 결산)"
+                summary = "2025년 연간 사업보고서(11011) 확정 재무제표 공시 접수."
+                q_yr = 2025
+                q_code = "11011"
+            elif "반기보고서" in report_nm:
+                rep_title = "2026년 반기보고서 (상반기 누적)"
+                summary = "2026년 상반기 반기보고서(11012) 확정 재무제표 공시 접수."
+                q_yr = 2026
+                q_code = "11012"
+            else:
+                rep_title = "2026년 1분기보고서"
+                summary = "2026년 1분기보고서(11013) 확정 재무제표 공시 접수."
+                q_yr = 2026
+                q_code = "11013"
             
             # 실제 DART 재무제표 데이터 조회
             try:
-                fin = self.get_financial_statement(code, fiscal_year=2025, reprt_code="11012")
+                fin = self.get_financial_statement(code, fiscal_year=q_yr, reprt_code=q_code)
                 if not fin or fin.get("revenue", 0) == 0:
                     fin = self.get_financial_statement(code, fiscal_year=2025, reprt_code="11011")
             except Exception:
@@ -478,24 +492,28 @@ class DartAPIClient:
                 op = fin.get("operating_profit", 0)
                 op_eok = op / 100000000.0
                 op_yoy = fin.get("op_profit_yoy", 0.0)
+                
+                f_yr = fin.get("fiscal_year", 2025)
+                f_code = fin.get("quarter_code", "11011")
+                period_tag = f"{f_yr}년 연간 결산" if f_code == "11011" else (f"{f_yr}년 상반기 누적" if f_code == "11012" else f"{f_yr}년 1분기")
 
                 if op > 0 and op_yoy >= 15.0:
-                    impact = f"<span style='color:#059669; font-weight:bold;'>🟢 [호재 / 실적 호전]</span> 매출 {rev_eok:,.0f}억원(YoY {rev_yoy:+.1f}%), 영업이익 {op_eok:,.0f}억원(YoY {op_yoy:+.1f}%)으로 어닝 서프라이즈 달성. 주가 상승 모멘텀 강력."
+                    impact = f"<span style='color:#059669; font-weight:bold;'>🟢 [호재 / 실적 호전]</span> [{period_tag} 기준] 매출 {rev_eok:,.0f}억원(YoY {rev_yoy:+.1f}%), 영업이익 {op_eok:,.0f}억원(YoY {op_yoy:+.1f}%)으로 어닝 서프라이즈 달성. 주가 상승 모멘텀 강력."
                     guide = "호실적에 따른 펀더멘털 신뢰도 상승으로 기존 목표가 도달 시까지 안정적 보유 지속."
                 elif op > 0 and op_yoy >= 0.0:
-                    impact = f"<span style='color:#059669; font-weight:bold;'>🟢 [호재 / 견조한 흑자]</span> 매출 {rev_eok:,.0f}억원(YoY {rev_yoy:+.1f}%), 영업이익 {op_eok:,.0f}억원(YoY {op_yoy:+.1f}%)으로 견조한 흑자 기조 유지. 주가 하방 지지력 확보."
+                    impact = f"<span style='color:#059669; font-weight:bold;'>🟢 [호재 / 견조한 흑자]</span> [{period_tag} 기준] 매출 {rev_eok:,.0f}억원(YoY {rev_yoy:+.1f}%), 영업이익 {op_eok:,.0f}억원(YoY {op_yoy:+.1f}%)으로 견조한 흑자 기조 유지. 주가 하방 지지력 확보."
                     guide = "이익 성장세가 유지되고 있으므로 트레일링 손절가를 상향 관리하며 홀딩."
                 elif op > 0 and op_yoy < 0.0:
-                    impact = f"<span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 영업익 둔화]</span> 매출 {rev_eok:,.0f}억원(YoY {rev_yoy:+.1f}%), 영업이익 {op_eok:,.0f}억원(YoY {op_yoy:+.1f}%)으로 흑자는 유지했으나 이익률 감소."
+                    impact = f"<span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 영업익 둔화]</span> [{period_tag} 기준] 매출 {rev_eok:,.0f}억원(YoY {rev_yoy:+.1f}%), 영업이익 {op_eok:,.0f}억원(YoY {op_yoy:+.1f}%)으로 흑자는 유지했으나 이익률 감소."
                     guide = "실적 둔화에 따른 차익 매물 출회 가능성에 대비하여 단기 지지선 이탈 여부 모니터링."
                 elif op < 0 and op_yoy > 0.0:
-                    impact = f"<span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 적자 축소]</span> 매출 {rev_eok:,.0f}억원, 영업손실 {op_eok:,.0f}억원으로 적자 지속이나 전년 대비 손실폭 축소."
+                    impact = f"<span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 적자 축소]</span> [{period_tag} 기준] 매출 {rev_eok:,.0f}억원, 영업손실 {op_eok:,.0f}억원으로 적자 지속이나 전년 대비 손실폭 축소."
                     guide = "하반기 흑자전환 가시성을 점검하며 단기 반등 시 비중 조절 검토."
                 else:
-                    impact = f"<span style='color:#DC2626; font-weight:bold;'>🔴 [악재 / 적자 지속·확대]</span> 매출 {rev_eok:,.0f}억원, 영업손실 {op_eok:,.0f}억원으로 적자 지속 및 수익성 부진."
+                    impact = f"<span style='color:#DC2626; font-weight:bold;'>🔴 [악재 / 적자 지속·확대]</span> [{period_tag} 기준] 매출 {rev_eok:,.0f}억원, 영업손실 {op_eok:,.0f}억원으로 적자 지속 및 수익성 부진."
                     guide = "펀더멘털 불확실성이 지속되므로 트레일링 손절가 및 사용자 우선 설정가를 엄격히 준수."
             else:
-                impact = "<span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 데이터 파싱 중]</span> 상반기 실적 보고서 접수 완료 (상세 재무제표 동기화 진행 중)."
+                impact = f"<span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 데이터 파싱 중]</span> {rep_title} 접수 완료 (상세 재무제표 동기화 진행 중)."
                 guide = "확정 실적 발표에 따른 시장 수급 반응을 주시하며 기존 전략 유지."
 
         elif any(k in report_nm for k in ["단일판매", "공급계약"]):

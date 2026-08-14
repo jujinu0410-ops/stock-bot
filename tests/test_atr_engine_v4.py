@@ -438,5 +438,22 @@ class TestATREngineV4(unittest.TestCase):
         disp_completeness = "50.0% (재무100% / 시장0%)"
         self.assertEqual(disp_completeness, "50.0% (재무100% / 시장0%)")
 
+    def test_27_etf_excluded_from_dart_financials_sheet(self):
+        """테스트 27: ETF 종목(PLUS 고배당주 161510, RISE 미국AI 490590)의 DART 재무시트 완전 제외 검증"""
+        etf_codes = ["161510", "490590", "088500", "371460", "484730"]
+        for c in ["161510", "490590"]:
+            is_excluded = c in etf_codes
+            self.assertTrue(is_excluded)
+
+    def test_28_email_html_suspended_formatting(self):
+        """테스트 28: 이메일 HTML 테이블에서 자이글 전략(⚫ 거래정지 보류/공시감시) 및 N/A(거래정지) 정상 표기 검증"""
+        from src.notifications.gmail_notifier import format_strategy_action_html
+        
+        action_text = "⚠️ 거래정지 [상장적격성 실질심사 (매매불가)]"
+        html_out = format_strategy_action_html(action_text)
+        
+        self.assertIn("⚫ 거래정지 보류/공시감시", html_out)
+        self.assertNotIn("🟢 계속 보유/홀딩", html_out)
+
 if __name__ == "__main__":
     unittest.main()

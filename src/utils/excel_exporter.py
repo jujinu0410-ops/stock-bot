@@ -256,8 +256,13 @@ def create_analysis_excel_report(date_str: str,
                 r_dict = dict(r)
                 code = r_dict.get("stock_code", "")
                 
-                # ETF 종목 제외 및 종목당 최신 1개 보고서 행만 출력
-                if code in ["088500", "371460", "484730"] or code in seen_codes:
+                # 🔥 ETF 종목 100% 원천 제외 및 종목당 최신 1개 보고서 행만 출력
+                is_etf_stock = (
+                    code in ["161510", "490590", "088500", "371460", "484730"] or
+                    r_dict.get("is_etf", 0) == 1 or
+                    any(k in str(r_dict.get("stock_name", "")) for k in ["ETF", "PLUS", "RISE", "KODEX", "TIGER", "고배당주", "커버드콜", "밸류체인"])
+                )
+                if is_etf_stock or code in seen_codes:
                     continue
                 seen_codes.add(code)
 

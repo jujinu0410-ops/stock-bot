@@ -44,13 +44,15 @@ def format_adx_di_dominance_html(di_dom_str):
 def format_strategy_action_html(raw_action):
     """대응전략 텍스트 정제 (확정 순위 등 제거하고 핵심 전략만 간략 표기) 및 컬러링"""
     clean = raw_action
-    clean = re.sub(r'\[[🟢🔄⚠️🚨]\s*(?:확정|잠정|ETF)\s*\d+위\s*', '', clean)
-    clean = re.sub(r'\s*\((?:확정|잠정|ETF)\s*\d+위\)', '', clean)
+    clean = re.sub(r'\[[🟢🔄⚠️🚨⚫]\s*(?:확정|잠정|ETF|순위제외)\s*\d*위?\s*', '', clean)
+    clean = re.sub(r'\s*\((?:확정|잠정|ETF|순위제외)\s*\d*위?\)', '', clean)
     clean = re.sub(r'\s*\(5순위\)', '', clean)
     clean = clean.replace('[', '').replace(']', '').strip()
     clean = re.sub(r'^\s*\(|\)\s*$', '', clean).strip()
 
-    if "매도" in clean and "추매금지" not in clean:
+    if "거래정지" in clean or "SUSPENDED" in clean:
+        return '<span style="color:#475569; font-weight:bold; background:#F1F5F9; padding:2px 6px; border-radius:4px; border:1px solid #94A3B8;">⚫ 거래정지 보류/공시감시</span>'
+    elif "매도" in clean and "추매금지" not in clean:
         return f'<span style="color:#1D4ED8; font-weight:bold;">{clean}</span>'
     elif "매수" in clean:
         return f'<span style="color:#DC2626; font-weight:bold;">{clean}</span>'
@@ -232,7 +234,9 @@ class GmailNotifier:
                     price_color = "#475569"
                     price_display_html = f'<span style="color:{price_color}; font-weight:bold; font-size:12px;">{cur_p:,}원</span><br><span style="font-size:9.5px; color:{price_color};">(0.00%)</span>'
 
-                if is_etf:
+                if trade_mode == "SUSPENDED_HOLD" or code == "234920":
+                    score_combined_cell = "<span style='font-weight:bold; color:#64748B; font-size:12px;'>N/A</span><br><span style='font-size:9.5px; color:#64748B;'>(거래정지)</span>"
+                elif is_etf:
                     score_combined_cell = f"<span style='font-weight:bold; color:#4338CA; font-size:13px;'>{t_sc:.1f}점</span><br><span style='font-size:9.5px; color:#64748B;'>(ETF T점수)</span>"
                 elif not f_confirmed:
                     score_combined_cell = f"<span style='font-weight:bold; color:#D97706; font-size:13px;'>{final_sc:.1f}점</span><br><span style='font-size:9.5px; color:#D97706;'>(F:{f_sc:.1f} / T:{t_sc:.1f})</span>"
@@ -240,10 +244,16 @@ class GmailNotifier:
                     score_combined_cell = f"<span style='font-weight:bold; color:#059669; font-size:13px;'>{final_sc:.1f}점</span><br><span style='font-size:9.5px; color:#64748B;'>(F:{f_sc:.1f} / T:{t_sc:.1f})</span>"
 
                 atr_v = h.get('atr_14', 0.0)
-                atr_display = f"{atr_v:,.0f}원 ({h.get('atr_pct', 0.0):.1f}%)" if atr_v > 0 else "-"
+                if trade_mode == "SUSPENDED_HOLD" or code == "234920":
+                    atr_display = "N/A (거래정지)"
+                else:
+                    atr_display = f"{atr_v:,.0f}원 ({h.get('atr_pct', 0.0):.1f}%)" if atr_v > 0 else "-"
 
                 clean_strategy = action_st
-                if "수동" in clean_strategy or "USER_OVERRIDE" in clean_strategy:
+                if trade_mode == "SUSPENDED_HOLD" or code == "234920":
+                    badge_bg, badge_border, badge_color = "#F1F5F9", "#94A3B8", "#475569"
+                    action_kw = "⚫ 거래정지 보류/공시감시"
+                elif "수동" in clean_strategy or "USER_OVERRIDE" in clean_strategy or code == "348340":
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ DART미확정 (수동감시 31주)"
                 elif not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:
@@ -289,7 +299,10 @@ class GmailNotifier:
                     name_formatted = name
 
                 adx_45m = h.get('adx_14_45m', 0.0)
-                atr_display_html = f'<span style="font-weight:bold; color:#334155;">{atr_display}</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: {adx_45m:.1f}</span>'
+                if trade_mode == "SUSPENDED_HOLD" or code == "234920":
+                    atr_display_html = f'<span style="font-weight:bold; color:#64748B;">N/A (거래정지)</span><br><span style="font-size:9px; color:#64748B;">45m: N/A</span>'
+                else:
+                    atr_display_html = f'<span style="font-weight:bold; color:#334155;">{atr_display}</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: {adx_45m:.1f}</span>'
 
                 held_rows_html += f"""
                 <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
@@ -307,18 +320,27 @@ class GmailNotifier:
                 code = h.get('stock_code', '')
                 name = h.get('stock_name', '')
                 action_st = h.get('action_status', '보유')
+                trade_mode = h.get('trade_mode', 'NORMAL')
                 
-                obv_d_date = h.get('obv_dead_date', 'N/A')
-                obv_d_days = h.get('obv_dead_elapsed_days', 0)
-                obv_daily_html = f'<span style="color:#1D4ED8; font-weight:bold;">{obv_d_date} ({obv_d_days}일차)</span>' if obv_d_date != "N/A" and "상승" not in obv_d_date and obv_d_days >= 1 else '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
+                if trade_mode == "SUSPENDED_HOLD" or code == "234920":
+                    obv_daily_html = '<span style="color:#64748B; font-weight:bold;">N/A</span>'
+                    obv_45m_html = '<span style="color:#64748B; font-weight:bold;">N/A</span>'
+                    daily_cho_html = '<span style="color:#64748B;">[N/A, N/A]</span>'
+                    intra_cho_html = '<span style="color:#64748B;">[N/A, N/A]</span>'
+                    di_dom_html = '<span style="color:#64748B;">N/A (거래정지)</span>'
+                    colored_strategy_html = '<span style="color:#475569; font-weight:bold; background:#F1F5F9; padding:2px 6px; border-radius:4px; border:1px solid #94A3B8;">⚫ 거래정지 보류/공시감시</span>'
+                else:
+                    obv_d_date = h.get('obv_dead_date', 'N/A')
+                    obv_d_days = h.get('obv_dead_elapsed_days', 0)
+                    obv_daily_html = f'<span style="color:#1D4ED8; font-weight:bold;">{obv_d_date} ({obv_d_days}일차)</span>' if obv_d_date != "N/A" and "상승" not in obv_d_date and obv_d_days >= 1 else '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
 
-                is_45m_obv_dead = h.get('is_obv_dead', False) or (h.get('obv_45m_trend', '') and '데드' in h.get('obv_45m_trend', ''))
-                obv_45m_html = '<span style="color:#1D4ED8; font-weight:bold;">45m 이탈</span>' if is_45m_obv_dead else '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
+                    is_45m_obv_dead = h.get('is_obv_dead', False) or (h.get('obv_45m_trend', '') and '데드' in h.get('obv_45m_trend', ''))
+                    obv_45m_html = '<span style="color:#1D4ED8; font-weight:bold;">45m 이탈</span>' if is_45m_obv_dead else '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
 
-                daily_cho_html = format_cho_array_html(h.get('daily_cho_recent2', [0, 0]))
-                intra_cho_html = format_cho_array_html(h.get('intraday_cho_recent2', [0, 0]))
-                di_dom_html = format_adx_di_dominance_html(h.get('adx_di_dominance', '-'))
-                colored_strategy_html = format_strategy_action_html(action_st)
+                    daily_cho_html = format_cho_array_html(h.get('daily_cho_recent2', [0, 0]))
+                    intra_cho_html = format_cho_array_html(h.get('intraday_cho_recent2', [0, 0]))
+                    di_dom_html = format_adx_di_dominance_html(h.get('adx_di_dominance', '-'))
+                    colored_strategy_html = format_strategy_action_html(action_st)
 
                 summary_matrix_rows_html += f"""
                 <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
@@ -345,7 +367,12 @@ class GmailNotifier:
                 s_sign = "+" if s_chg >= 0 else ""
                 clean_act_display = format_strategy_action_html(s_act)
                 
-                if s_code == "348340" or sw.get("user_override_flag", False):
+                if s_code == "234920" or s_mode == "SUSPENDED_HOLD":
+                    target_str = "HOLD (거래정지)"
+                    stop_str = "HOLD (거래정지)"
+                    trail_str = "HOLD (비활성)"
+                    sizing_str = f"보유 {sw.get('quantity', 0):,}주 / 권고: 0주 (상장적격성 실질심사 매매거래정지 [공시감시])"
+                elif s_code == "348340" or sw.get("user_override_flag", False):
                     target_str = "24,450원 (수동활성)"
                     stop_str = "HOLD (주문대기)"
                     trail_str = "700원 (수동추적)"
