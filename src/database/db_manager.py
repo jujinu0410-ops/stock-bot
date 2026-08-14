@@ -36,21 +36,52 @@ class DatabaseManager:
                 for idx_query in INDEX_SCHEMAS:
                     cursor.execute(idx_query)
                 
-                # 컬럼 자동 마이그레이션 (portfolio_positions 최고종가/확정손절가/감시시작일)
+                # 컬럼 자동 마이그레이션 (portfolio_positions V4-PILOT-C 전체 필드 지원)
                 cursor.execute("PRAGMA table_info(portfolio_positions)")
                 cols = [row[1] for row in cursor.fetchall()]
-                if "highest_close_price" not in cols:
-                    cursor.execute("ALTER TABLE portfolio_positions ADD COLUMN highest_close_price REAL DEFAULT 0;")
-                if "confirmed_stop_price" not in cols:
-                    cursor.execute("ALTER TABLE portfolio_positions ADD COLUMN confirmed_stop_price REAL DEFAULT 0;")
                 
-                # stock_info 테이블 마이그레이션 (is_active)
-                cursor.execute("PRAGMA table_info(stock_info)")
-                stock_cols = [row[1] for row in cursor.fetchall()]
-                if "is_active" not in stock_cols:
-                    cursor.execute("ALTER TABLE stock_info ADD COLUMN is_active INTEGER DEFAULT 1;")
+                v4_col_defs = {
+                    "position_cycle_id": "TEXT",
+                    "parameter_version": "TEXT DEFAULT 'V4-PILOT-C'",
+                    "trade_mode": "TEXT DEFAULT 'NORMAL'",
+                    "mode_override": "TEXT",
+                    "anchor_price_p0": "REAL DEFAULT 0",
+                    "anchor_atr_a0": "REAL DEFAULT 0",
+                    "anchor_created_at": "TEXT",
+                    "atr_method": "TEXT DEFAULT 'WILDER'",
+                    "atr_timeframe": "TEXT DEFAULT '1D_COMPLETED'",
+                    "current_completed_atr": "REAL DEFAULT 0",
+                    "natr_pct": "REAL DEFAULT 0",
+                    "initial_stop": "REAL DEFAULT 0",
+                    "profit_progress_1atr_reached": "INTEGER DEFAULT 0",
+                    "highest_close": "REAL DEFAULT 0",
+                    "highest_intraday": "REAL DEFAULT 0",
+                    "previous_confirmed_stop": "REAL DEFAULT 0",
+                    "ratchet_stop": "REAL DEFAULT 0",
+                    "profit_activation_raw": "REAL DEFAULT 0",
+                    "profit_activation_effective": "REAL DEFAULT 0",
+                    "profit_activation_status": "TEXT DEFAULT 'INACTIVE'",
+                    "highest_after_activation": "REAL DEFAULT 0",
+                    "previous_profit_trail": "REAL DEFAULT 0",
+                    "profit_trail": "REAL DEFAULT 0",
+                    "effective_exit_line": "REAL DEFAULT 0",
+                    "account_risk_pct": "REAL DEFAULT 0.005",
+                    "risk_budget_amount": "REAL DEFAULT 0",
+                    "risk_per_share": "REAL DEFAULT 0",
+                    "recommended_quantity": "INTEGER DEFAULT 0",
+                    "slippage_buffer": "REAL DEFAULT 0",
+                    "data_validity_flag": "INTEGER DEFAULT 1",
+                    "data_hold_reason": "TEXT",
+                    "reanchor_flag": "INTEGER DEFAULT 0",
+                    "highest_close_price": "REAL DEFAULT 0",
+                    "confirmed_stop_price": "REAL DEFAULT 0"
+                }
                 
-                # dart_financials 테이블 마이그레이션 (f_score_confirmed, sanity_reason)
+                for col_name, col_type in v4_col_defs.items():
+                    if col_name not in cols:
+                        cursor.execute(f"ALTER TABLE portfolio_positions ADD COLUMN {col_name} {col_type};")
+                        logger.info(f"[DB Migration] portfolio_positions 테이블에 컬럼 추가: {col_name} ({col_type})")
+                
                 cursor.execute("PRAGMA table_info(dart_financials)")
                 dart_cols = [row[1] for row in cursor.fetchall()]
                 if "f_score_confirmed" not in dart_cols:
@@ -253,4 +284,38 @@ class DatabaseManager:
             INSERT OR REPLACE INTO dispatch_history (dispatch_id, dispatch_type, recipient, subject, sent_at)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, (dispatch_id, dispatch_type, recipient, subject))
+
+    def get_position_lots(self, stock_code: str, cycle_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """특정 종목의 매수 Lot 목록 반환"""
+        code = str(stock_code).zfill(6)
+        if cycle_id:
+            rows = self.execute_query(
+                "SELECT * FROM position_lots WHERE stock_code = ? AND position_cycle_id = ? ORDER BY buy_datetime ASC",
+                (code, cycle_id)
+            )
+        else:
+            rows = self.execute_query(
+                "SELECT * FROM position_lots WHERE stock_code = ? ORDER BY buy_datetime ASC",
+                (code,)
+            )
+        return [dict(r) for r in rows] if rows else []
+
+    def add_position_lot(self, lot_data: Dict[str, Any]) -> bool:
+        """추가 매수 Lot 기록"""
+        query = """
+            INSERT INTO position_lots 
+            (position_cycle_id, stock_code, buy_datetime, quantity, entry_price, lot_anchor_atr, lot_initial_stop, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            lot_data.get("position_cycle_id"),
+            str(lot_data["stock_code"]).zfill(6),
+            lot_data.get("buy_datetime"),
+            int(lot_data.get("quantity", 0)),
+            float(lot_data.get("entry_price", 0.0)),
+            float(lot_data.get("lot_anchor_atr", 0.0)),
+            float(lot_data.get("lot_initial_stop", 0.0)),
+            lot_data.get("source", "MANUAL")
+        )
+        return self.execute_non_query(query, params)
 

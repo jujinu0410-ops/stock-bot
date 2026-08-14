@@ -254,20 +254,34 @@ class GmailNotifier:
 
                 t_target = h.get('kiwoom_target_tick_price', 0) or h.get('target_profit_price', 0)
                 t_stop = h.get('confirmed_stop_price', 0) or h.get('kiwoom_stop_tick_price', 0)
-                d_delta = h.get('drop_delta', int(atr_v * 0.8))
-                r_delta = h.get('rebound_delta', int(atr_v * 0.5))
+                d_delta = h.get('drop_delta', int(atr_v * 0.8)) if isinstance(h.get('drop_delta'), (int, float)) else int(atr_v * 0.8)
+                r_delta = h.get('rebound_delta', int(atr_v * 0.5)) if isinstance(h.get('rebound_delta'), (int, float)) else int(atr_v * 0.5)
 
-                if t_stop <= 0 or not f_confirmed or "보류" in action_kw:
-                    target_str = "목: - (데이터보류)"
-                    tr_text = "트: - (데이터보류)"
-                    stop_str = "손: - (데이터보류)"
+                data_val_flag = h.get('data_validity_flag', 1)
+                data_hold_msg = h.get('data_hold_reason', '데이터보류')
+
+                if data_val_flag == 0 or not f_confirmed or "보류" in action_kw or str(t_stop) == "HOLD":
+                    target_str = f"목: - ({data_hold_msg})"
+                    tr_text = f"트: - ({data_hold_msg})"
+                    stop_str = f"손: - ({data_hold_msg})"
                 else:
-                    target_str = f"목: {t_target:,}원"
-                    if "매수" in action_kw:
-                        tr_text = f"트: +{r_delta:,}원"
-                    else:
-                        tr_text = f"트: -{d_delta:,}원"
-                    stop_str = f"손: {t_stop:,}원"
+                    try:
+                        target_str = f"목: {int(t_target):,}원" if float(t_target) > 0 else "목: -"
+                    except (ValueError, TypeError):
+                        target_str = f"목: {t_target}"
+
+                    try:
+                        if "매수" in action_kw:
+                            tr_text = f"트: +{int(r_delta):,}원"
+                        else:
+                            tr_text = f"트: -{int(d_delta):,}원"
+                    except (ValueError, TypeError):
+                        tr_text = f"트: {d_delta}"
+
+                    try:
+                        stop_str = f"손: {int(t_stop):,}원" if float(t_stop) > 0 else "손: -"
+                    except (ValueError, TypeError):
+                        stop_str = f"손: {t_stop}"
 
                 strategy_cell_html = f"""
                 <span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:2px 5px; border-radius:5px; font-weight:bold; font-size:9.5px; display:inline-block; margin-bottom:2px;">{action_kw}</span><br>
@@ -355,36 +369,43 @@ class GmailNotifier:
                     s_code = sw.get('stock_code')
                     s_chg = sw.get('daily_change_pct', 0.0)
                     s_act = sw.get('action_status', '보유')
-                    s_atr = sw.get('atr_14', 0.0)
-                    s_tbuy = sw.get('trailing_buy_price', 0) or sw.get('kiwoom_buy_tick_price', 0)
-                    s_tstop = sw.get('confirmed_stop_price', 0) or sw.get('trailing_stop_price', 0) or sw.get('kiwoom_stop_tick_price', 0)
-                    s_ttarget = sw.get('target_profit_price', 0) or sw.get('trailing_target_price', 0) or sw.get('kiwoom_target_tick_price', 0)
-                    s_rdelta = sw.get('rebound_delta', int(s_atr * 0.5))
-                    s_ddelta = sw.get('drop_delta', int(s_atr * 0.8))
-                    s_buy_trigger = s_tbuy + s_rdelta if s_tbuy > 0 else 0
-                    s_sell_trigger = s_ttarget - s_ddelta if s_ttarget > 0 else 0
+                    s_mode = sw.get('trade_mode', 'NORMAL')
+                    
+                    s_p0 = sw.get('anchor_price_p0', sw.get('avg_buy_price', 0))
+                    s_a0 = sw.get('anchor_atr_a0', sw.get('atr_14', 0))
+                    s_at = sw.get('current_completed_atr', sw.get('atr_14', 0))
+                    
+                    s_ttarget = sw.get('kiwoom_target_tick_price', sw.get('target_profit_price', 0))
+                    s_tstop = sw.get('kiwoom_stop_tick_price', sw.get('confirmed_stop_price', 0))
+                    s_exit = sw.get('kiwoom_exit_tick_price', sw.get('effective_exit_line', s_tstop))
+                    s_trail_delta = sw.get('profit_trail_delta', int(s_at * 0.8))
+                    
+                    s_rec_qty = sw.get('recommended_quantity', 0)
+                    s_weight = sw.get('eval_weight_pct', 0.0)
+                    s_data_state = sw.get('data_hold_reason', '정상')
+                    s_ver = sw.get('parameter_version', 'V4-PILOT-C')
+
                     s_color = "#10B981" if s_chg >= 0 else "#EF4444"
                     s_sign = "+" if s_chg >= 0 else ""
 
-                    if "비중과다" in s_act or "추매금지" in s_act:
-                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동. 단일 비중 20% 초과 집중 위험으로 추매가 금지됩니다. (3.0 ATR 목표가 <strong>{s_ttarget:,}원</strong> 도달 후 최고가 대비 -{s_ddelta:,}원 하락 시 1차 50% 차익실현 | 1.5 ATR 손절가 <strong>{s_tstop:,}원</strong> 하향 이탈 시 100% 손절)"
-                    elif "추매" in s_act and s_tbuy > 0:
-                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 조정. 1.5 ATR 눌림목 감시가 <strong>{s_tbuy:,}원</strong> 도달 후 최저가 대비 +{s_rdelta:,}원 반등하여 <strong>{s_buy_trigger:,}원</strong> 도달 시 1차 50% 분할추매 고려 (손절가 <strong>{s_tstop:,}원</strong>)"
-                    elif ("매도" in s_act or "반등" in s_act or "익절" in s_act) and s_ttarget > 0:
-                        advice_detail = f"기술적 반등/익절 진행 중. 3.0 ATR 목표가 <strong>{s_ttarget:,}원</strong> 도달 후 최고가 대비 -{s_ddelta:,}원 하락하여 <strong>{s_sell_trigger:,}원</strong> 도달 시 1차 50% 분할매도/차익실현."
-                    elif "손절" in s_act and s_tstop > 0:
-                        advice_detail = f"기술 추세 붕괴 위험. 1.5 ATR 손절가 <strong>{s_tstop:,}원</strong> 이하 하향 이탈 시 손절선 재설정 없이 100% 전량 손절 실행."
-                    else:
-                        advice_detail = f"당일 {s_sign}{s_chg:.2f}% 변동. 3.0 ATR 목표가 <strong>{s_ttarget:,}원</strong> (최고가 대비 -{s_ddelta:,}원 하락 시 50% 차익실현) 및 1.5 ATR 손절가 <strong>{s_tstop:,}원</strong> (하향 이탈 시 100% 손절) 감시 유지."
+                    target_str = f"{s_ttarget:,}원" if str(s_ttarget) != "HOLD" and isinstance(s_ttarget, (int, float)) and s_ttarget > 0 else str(s_ttarget)
+                    stop_str = f"{s_tstop:,}원" if str(s_tstop) != "HOLD" and isinstance(s_tstop, (int, float)) and s_tstop > 0 else str(s_tstop)
+                    exit_str = f"{s_exit:,}원" if str(s_exit) != "HOLD" and isinstance(s_exit, (int, float)) and s_exit > 0 else str(s_exit)
 
                     meaningful_cards_html += f"""
                     <div style="background:#FFFFFF; border-left:5px solid {s_color}; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <strong style="font-size:13px; color:#0F172A;">{s_name} ({s_code})</strong>
-                            <span style="font-weight:bold; color:{s_color}; font-size:13px;">당일 등락: {s_sign}{s_chg:.2f}% | 14일 ATR: {s_atr:,.0f}원</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                            <strong style="font-size:13px; color:#0F172A;">{s_name} ({s_code}) / <span style="color:#2563EB;">{s_mode}</span> / <span style="color:#D97706;">{s_act}</span></strong>
+                            <span style="font-weight:bold; color:{s_color}; font-size:13px;">등락: {s_sign}{s_chg:.2f}%</span>
                         </div>
-                        <div style="font-size:11px; color:#334155; margin-top:6px; background:#F8FAFC; padding:8px; border-radius:6px; line-height:1.5;">
-                            🎯 <strong>키움 트레일링 매매 가격 가이드:</strong> {advice_detail}
+                        <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
+                            • <strong>목(익절 트레일링 활성가):</strong> <span style="color:#059669; font-weight:bold;">{target_str}</span><br>
+                            • <strong>트(활성 후 하락 실행폭):</strong> <span style="color:#D97706; font-weight:bold;">-{s_trail_delta:,}원</span><br>
+                            • <strong>손(현재 유효 손절가):</strong> <span style="color:#DC2626; font-weight:bold;">{stop_str}</span><br>
+                            • <strong>최종 매도선:</strong> <span style="color:#4F46E5; font-weight:bold;">{exit_str}</span><br>
+                            • <strong>권고수량 또는 비중:</strong> {s_rec_qty}주 (현재 비중: {s_weight}%)<br>
+                            • <strong>데이터 상태:</strong> {s_data_state}<br>
+                            • <strong>계산 기준:</strong> P0: {s_p0:,}원 / A0: {s_a0:,.0f}원 / At: {s_at:,.0f}원 ({s_ver})
                         </div>
                     </div>
                     """
@@ -392,7 +413,7 @@ class GmailNotifier:
             swing_section_html = f"""
             <div style="background:#FFFBEB; border:2px solid #F59E0B; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(245,158,11,0.08);">
                 <h3 style="margin-top:0; color:#B45309; font-size:15px; margin-bottom:8px;">
-                    ⚡ 의미있는 주가변동 포착 종목 ATR 트레일링 대응 지침 (총 {len(meaningful_items)}종목)
+                    ⚡ V4-PILOT-C 주요 종목 ATR 트레일링 대응 지침 (총 {len(meaningful_items)}종목)
                 </h3>
                 {meaningful_cards_html}
             </div>

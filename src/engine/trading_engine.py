@@ -83,10 +83,10 @@ class TradingEngine:
             daily_change_pct = round(((latest_close - prev_close) / prev_close) * 100.0, 2) if prev_close > 0 else 0.0
             high_low_swing_pct = round(((high_p - low_p) / low_p) * 100.0, 2) if low_p > 0 else 0.0
 
-            # 손절가 및 목표가 계산 (손절폭 약 5.2%, 익절 15%)
-            stop_loss_price = int(latest_close * 0.948)
-            target_profit_price = int(latest_close * 1.15)
-            expected_loss_pct = round(((latest_close - stop_loss_price) / latest_close) * 100, 1)
+            # 손절가 및 목표가 (V4 Wilder ATR14 기반 산출)
+            stop_loss_price = tech_res.get('kiwoom_stop_tick_price') or int(latest_close * 0.948)
+            target_profit_price = tech_res.get('kiwoom_target_tick_price') or int(latest_close * 1.15)
+            expected_loss_pct = round(((latest_close - stop_loss_price) / latest_close) * 100, 1) if latest_close > 0 else 0.0
 
             signal_type = "관망"
             recommended_amount = "0만 원"

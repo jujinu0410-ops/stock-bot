@@ -1,7 +1,54 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, Tuple
+from config.settings import ATR_CONFIG, ATR_ENGINE_VERSION
 from src.utils.logger import logger
+
+def calculate_true_range(high: pd.Series, low: pd.Series, prev_close: pd.Series) -> pd.Series:
+    """
+    True Range (TR) 표준 산출 공식:
+    TR_t = max(High_t - Low_t, |High_t - Close_{t-1}|, |Low_t - Close_{t-1}|)
+    """
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    if not tr.empty and pd.isna(tr.iloc[0]):
+        tr.iloc[0] = high.iloc[0] - low.iloc[0]
+    return tr
+
+def calculate_wilder_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """
+    J. Welles Wilder Jr. 표준 ATR14 평활 공식:
+    1. 최초 period(14)개 TR의 단순 평균으로 초기 ATR 산출
+    2. 이후 Wilder Smoothing: ATR_t = ((ATR_{t-1} * 13) + TR_t) / 14
+    """
+    if df.empty or len(df) < 1:
+        return pd.Series(dtype=float)
+    
+    high = df['high_price'].astype(float)
+    low = df['low_price'].astype(float)
+    prev_close = df['close_price'].shift(1).astype(float)
+    
+    tr = calculate_true_range(high, low, prev_close)
+    atr = pd.Series(index=df.index, dtype=float)
+    n = len(df)
+    
+    if n < period:
+        return tr.expanding(min_periods=1).mean()
+        
+    initial_atr = tr.iloc[:period].mean()
+    atr.iloc[period - 1] = initial_atr
+    
+    for i in range(period, n):
+        prev_atr = atr.iloc[i - 1]
+        cur_tr = tr.iloc[i]
+        atr.iloc[i] = ((prev_atr * (period - 1)) + cur_tr) / float(period)
+        
+    for i in range(period - 1):
+        atr.iloc[i] = tr.iloc[:i+1].mean()
+        
+    return atr
 
 def adjust_krx_tick_size(price: float, direction: str = "down") -> int:
     """
@@ -19,6 +66,8 @@ def adjust_krx_tick_size(price: float, direction: str = "down") -> int:
         unit = 10
     elif p < 50000:
         unit = 50
+    elif p < 20000:
+        unit = 10
     elif p < 200000:
         unit = 100
     elif p < 500000:
@@ -44,7 +93,7 @@ class TechnicalAnalysis:
             self.df = self.df.sort_values('stk_date').reset_index(drop=True)
 
     def calculate_indicators(self) -> pd.DataFrame:
-        """주요 보조지표 연산 (일목 9/20/50, VWAP 9/26, BB 26/1.7, DMI/ADX 14, OBV 9, Chaikin 13/26)"""
+        """주요 보조지표 연산 (일목 9/20/50, VWAP 9/26, BB 26/1.7, DMI/ADX 14, OBV 9, Chaikin 13/26, Wilder ATR14)"""
         df = self.df.copy()
         if len(df) < 10:
             logger.warning("일봉 데이터 수량이 부족하여 보조지표 연산을 정밀히 수행할 수 없습니다.")
@@ -84,11 +133,7 @@ class TechnicalAnalysis:
         plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
         minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
 
-        tr1 = df['high_price'] - df['low_price']
-        tr2 = (df['high_price'] - df['close_price'].shift(1)).abs()
-        tr3 = (df['low_price'] - df['close_price'].shift(1)).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
+        tr = calculate_true_range(df['high_price'], df['low_price'], df['close_price'].shift(1))
         tr_smooth = tr.rolling(window=14).sum()
         plus_di = 100 * (pd.Series(plus_dm).rolling(window=14).sum() / (tr_smooth + 1e-9))
         minus_di = 100 * (pd.Series(minus_dm).rolling(window=14).sum() / (tr_smooth + 1e-9))
@@ -113,13 +158,10 @@ class TechnicalAnalysis:
         chaikin_slow = adl.ewm(span=26, adjust=False).mean()
         df['chaikin_osc'] = chaikin_fast - chaikin_slow
 
-        # 7. ATR (14일 Wilder's EWM)
-        tr1 = df['high_price'] - df['low_price']
-        tr2 = (df['high_price'] - df['close_price'].shift(1)).abs()
-        tr3 = (df['low_price'] - df['close_price'].shift(1)).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        df['atr_14'] = tr.ewm(alpha=1.0/14.0, adjust=False).mean()
+        # 7. Wilder ATR14 표준 평활
+        df['atr_14'] = calculate_wilder_atr(df, period=ATR_CONFIG.get("atr_period", 14))
         df['atr_pct'] = (df['atr_14'] / (df['close_price'] + 1e-9)) * 100.0
+        df['natr_pct'] = df['atr_pct']
 
         return df
 
@@ -364,15 +406,23 @@ class TechnicalAnalysis:
         t_score = round(max(0.0, min(100.0, earned_raw_points)), 1)
         t_raw = t_score
 
+        # 직전 완료 일봉(1D_COMPLETED) 기준 Wilder ATR14 산출
         atr_14 = float(last_row.get('atr_14', 0.0) or 0.0)
         close_p = float(last_row.get('close_price', 0.0) or 0.0)
         if pd.isna(atr_14) or atr_14 <= 0:
             atr_14 = close_p * 0.03
 
-        atr_pct = round((atr_14 / (close_p + 1e-9)) * 100.0, 2)
-        raw_trailing_buy_p = close_p - (1.5 * atr_14)
-        raw_trailing_stop_p = close_p - (2.0 * atr_14)
-        raw_trailing_target_p = close_p + (3.0 * atr_14)
+        natr_pct = round((atr_14 / (close_p + 1e-9)) * 100.0, 2)
+        atr_pct = natr_pct
+
+        # V4 설정 배수 적용
+        buy_watch_mul = ATR_CONFIG.get("buy_watch_multiple", 1.5)
+        stop_mul = ATR_CONFIG.get("initial_stop_multiple", 2.0)
+        target_mul = ATR_CONFIG.get("profit_activation_multiple", 3.0)
+
+        raw_trailing_buy_p = close_p - (buy_watch_mul * atr_14)
+        raw_trailing_stop_p = close_p - (stop_mul * atr_14)
+        raw_trailing_target_p = close_p + (target_mul * atr_14)
 
         kiwoom_buy_tick_p = adjust_krx_tick_size(raw_trailing_buy_p, "down")
         kiwoom_stop_tick_p = adjust_krx_tick_size(raw_trailing_stop_p, "down")
@@ -384,6 +434,10 @@ class TechnicalAnalysis:
             "tech_completeness": tech_completeness,
             "atr_14": round(atr_14, 1),
             "atr_pct": atr_pct,
+            "natr_pct": natr_pct,
+            "atr_method": ATR_CONFIG.get("atr_method", "WILDER"),
+            "atr_timeframe": ATR_CONFIG.get("atr_timeframe", "1D_COMPLETED"),
+            "parameter_version": ATR_ENGINE_VERSION,
             "trailing_buy_price": int(round(raw_trailing_buy_p)),
             "trailing_stop_price": int(round(raw_trailing_stop_p)),
             "trailing_target_price": int(round(raw_trailing_target_p)),

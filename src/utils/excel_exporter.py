@@ -50,18 +50,25 @@ def create_analysis_excel_report(date_str: str,
             f_display = f"{f_sc:.1f}점"
             final_display = f"{final_sc:.1f}점 (확정)"
 
+        # V4 매매모드 및 데이터 유효성
+        trade_mode = h.get("trade_mode", "NORMAL")
+        data_val_flag = h.get("data_validity_flag", 1)
+        data_hold_reason = h.get("data_hold_reason", "정상")
+        auto_order_ok = "가능 (알림참고)" if data_val_flag == 1 else f"금지 ({data_hold_reason})"
+
         # 매수 승인 여부와 관계없이 손절/익절 감시가격은 항상 계산 및 분리 유지!
-        buy_status = "ON (주문대기)" if "제한적 분할추매 고려" in action_st else "OFF (조건미충족)"
+        buy_status = "ON (주문대기)" if "제한적 분할추매 고려" in action_st or "분할매수" in action_st else "OFF (조건미충족)"
         
-        if not f_confirmed or "보류" in action_st or "미확정" in action_st:
-            stop_mon_status = "HOLD (재무미확정)"
+        if data_val_flag == 0 or not f_confirmed or "보류" in action_st or "미확정" in action_st:
+            stop_mon_status = f"HOLD ({data_hold_reason})"
             stop_order_status = "OFF (HOLD)"
-            target_mon_status = "HOLD (재무미확정)"
+            target_mon_status = f"HOLD ({data_hold_reason})"
             target_order_status = "OFF (HOLD)"
             conf_stop_val = "HOLD"
             stop_tick_val = "HOLD"
             target_tick_val = "HOLD"
             buy_tick_val = "HOLD"
+            exit_tick_val = "HOLD"
         else:
             stop_mon_status = "ON (상시감시)"
             stop_order_status = "OFF (알림전용)"
@@ -71,12 +78,19 @@ def create_analysis_excel_report(date_str: str,
             stop_tick_val = h.get("kiwoom_stop_tick_price", 0)
             target_tick_val = h.get("kiwoom_target_tick_price", 0)
             buy_tick_val = h.get("kiwoom_buy_tick_price", 0)
+            exit_tick_val = h.get("kiwoom_exit_tick_price", conf_stop_val)
 
         held_data.append({
             "순위": h.get("rank", "순위제외"),
             "종목코드": h.get("stock_code"),
             "종목명": h.get("stock_name"),
             "계좌평가비중(%)": h.get("eval_weight_pct", 0.0),
+            "ATR 엔진 버전": h.get("parameter_version", "V4-PILOT-C"),
+            "매매모드": trade_mode,
+            "기준가격 P0(원)": h.get("anchor_price_p0", h.get("avg_buy_price")),
+            "고정 기준 ATR A0(원)": h.get("anchor_atr_a0", h.get("atr_14")),
+            "현재 완료봉 ATR At(원)": h.get("current_completed_atr", h.get("atr_14")),
+            "NATR(%)": h.get("natr_pct", h.get("atr_pct", 0.0)),
             "기본 F점수": f_display,
             "성장성(25)": h.get("growth_pts", 0.0) if not is_etf else "-",
             "현금흐름(20)": h.get("cf_pts", 0.0) if not is_etf else "-",
@@ -97,18 +111,31 @@ def create_analysis_excel_report(date_str: str,
             "매입평단가(원)": h.get("avg_buy_price"),
             "현재가(원)": h.get("current_price"),
             "당일등락률(%)": h.get("daily_change_pct", 0.0),
-            "14일 ATR(원)": h.get("atr_14", 0.0),
-            "ATR 변동폭(%)": h.get("atr_pct", 0.0),
             "감시시작후 최고종가(원)": h.get("highest_close_price", h.get("current_price")),
+            "추매 감시가격 P0-1.5A0(원)": buy_tick_val,
+            "반등 확인폭 +0.5A0(원)": h.get("buy_rebound_delta", 0),
+            "추매 주문상태": buy_status,
+            "초기 손절가 P0-2.0A0(원)": h.get("initial_stop_price", 0),
+            "현재 래칫 손절가(원)": h.get("ratchet_stop_price", conf_stop_val),
             "전일확정 손절가(원)": h.get("prev_confirmed_stop", 0),
             "금일확정 손절가(원)": conf_stop_val,
             "손절선 갱신상태": h.get("stop_update_status", "유지"),
-            "추매 감시가격(원)": buy_tick_val,
-            "추매 주문상태": buy_status,
-            "손절 감시가격(원)": stop_tick_val,
+            "익절 트레일링 원시 활성가 P0+3.0A0(원)": h.get("profit_activation_raw", 0),
+            "상승률 캡 적용값(원)": h.get("profit_activation_effective", 0),
+            "최종 익절 트레일링 활성가(원)": target_tick_val,
+            "익절 활성 여부": h.get("profit_activation_status", "INACTIVE"),
+            "익절 트레일링폭(원)": h.get("profit_trail_delta", 0),
+            "현재 익절 트레일링선(원)": h.get("profit_trail_price", 0),
+            "최종 유효 매도선(원)": exit_tick_val,
+            "슬리피지 버퍼(원)": h.get("slippage_buffer", 0),
+            "계좌 위험예산(원)": h.get("risk_budget_amount", 0),
+            "위험기준 권고수량": h.get("risk_based_qty", 0),
+            "20% 비중기준 수량": h.get("weight_cap_qty", 0),
+            "최종 권고수량": h.get("recommended_quantity", 0),
+            "데이터 유효성": data_hold_reason if data_val_flag == 0 else "정상",
+            "자동 주문설정 가능 여부": auto_order_ok,
             "손절 가격감시": stop_mon_status,
             "손절 주문전송": stop_order_status,
-            "익절 감시가격(원)": target_tick_val,
             "익절 가격감시": target_mon_status,
             "익절 주문전송": target_order_status,
             "총 매입금액(원)": h.get("total_invested"),
