@@ -44,6 +44,12 @@ class DatabaseManager:
                 if "confirmed_stop_price" not in cols:
                     cursor.execute("ALTER TABLE portfolio_positions ADD COLUMN confirmed_stop_price REAL DEFAULT 0;")
                 
+                # stock_info 테이블 마이그레이션 (is_active)
+                cursor.execute("PRAGMA table_info(stock_info)")
+                stock_cols = [row[1] for row in cursor.fetchall()]
+                if "is_active" not in stock_cols:
+                    cursor.execute("ALTER TABLE stock_info ADD COLUMN is_active INTEGER DEFAULT 1;")
+                
                 # dart_financials 테이블 마이그레이션 (f_score_confirmed, sanity_reason)
                 cursor.execute("PRAGMA table_info(dart_financials)")
                 dart_cols = [row[1] for row in cursor.fetchall()]
