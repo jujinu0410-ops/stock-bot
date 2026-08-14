@@ -42,17 +42,22 @@ def format_adx_di_dominance_html(di_dom_str):
         return f'<span style="color:#475569;">{di_dom_str}</span>'
 
 def format_strategy_action_html(raw_action):
-    """대응전략 텍스트 정제 및 매도(파란색), 매수(붉은색), 비중과다(주황색) 컬러링"""
-    clean = re.sub(r'\s*\((?:확정|잠정|ETF)\s*\d+위\)', '', raw_action)
+    """대응전략 텍스트 정제 (확정 순위 등 제거하고 핵심 전략만 간략 표기) 및 컬러링"""
+    clean = raw_action
+    clean = re.sub(r'\[[🟢🔄⚠️🚨]\s*(?:확정|잠정|ETF)\s*\d+위\s*', '', clean)
+    clean = re.sub(r'\s*\((?:확정|잠정|ETF)\s*\d+위\)', '', clean)
     clean = re.sub(r'\s*\(5순위\)', '', clean)
-    clean = clean.replace("(계속 보유/홀딩)", "보유/홀딩").replace("(안정 보유/홀딩)", "보유/홀딩")
+    clean = clean.replace('[', '').replace(']', '').strip()
+    clean = re.sub(r'^\s*\(|\)\s*$', '', clean).strip()
 
     if "매도" in clean and "추매금지" not in clean:
         return f'<span style="color:#1D4ED8; font-weight:bold;">{clean}</span>'
     elif "매수" in clean:
         return f'<span style="color:#DC2626; font-weight:bold;">{clean}</span>'
-    elif "비중과다" in clean or "보류" in clean or "미확정" in clean:
+    elif "비중과다" in clean or "보류" in clean or "미확정" in clean or "이상 급등" in clean:
         return f'<span style="color:#B45309; font-weight:bold;">{clean}</span>'
+    elif "보유" in clean or "홀딩" in clean:
+        return f'<span style="color:#059669; font-weight:bold;">{clean}</span>'
     else:
         return f'<span style="color:#334155; font-weight:bold;">{clean}</span>'
 
@@ -167,7 +172,19 @@ class GmailNotifier:
         # --- 1. 내 보유 종목 섹션 HTML ---
         held_section_html = ""
         if held_portfolio:
-            held_rows_html = ""
+            def _get_portfolio_sort_key(item):
+                action_st = item.get("action_status", "")
+                trade_mode = item.get("trade_mode", "NORMAL")
+                needs_sell_or_risk_action = (
+                    trade_mode in ("RECOVERY", "EMERGENCY", "HOLD") or
+                    "매도" in action_st or "손절" in action_st or "축소" in action_st or 
+                    "보류" in action_st or "미확정" in action_st or "이상 급등" in action_st
+                )
+                priority_group = 0 if needs_sell_or_risk_action else 1
+                final_score = item.get("final_score", 0.0)
+                return (priority_group, final_score)
+
+            held_portfolio_sorted = sorted(held_portfolio, key=_get_portfolio_sort_key)
             total_eval_inv = sum(h.get("total_invested", 0) for h in held_portfolio)
             total_eval_val = sum(h.get("eval_amount", 0) for h in held_portfolio)
             total_pnl_amt = total_eval_val - total_eval_inv
@@ -175,22 +192,22 @@ class GmailNotifier:
             pnl_color_total = "#10B981" if total_pnl_amt >= 0 else "#EF4444"
             pnl_sign_total = "+" if total_pnl_amt >= 0 else ""
 
-            held_portfolio_sorted = sorted(held_portfolio, key=lambda x: x.get("final_score", 0.0), reverse=True)
             profit_count = sum(1 for h in held_portfolio if h.get("pnl_pct", 0.0) >= 0)
             loss_count = sum(1 for h in held_portfolio if h.get("pnl_pct", 0.0) < 0)
 
+            held_rows_html = ""
             meaningful_items = []
             for h in held_portfolio_sorted:
                 daily_chg = h.get('daily_change_pct', 0.0)
                 atr_pct = h.get('atr_pct', 3.0)
-                if abs(daily_chg) >= max(2.5, atr_pct * 0.8):
+                action_st = h.get('action_status', '')
+                trade_mode = h.get('trade_mode', 'NORMAL')
+                if "계속 보유" not in action_st or abs(daily_chg) >= max(2.5, atr_pct * 0.8) or trade_mode in ("EMERGENCY", "RECOVERY", "HOLD"):
                     meaningful_items.append(h)
 
             for rank_idx, h in enumerate(held_portfolio_sorted, start=1):
                 code = h.get('stock_code')
                 name = h.get('stock_name')
-                qty = h.get('quantity')
-                avg_p = h.get('avg_buy_price')
                 cur_p = h.get('current_price')
                 daily_chg = h.get('daily_change_pct', 0.0)
                 pnl_pct = h.get('pnl_pct', 0.0)
@@ -202,12 +219,18 @@ class GmailNotifier:
                 is_etf = h.get('is_etf', False)
                 f_confirmed = h.get('f_score_confirmed', True)
 
-                pnl_color = "#10B981" if pnl_pct >= 0 else "#EF4444"
+                pnl_color = "#DC2626" if pnl_pct >= 0 else "#2563EB"
                 pnl_sign = "+" if pnl_pct >= 0 else ""
-                chg_color = "#10B981" if daily_chg >= 0 else "#EF4444"
-                chg_sign = "+" if daily_chg >= 0 else ""
 
-                rank_badge = f"<span style='font-weight:bold; font-size:12px; color:#0F172A;'>{rank_idx}</span>"
+                if daily_chg > 0:
+                    price_color = "#DC2626"
+                    price_display_html = f'<span style="color:{price_color}; font-weight:bold; font-size:12px;">{cur_p:,}원</span><br><span style="font-size:9.5px; color:{price_color}; font-weight:bold;">( +{daily_chg:.2f}%)</span>'
+                elif daily_chg < 0:
+                    price_color = "#2563EB"
+                    price_display_html = f'<span style="color:{price_color}; font-weight:bold; font-size:12px;">{cur_p:,}원</span><br><span style="font-size:9.5px; color:{price_color}; font-weight:bold;">({daily_chg:.2f}%)</span>'
+                else:
+                    price_color = "#475569"
+                    price_display_html = f'<span style="color:{price_color}; font-weight:bold; font-size:12px;">{cur_p:,}원</span><br><span style="font-size:9.5px; color:{price_color};">(0.00%)</span>'
 
                 if is_etf:
                     score_combined_cell = f"<span style='font-weight:bold; color:#4338CA; font-size:13px;'>{t_sc:.1f}점</span><br><span style='font-size:9.5px; color:#64748B;'>(ETF T점수)</span>"
@@ -217,22 +240,24 @@ class GmailNotifier:
                     score_combined_cell = f"<span style='font-weight:bold; color:#059669; font-size:13px;'>{final_sc:.1f}점</span><br><span style='font-size:9.5px; color:#64748B;'>(F:{f_sc:.1f} / T:{t_sc:.1f})</span>"
 
                 atr_v = h.get('atr_14', 0.0)
-                atr_p = h.get('atr_pct', 0.0)
-                atr_display = f"{atr_v:,.0f}원 ({atr_p:.1f}%)" if atr_v > 0 else "-"
+                atr_display = f"{atr_v:,.0f}원 ({h.get('atr_pct', 0.0):.1f}%)" if atr_v > 0 else "-"
 
                 clean_strategy = action_st
                 if not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ DART 재무미확정 (보류)"
+                elif "이상 급등" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
+                    action_kw = "⚠️ NATR 이상 급등 (보류)"
                 elif "비중과다" in clean_strategy and "CHO유출" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ 비중과다 + CHO유출"
                 elif "비중과다" in clean_strategy and "OBV이탈" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ 비중과다 + OBV이탈"
-                elif "차익실현" in clean_strategy and "CHO유출" in clean_strategy:
-                    badge_bg, badge_border, badge_color = "#ECFDF5", "#6EE7B7", "#065F46"
-                    action_kw = "🎯 차익실현 + CHO유출"
+                elif "손실축소" in clean_strategy or "RECOVERY" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#EFF6FF", "#93C5FD", "#1D4ED8"
+                    action_kw = "🔄 손실축소 분할매도"
                 elif "단기 매도" in clean_strategy or "단기매도" in clean_strategy or "매도" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#EFF6FF", "#93C5FD", "#1D4ED8"
                     action_kw = "🚨 매도 대응"
@@ -241,54 +266,15 @@ class GmailNotifier:
                     action_kw = "🎯 분할매수"
                 elif "비중과다" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
-                    action_kw = "비중과다 보유"
+                    action_kw = "⚠️ 비중과다 보유"
                 elif "익절" in clean_strategy or "차익" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#ECFDF5", "#6EE7B7", "#065F46"
                     action_kw = "익절/차익실현"
-                elif "분할매도" in clean_strategy:
-                    badge_bg, badge_border, badge_color = "#EFF6FF", "#93C5FD", "#1D4ED8"
-                    action_kw = "분할매도"
                 else:
                     badge_bg, badge_border, badge_color = "#F0F9FF", "#BAE6FD", "#0369A1"
-                    action_kw = "안정 보유"
+                    action_kw = "🟢 계속 보유/홀딩"
 
-                t_target = h.get('kiwoom_target_tick_price', 0) or h.get('target_profit_price', 0)
-                t_stop = h.get('confirmed_stop_price', 0) or h.get('kiwoom_stop_tick_price', 0)
-                d_delta = h.get('drop_delta', int(atr_v * 0.8)) if isinstance(h.get('drop_delta'), (int, float)) else int(atr_v * 0.8)
-                r_delta = h.get('rebound_delta', int(atr_v * 0.5)) if isinstance(h.get('rebound_delta'), (int, float)) else int(atr_v * 0.5)
-
-                data_val_flag = h.get('data_validity_flag', 1)
-                data_hold_msg = h.get('data_hold_reason', '데이터보류')
-
-                if data_val_flag == 0 or not f_confirmed or "보류" in action_kw or str(t_stop) == "HOLD":
-                    target_str = f"목: - ({data_hold_msg})"
-                    tr_text = f"트: - ({data_hold_msg})"
-                    stop_str = f"손: - ({data_hold_msg})"
-                else:
-                    try:
-                        target_str = f"목: {int(t_target):,}원" if float(t_target) > 0 else "목: -"
-                    except (ValueError, TypeError):
-                        target_str = f"목: {t_target}"
-
-                    try:
-                        if "매수" in action_kw:
-                            tr_text = f"트: +{int(r_delta):,}원"
-                        else:
-                            tr_text = f"트: -{int(d_delta):,}원"
-                    except (ValueError, TypeError):
-                        tr_text = f"트: {d_delta}"
-
-                    try:
-                        stop_str = f"손: {int(t_stop):,}원" if float(t_stop) > 0 else "손: -"
-                    except (ValueError, TypeError):
-                        stop_str = f"손: {t_stop}"
-
-                strategy_cell_html = f"""
-                <span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:2px 5px; border-radius:5px; font-weight:bold; font-size:9.5px; display:inline-block; margin-bottom:2px;">{action_kw}</span><br>
-                <span style="font-size:9px; color:#1D4ED8; font-weight:bold;">{target_str}</span><br>
-                <span style="font-size:9px; color:#D97706;">{tr_text}</span><br>
-                <span style="font-size:9px; color:#DC2626;">{stop_str}</span>
-                """
+                strategy_cell_html = f'<span style="background:{badge_bg}; border:1px solid {badge_border}; color:{badge_color}; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">{action_kw}</span>'
 
                 if len(name) > 9 and " " in name:
                     parts = name.split(" ", 1)
@@ -297,63 +283,41 @@ class GmailNotifier:
                     name_formatted = name
 
                 adx_45m = h.get('adx_14_45m', 0.0)
-                atr_display_html = f"""
-                <span style="font-weight:bold; color:#334155;">{atr_display}</span><br>
-                <span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: {adx_45m:.1f}</span>
-                """
+                atr_display_html = f'<span style="font-weight:bold; color:#334155;">{atr_display}</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: {adx_45m:.1f}</span>'
 
                 held_rows_html += f"""
                 <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
-                    <td style="padding:6px 3px; text-align:center;">{rank_badge}</td>
+                    <td style="padding:6px 4px; background:#F8FAFC;">{strategy_cell_html}</td>
                     <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">{name_formatted}<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">({code})</span></td>
                     <td style="padding:6px 3px; text-align:center; background:#F5F3FF;">{score_combined_cell}</td>
-                    <td style="padding:6px 3px; font-weight:bold;">{cur_p:,}원<br><span style="font-size:9.5px; color:{chg_color};">({chg_sign}{daily_chg:.2f}%)</span></td>
-                    <td style="padding:6px 3px; color:#475569;">{atr_display_html}</td>
-                    <td style="padding:6px 3px; font-weight:bold; color:{pnl_color};">{pnl_sign}{pnl_pct:.2f}%<br><span style="font-size:9.5px; font-weight:normal;">({pnl_sign}{pnl_amt:,}원)</span></td>
-                    <td style="padding:6px 3px;">{strategy_cell_html}</td>
+                    <td style="padding:6px 3px; text-align:center;">{price_display_html}</td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;">{atr_display_html}</td>
+                    <td style="padding:6px 3px; font-weight:bold; color:{pnl_color}; text-align:center;">{pnl_sign}{pnl_pct:.2f}%<br><span style="font-size:9.5px; font-weight:normal;">({pnl_sign}{pnl_amt:,}원)</span></td>
                 </tr>
                 """
 
-            # 5단계 매매 대응전략 매트릭스 및 원자값 연동 요약 표 (맨 위에 배치)
             summary_matrix_rows_html = ""
             for rank_idx, h in enumerate(held_portfolio_sorted, start=1):
                 code = h.get('stock_code', '')
                 name = h.get('stock_name', '')
                 action_st = h.get('action_status', '보유')
                 
-                # 1. 일봉 OBV (데드발생일자)
                 obv_d_date = h.get('obv_dead_date', 'N/A')
                 obv_d_days = h.get('obv_dead_elapsed_days', 0)
-                if obv_d_date != "N/A" and "상승" not in obv_d_date and obv_d_days >= 1:
-                    obv_daily_html = f'<span style="color:#1D4ED8; font-weight:bold;">{obv_d_date} ({obv_d_days}일차)</span>'
-                else:
-                    obv_daily_html = '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
+                obv_daily_html = f'<span style="color:#1D4ED8; font-weight:bold;">{obv_d_date} ({obv_d_days}일차)</span>' if obv_d_date != "N/A" and "상승" not in obv_d_date and obv_d_days >= 1 else '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
 
-                # 2. 45m OBV (45분봉 OBV)
                 is_45m_obv_dead = h.get('is_obv_dead', False) or (h.get('obv_45m_trend', '') and '데드' in h.get('obv_45m_trend', ''))
-                if is_45m_obv_dead:
-                    obv_45m_html = '<span style="color:#1D4ED8; font-weight:bold;">45m 이탈</span>'
-                else:
-                    obv_45m_html = '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
+                obv_45m_html = '<span style="color:#1D4ED8; font-weight:bold;">45m 이탈</span>' if is_45m_obv_dead else '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
 
-                # 3. 일봉 Chaikin 최근 2봉 & 45m Chaikin 최근 2봉
-                daily_cho2 = h.get('daily_cho_recent2', [0, 0])
-                intra_cho2 = h.get('intraday_cho_recent2', [0, 0])
-                daily_cho_html = format_cho_array_html(daily_cho2)
-                intra_cho_html = format_cho_array_html(intra_cho2)
-
-                # 4. ADX +DI/-DI 우세방향
-                di_dom = h.get('adx_di_dominance', '-')
-                di_dom_html = format_adx_di_dominance_html(di_dom)
-
-                # 5. 대응전략
+                daily_cho_html = format_cho_array_html(h.get('daily_cho_recent2', [0, 0]))
+                intra_cho_html = format_cho_array_html(h.get('intraday_cho_recent2', [0, 0]))
+                di_dom_html = format_adx_di_dominance_html(h.get('adx_di_dominance', '-'))
                 colored_strategy_html = format_strategy_action_html(action_st)
 
                 summary_matrix_rows_html += f"""
                 <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
-                    <td style="padding:6px 4px; text-align:center; font-weight:bold; color:#0F172A;">{rank_idx}</td>
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;">{colored_strategy_html}</td>
                     <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">{name} <span style="font-size:9.5px; color:#64748B; font-weight:normal;">({code})</span></td>
-                    <td style="padding:6px 4px; background:#EFF6FF;">{colored_strategy_html}</td>
                     <td style="padding:6px 4px; text-align:center;">{obv_daily_html}</td>
                     <td style="padding:6px 4px; text-align:center;">{obv_45m_html}</td>
                     <td style="padding:6px 4px; text-align:center;">{daily_cho_html}</td>
@@ -363,87 +327,44 @@ class GmailNotifier:
                 """
 
             meaningful_cards_html = ""
-            if meaningful_items:
-                for sw in meaningful_items:
-                    s_name = sw.get('stock_name')
-                    s_code = sw.get('stock_code')
-                    s_chg = sw.get('daily_change_pct', 0.0)
-                    s_act = sw.get('action_status', '보유')
-                    s_mode = sw.get('trade_mode', 'NORMAL')
-                    
-                    s_p0 = sw.get('anchor_price_p0', sw.get('avg_buy_price', 0))
-                    s_a0 = sw.get('anchor_atr_a0', sw.get('atr_14', 0))
-                    s_at = sw.get('current_completed_atr', sw.get('atr_14', 0))
-                    
-                    s_ttarget = sw.get('kiwoom_target_tick_price', sw.get('target_profit_price', 0))
-                    s_tstop = sw.get('kiwoom_stop_tick_price', sw.get('confirmed_stop_price', 0))
-                    s_exit = sw.get('kiwoom_exit_tick_price', sw.get('effective_exit_line', s_tstop))
-                    s_trail_delta = sw.get('profit_trail_delta', int(s_at * 0.8))
-                    
-                    s_rec_qty = sw.get('recommended_quantity', 0)
-                    s_weight = sw.get('eval_weight_pct', 0.0)
-                    s_data_state = sw.get('data_hold_reason', '정상')
-                    s_ver = sw.get('parameter_version', 'V4-PILOT-C')
-
-                    s_color = "#10B981" if s_chg >= 0 else "#EF4444"
-                    s_sign = "+" if s_chg >= 0 else ""
-
-                    target_str = f"{s_ttarget:,}원" if str(s_ttarget) != "HOLD" and isinstance(s_ttarget, (int, float)) and s_ttarget > 0 else str(s_ttarget)
-                    stop_str = f"{s_tstop:,}원" if str(s_tstop) != "HOLD" and isinstance(s_tstop, (int, float)) and s_tstop > 0 else str(s_tstop)
-                    exit_str = f"{s_exit:,}원" if str(s_exit) != "HOLD" and isinstance(s_exit, (int, float)) and s_exit > 0 else str(s_exit)
-
-                    meaningful_cards_html += f"""
-                    <div style="background:#FFFFFF; border-left:5px solid {s_color}; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                            <strong style="font-size:13px; color:#0F172A;">{s_name} ({s_code}) / <span style="color:#2563EB;">{s_mode}</span> / <span style="color:#D97706;">{s_act}</span></strong>
-                            <span style="font-weight:bold; color:{s_color}; font-size:13px;">등락: {s_sign}{s_chg:.2f}%</span>
-                        </div>
-                        <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
-                            • <strong>목(익절 트레일링 활성가):</strong> <span style="color:#059669; font-weight:bold;">{target_str}</span><br>
-                            • <strong>트(활성 후 하락 실행폭):</strong> <span style="color:#D97706; font-weight:bold;">-{s_trail_delta:,}원</span><br>
-                            • <strong>손(현재 유효 손절가):</strong> <span style="color:#DC2626; font-weight:bold;">{stop_str}</span><br>
-                            • <strong>최종 매도선:</strong> <span style="color:#4F46E5; font-weight:bold;">{exit_str}</span><br>
-                            • <strong>권고수량 또는 비중:</strong> {s_rec_qty}주 (현재 비중: {s_weight}%)<br>
-                            • <strong>데이터 상태:</strong> {s_data_state}<br>
-                            • <strong>계산 기준:</strong> P0: {s_p0:,}원 / A0: {s_a0:,.0f}원 / At: {s_at:,.0f}원 ({s_ver})
-                        </div>
+            for sw in meaningful_items:
+                s_name, s_code = sw.get('stock_name'), sw.get('stock_code')
+                s_chg, s_act = sw.get('daily_change_pct', 0.0), sw.get('action_status', '보유')
+                s_mode = sw.get('trade_mode', 'NORMAL')
+                s_ttarget, s_tstop = sw.get('kiwoom_target_tick_price', 0), sw.get('confirmed_stop_price', 0)
+                s_at = sw.get('current_completed_atr', sw.get('atr_14', 0))
+                s_trail_delta = sw.get('profit_trail_delta', int(s_at * 0.8))
+                s_color = "#DC2626" if s_chg >= 0 else "#2563EB"
+                s_sign = "+" if s_chg >= 0 else ""
+                clean_act_display = format_strategy_action_html(s_act)
+                target_str = f"{s_ttarget:,}원" if isinstance(s_ttarget, (int, float)) and s_ttarget > 0 else str(s_ttarget)
+                stop_str = f"{s_tstop:,}원" if isinstance(s_tstop, (int, float)) and s_tstop > 0 else str(s_tstop)
+                
+                meaningful_cards_html += f"""
+                <div style="background:#FFFFFF; border-left:5px solid {s_color}; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <strong style="font-size:13px; color:#0F172A;">{s_name} ({s_code}) / <span style="color:#2563EB;">{s_mode}</span> / {clean_act_display}</strong>
+                        <span style="font-weight:bold; color:{s_color}; font-size:13px;">등락: {s_sign}{s_chg:.2f}%</span>
                     </div>
-                    """
+                    <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
+                        • <strong>목표/손절:</strong> <span style="color:#059669; font-weight:bold;">{target_str}</span> / <span style="color:#DC2626; font-weight:bold;">{stop_str}</span><br>
+                        • <strong>트레일링 폭:</strong> -{s_trail_delta:,}원
+                    </div>
+                </div>
+                """
 
-            swing_section_html = f"""
-            <div style="background:#FFFBEB; border:2px solid #F59E0B; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(245,158,11,0.08);">
-                <h3 style="margin-top:0; color:#B45309; font-size:15px; margin-bottom:8px;">
-                    ⚡ V4-PILOT-C 주요 종목 ATR 트레일링 대응 지침 (총 {len(meaningful_items)}종목)
-                </h3>
-                {meaningful_cards_html}
-            </div>
-            """ if meaningful_items else ""
-
-            sold_count = max(0, 15 - held_count)
-            sold_notice = f"(매도 완료된 {sold_count}개 종목 잔고 0주 확인 ➔ 분석 토큰 낭비 방지를 위해 100% 자동 정돈 완료)" if sold_count > 0 else "(전 종목 100% 실시간 보유 상태 확인)"
+            swing_section_html = f'<div style="background:#FFFBEB; border:2px solid #F59E0B; border-radius:10px; padding:14px; margin-bottom:20px;"><h3>⚡ V4-PILOT-C 주요 대응 지침</h3>{meaningful_cards_html}</div>' if meaningful_items else ""
 
             held_section_html = f"""
             {swing_section_html}
-            <div style="background:#EFF6FF; border:1px solid #93C5FD; color:#1D4ED8; border-radius:10px; padding:12px 14px; margin-bottom:16px; font-size:11.5px; line-height:1.45;">
-                📡 <strong>키움 REST API kt00018 실계좌 잔고 100% 실시간 연동 완료:</strong><br>
-                • 현재 주진우님의 키움 실계좌 보유 종목: <strong>총 {held_count}개 종목</strong> {sold_notice}
-            </div>
-
-            <!-- 🔥 [표 1 (상단)] 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표 -->
             <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
-                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">
-                    ⏱️ 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표
-                </h3>
-                <div style="font-size:11px; color:#64748B; margin-bottom:10px;">
-                    ※ 1순위(DART미확정 보류) ➔ 2순위(20% 비중과다 추매금지) ➔ 3순위(일봉 매도A&B) ➔ 4순위(45m 분할매수) ➔ 5순위(보유/홀딩)
-                </div>
-                <div class="table-responsive">
+                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">⏱️ 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표</h3>
+                <div style="font-size:11px; color:#64748B; margin-bottom:10px;">※ 매도대응 및 위험관리 종목 우선 배치 ➔ 종합점수 오름차순(낮은 순) 정렬</div>
                 <table style="width:100%; border-collapse:collapse; font-size:11px;">
                     <thead>
                         <tr style="background:#F1F5F9; color:#334155; text-align:left; border-bottom:2px solid #CBD5E1;">
-                            <th style="padding:6px 4px; text-align:center;">순위</th>
+                            <th style="padding:6px 6px; background:#EFF6FF; color:#1E40AF; text-align:center;">대응 전략</th>
                             <th style="padding:6px 4px;">종목명 (코드)</th>
-                            <th style="padding:6px 4px; background:#EFF6FF; color:#1E40AF;">최종 대응전략</th>
                             <th style="padding:6px 4px; text-align:center;">OBV (데드발생일자)</th>
                             <th style="padding:6px 4px; text-align:center;">45m OBV</th>
                             <th style="padding:6px 4px; text-align:center;">일봉 Chaikin 최근2봉</th>
@@ -451,19 +372,15 @@ class GmailNotifier:
                             <th style="padding:6px 4px;">ADX +DI/-DI 우세방향</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {summary_matrix_rows_html}
-                    </tbody>
+                    <tbody>{summary_matrix_rows_html}</tbody>
                 </table>
-                </div>
             </div>
 
-            <!-- 🔥 [표 2 (하단)] 내 계좌 보유 종목 정밀 평가 (10종목) 매트릭스 표 -->
             <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:2px solid #E2E8F0; padding-bottom:8px;">
                     <div>
                         <h2 style="margin:0; font-size:15px; color:#0F172A;">💼 내 계좌 보유 종목 정밀 평가 ({held_count}종목)</h2>
-                        <div style="font-size:11px; color:#64748B; margin-top:2px;">※ 계좌비중 20% 초과 종목 추매금지 및 14일 ATR 기반 트레일링 가격 산출 연동</div>
+                        <div style="font-size:11px; color:#64748B; margin-top:2px;">※ 매도대응 우선 정렬 / 계좌비중 20% 초과 종목 추매금지 및 14일 ATR 기반 트레일링 가격 산출 연동</div>
                     </div>
                     <div style="font-size:13px; font-weight:bold; color:{pnl_color_total}; text-align:right;">
                         총 평가손익: {pnl_sign_total}{total_pnl_pct:.2f}%<br><span style="font-size:11px;">({pnl_sign_total}{total_pnl_amt:,}원)</span>
@@ -473,13 +390,12 @@ class GmailNotifier:
                 <table style="width:100%; border-collapse:collapse;">
                     <thead>
                         <tr style="background:#F8FAFC; font-size:11px; color:#64748B; text-align:left; border-bottom:1px solid #E2E8F0;">
-                            <th style="padding:6px 3px; text-align:center;">순위</th>
-                            <th style="padding:6px 3px;">종목명</th>
-                            <th style="padding:6px 3px; background:#EDE9FE; color:#5B21B6; text-align:center;">종합점수<br><span style="font-size:9px; font-weight:normal; color:#64748B;">(F / T점수)</span></th>
-                            <th style="padding:6px 3px;">현재가(등락률)</th>
-                            <th style="padding:6px 3px; color:#D97706;">14일 ATR</th>
-                            <th style="padding:6px 3px;">평가손익(률)</th>
-                            <th style="padding:6px 3px;">대응 전략</th>
+                            <th style="padding:6px 6px; background:#F0FDF4; color:#166534; text-align:center;">대응 전략</th>
+                            <th style="padding:6px 4px;">종목명 (코드)</th>
+                            <th style="padding:6px 4px; background:#EDE9FE; color:#5B21B6; text-align:center;">종합점수<br><span style="font-size:9px; font-weight:normal; color:#64748B;">(F / T점수)</span></th>
+                            <th style="padding:6px 4px; text-align:center;">현재가(등락률)</th>
+                            <th style="padding:6px 4px; color:#D97706; text-align:center;">14일 ATR</th>
+                            <th style="padding:6px 4px; text-align:center;">평가손익(률)</th>
                         </tr>
                     </thead>
                     <tbody>

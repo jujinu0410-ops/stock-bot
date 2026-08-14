@@ -552,12 +552,12 @@ class PortfolioManager:
             if trade_mode == "HOLD" or not f_confirmed or completeness < 90.0:
                 item["action_status"] = f"⚠️ {item['data_hold_reason']} (보류)"
             elif trade_mode == "EMERGENCY":
-                item["action_status"] = f"🚨 EMERGENCY (반등 시 긴급 비중축소 / 사용자 설정가 우선)"
+                item["action_status"] = "🚨 반등 시 긴급 비중축소"
             elif trade_mode == "RECOVERY":
-                item["action_status"] = f"🔄 RECOVERY (반등 시 손실축소 분할매도)"
+                item["action_status"] = "🔄 반등 시 손실축소 분할매도"
             elif weight_pct > self.config["max_position_weight_pct"]:
                 if is_tier3_sell:
-                    item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + 🚨 매도조건 충족{adx_note}{intraday_cho_note} (추매금지/보유)"
+                    item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + 🚨 매도조건 충족 (추매금지/보유)"
                 elif is_45m_breakdown:
                     item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + 🚨 45m 이중수급이탈 (추매금지/보유)"
                 elif is_cho_outflow:
@@ -565,10 +565,10 @@ class PortfolioManager:
                 else:
                     item["action_status"] = f"⚠️ 비중과다({weight_pct}%) 집중위험 (추매금지/보유)"
             elif is_tier3_sell:
-                item["action_status"] = f"🚨 매도{adx_note}{intraday_cho_note} ({rank})"
+                item["action_status"] = f"🚨 매도 대응{adx_note}{intraday_cho_note}"
             elif is_45m_bearish_2plus and item["t_score"] >= 50.0:
-                item["action_status"] = f"🎯 분할매수 ({rank} / 45m 단기조정 감지)"
+                item["action_status"] = "🎯 45m 눌림목 분할매수"
             else:
-                item["action_status"] = f"🟢 {rank} (계속 보유/홀딩)"
+                item["action_status"] = "🟢 계속 보유/홀딩"
 
         return eval_list
