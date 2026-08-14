@@ -2,7 +2,7 @@ import requests
 import zipfile
 import io
 import xml.etree.ElementTree as ET
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from config.settings import DART_API_KEY
 from src.utils.logger import logger
 
@@ -393,3 +393,91 @@ class DartAPIClient:
             "per": 0.0, "pbr": 0.8,
             "audit_opinion": "적정", "disclosure_risk_flag": False
         }
+
+    def get_recent_disclosures_briefing(self, stock_list: List[Dict[str, Any]], target_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        보유 종목(stock_list)에 대하여 당일(또는 지정일) 발생한 주요 DART 공시를 수집하고,
+        공시 요약, 시장 의미 및 투자 대응 가이드(1~3줄) 브리핑 데이터를 생성합니다.
+        """
+        if not self.is_valid_key() or not stock_list:
+            return []
+
+        if not target_date:
+            from datetime import datetime
+            target_date = datetime.now().strftime("%Y%m%d")
+
+        disclosures = []
+        logger.info(f"[DART API] {len(stock_list)}개 보유 종목의 {target_date} DART 신규 공시 검색 시작...")
+
+        for stock in stock_list:
+            code = str(stock.get("stock_code", "")).zfill(6)
+            name = str(stock.get("stock_name", code))
+            corp_code = self.get_corp_code(code)
+
+            url = f"{self.BASE_URL}/list.json"
+            params = {
+                "crtfc_key": self.api_key,
+                "corp_code": corp_code,
+                "bgn_de": target_date,
+                "end_de": target_date,
+                "page_count": 10
+            }
+            try:
+                res = requests.get(url, params=params, timeout=5)
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get("status") == "000" and data.get("list"):
+                        for item in data["list"]:
+                            r_nm = str(item.get("report_nm", "")).strip()
+                            r_no = item.get("rcept_no", "")
+                            r_dt = item.get("rcept_dt", target_date)
+                            
+                            # 일상적/사소한 행정 보고 필터링
+                            if any(ign in r_nm for ign in ["지급수단별", "임원ㆍ주요주주", "약식"]):
+                                continue
+                            
+                            briefing = self._generate_disclosure_briefing(name, code, r_nm, r_no, r_dt)
+                            disclosures.append(briefing)
+            except Exception as e:
+                logger.warning(f"[DART API] {name}({code}) 공시 검색 중 오류: {e}")
+
+        logger.info(f"[DART API] {target_date} 보유 종목 주요 DART 공시 {len(disclosures)}건 추출 완료")
+        return disclosures
+
+    def _generate_disclosure_briefing(self, name: str, code: str, report_nm: str, rcept_no: str, rcept_dt: str) -> Dict[str, Any]:
+        """개별 공시 항목에 대한 맞춤형 1~3줄 브리핑 요약 생성"""
+        link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
+
+        if any(k in report_nm for k in ["반기보고서", "분기보고서", "사업보고서"]):
+            summary = "2026년 상반기(반기) 확정 재무제표 및 사업보고서가 DART에 공식 접수되었습니다."
+            impact = "미확정 상태였던 2분기 실적이 확정 수치로 동기화되어 DART F-Score 점수에 정식 반영됩니다."
+            guide = "실적 불확실성이 해소되었으며, 확정 실적 호전 여부에 따라 펀더멘털 점수가 조정됩니다."
+        elif any(k in report_nm for k in ["단일판매", "공급계약"]):
+            summary = "신규 단일판매 및 대규모 공급계약 체결 공시가 접수되었습니다."
+            impact = "수주잔고 증가 및 향후 매출 인식 가시성이 높아지는 긍정적 펀더멘털 모멘텀입니다."
+            guide = "계약 금액의 최근 매출액 대비 비중을 확인하고 단기 수급 유입에 유의합니다."
+        elif any(k in report_nm for k in ["유상증자", "무상증자", "전환사채", "신주인수권부사채"]):
+            summary = "자금 조달 및 신주 발행 관련 주요사항보고서가 공시되었습니다."
+            impact = "신주 발행에 따른 주주가치 희석 가능성 또는 신규 설비투자 자금 확보 효과가 공존합니다."
+            guide = "신주 발행가액, 증자 방식(제3자 배정 vs 일반공모) 및 권리락/상장 일정을 필수 점검합니다."
+        elif "계열회사와의상품" in report_nm:
+            summary = "동일인 등 출자계열회사와의 상품·용역 거래내역 변경 공시입니다."
+            impact = "그룹사 내부거래 규모 조정으로 기업 펀더멘털에 미치는 즉각적인 영향은 제한적입니다."
+            guide = "통상적인 영업 거래 공시이므로 기존 보유 및 매매 전략을 유지합니다."
+        else:
+            summary = f"주요 경영 사항 및 공시({report_nm})가 접수되었습니다."
+            impact = "공시 세부 조항 및 첨부 내용을 통한 추가 확인이 권장됩니다."
+            guide = "직접 링크를 통해 세부 계약/결정 사항을 확인하시기 바랍니다."
+
+        return {
+            "stock_name": name,
+            "stock_code": code,
+            "report_nm": report_nm,
+            "rcept_no": rcept_no,
+            "rcept_dt": rcept_dt,
+            "link": link,
+            "summary": summary,
+            "impact": impact,
+            "guide": guide
+        }
+

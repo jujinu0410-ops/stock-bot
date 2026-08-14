@@ -196,12 +196,20 @@ def run_post_market_analysis(
 
         subject = f"[{dispatch_tag}] {now_dt.month}월 {now_dt.day}일 내 계좌 보유 종목 정밀 평가 & 관심 종목 리포트"
         
+        # 6. 🔥 보유 종목 당일 DART 주요 신규 공시 및 1~3줄 브리핑 수집
+        disclosures = []
+        try:
+            disclosures = dart_client.get_recent_disclosures_briefing(held_status, target_date=date_str)
+        except Exception as e_disc:
+            logger.warning(f"DART 공시 브리핑 수집 중 오류: {e_disc}")
+
         html_report = notifier.generate_html_report(
             date_str=date_str,
             total_count=len(all_results),
             caught_signals=caught_signals,
             all_results=all_results,
-            held_portfolio=held_status
+            held_portfolio=held_status,
+            disclosures=disclosures
         )
         
         # 🔥 중복 발송 방지 검사 (동일 날짜/회차 메일 이미 발송 시 중복 발송 건너뛰기)

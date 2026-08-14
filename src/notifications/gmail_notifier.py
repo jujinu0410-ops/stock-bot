@@ -2,7 +2,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import re
 from config.settings import GMAIL_USER, GMAIL_APP_PASSWORD
 from src.utils.logger import logger
@@ -110,13 +110,59 @@ class GmailNotifier:
             logger.error(f"[Gmail] 이메일 발송 최종 예외 발생: {e}", exc_info=True)
             return False
 
-    def generate_html_report(self, date_str: str, total_count: int, caught_signals: List[Dict[str, Any]], all_results: List[Dict[str, Any]], held_portfolio: List[Dict[str, Any]] = None) -> str:
+    def generate_html_report(
+        self,
+        date_str: str,
+        total_count: int,
+        caught_signals: List[Dict[str, Any]],
+        all_results: List[Dict[str, Any]],
+        held_portfolio: List[Dict[str, Any]] = None,
+        disclosures: Optional[List[Dict[str, Any]]] = None
+    ) -> str:
         """
-        보유 종목 중심 정밀 평가 리포트 HTML 생성 (요청대로 딱 2개의 매트릭스 표만 순서 맞춰 출력)
+        보유 종목 중심 정밀 평가 리포트 HTML 생성 (요청대로 딱 2개의 매트릭스 표만 순서 맞춰 출력 + DART 공시 브리핑 글 박스)
         """
         held_count = len(held_portfolio) if held_portfolio else 0
         profit_count = 0
         loss_count = 0
+
+        # --- 0. 🔥 보유 종목 신규 DART 주요 공시 브리핑 글 박스 생성 ---
+        disclosure_box_html = ""
+        if disclosures and len(disclosures) > 0:
+            items_html = ""
+            for d in disclosures:
+                s_name = d.get('stock_name', '')
+                s_code = d.get('stock_code', '')
+                r_name = d.get('report_nm', '')
+                d_link = d.get('link', '#')
+                d_sum = d.get('summary', '')
+                d_imp = d.get('impact', '')
+                d_guide = d.get('guide', '')
+                
+                items_html += f"""
+                <div style="margin-bottom:10px; padding:10px 12px; background:#FFFFFF; border:1px solid #E2E8F0; border-radius:6px;">
+                    <div style="font-weight:bold; font-size:12.5px; color:#0F172A; margin-bottom:4px;">
+                        📌 <span style="color:#1E3A8A;">{s_name}({s_code})</span> - <a href="{d_link}" target="_blank" style="color:#2563EB; text-decoration:underline;">{r_name}</a>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; line-height:1.5;">
+                        • <b>공시 요약</b>: {d_sum}<br>
+                        • <b>시장 의미</b>: {d_imp}<br>
+                        • <b>대응 가이드</b>: {d_guide}
+                    </div>
+                </div>
+                """
+
+            disclosure_box_html = f"""
+            <div style="background:#F8FAFC; border:1px solid #94A3B8; border-left:4px solid #2563EB; border-radius:8px; padding:14px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid #CBD5E1; padding-bottom:6px;">
+                    <h3 style="margin:0; font-size:14px; color:#1E3A8A; font-weight:bold;">
+                        📢 보유 종목 최신 DART 주요 공시 & 브리핑 (총 {len(disclosures)}건)
+                    </h3>
+                    <span style="font-size:10.5px; color:#64748B;">클릭 시 전자공시 원문 이동</span>
+                </div>
+                {items_html}
+            </div>
+            """
 
         # --- 1. 내 보유 종목 섹션 HTML ---
         held_section_html = ""
@@ -421,9 +467,12 @@ class GmailNotifier:
                 </table>
                 </div>
             </div>
+
+            <!-- 🔥 [글 박스] 보유 종목 최신 DART 주요 공시 & 브리핑 -->
+            {disclosure_box_html}
             """
         else:
-            held_section_html = """
+            held_section_html = f"""
             <div style="background:#FEF2F2; border:2px solid #EF4444; border-radius:12px; padding:18px; margin-bottom:24px; box-shadow:0 4px 12px rgba(239,68,68,0.1);">
                 <div style="display:flex; align-items:center; margin-bottom:8px;">
                     <span style="font-size:22px; margin-right:10px;">⚠️</span>
@@ -432,6 +481,7 @@ class GmailNotifier:
                     </h3>
                 </div>
             </div>
+            {disclosure_box_html}
             """
 
         html_template = f"""
