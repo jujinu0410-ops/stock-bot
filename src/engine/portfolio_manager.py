@@ -291,11 +291,18 @@ class PortfolioManager:
                 profit_act_mul = self.config["profit_activation_multiple"] # 3.0
                 trail_mul = self.config["normal_profit_trail_multiple"] # 0.8
 
-            raw_buy_watch = p0 - (buy_watch_mul * a0) if buy_watch_mul > 0 else 0.0
+            raw_buy_watch = max(0.0, p0 - (buy_watch_mul * a0)) if buy_watch_mul > 0 else 0.0
             rebound_delta = int(round(a0 * buy_rebound_mul)) if buy_rebound_mul > 0 else 0
-            raw_initial_stop = p0 - (init_stop_mul * a0)
+            raw_initial_stop = max(0.0, p0 - (init_stop_mul * a0))
             raw_profit_activation = p0 + (profit_act_mul * a0)
             effective_profit_activation = raw_profit_activation
+
+            if trade_mode in ("HOLD", "USER_OVERRIDE") or data_validity_flag == 0:
+                raw_buy_watch = 0.0
+                rebound_delta = 0
+                raw_initial_stop = 0.0
+                raw_profit_activation = 0.0
+                effective_profit_activation = 0.0
 
             # 7. 🔥 2단계 손절 래칫 (InitialStop -> +1.0ATR 후 1.5ATR 트레일링)
             prev_highest_close = float(p_row.get("highest_close") or p_row.get("highest_close_price") or 0.0)

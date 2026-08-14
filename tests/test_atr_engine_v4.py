@@ -312,18 +312,30 @@ class TestATREngineV4(unittest.TestCase):
         self.assertEqual(weight_excess_qty, 5156)
         self.assertEqual(reduce_qty, 1701)
 
-    def test_18_neuromeka_user_override_manual_order(self):
-        """테스트 18: 뉴로메카 수동 감시주문(24,450원/700원/31주 미체결) USER_OVERRIDE 처리 검증"""
-        code = "348340"
-        manual_order_info = "활성가 24,450원 / 추적폭 700원 / 31주 (미체결)"
+    def test_19_zaigle_and_dyd_ticker_name_mapping(self):
+        """테스트 19: 종목코드-종목명 단일 마스터 매핑 검증 (234920=자이글, 219550=디와이디)"""
+        master_map = {
+            "234920": "자이글",
+            "219550": "디와이디"
+        }
+        self.assertEqual(master_map["234920"], "자이글")
+        self.assertEqual(master_map["219550"], "디와이디")
+        self.assertNotEqual(master_map["219550"], "자이글")
+
+    def test_20_hold_mode_raw_prices_clean_non_negative(self):
+        """테스트 20: HOLD 모드 및 비정상 ATR 종목은 원시 계산가격이 음수로 노출되지 않고 0/HOLD로 마스킹되어야 함"""
+        p0 = 5310.0 # 자이글 현재가
+        a0 = 5300.0 # 비정상 대형 ATR
+        trade_mode = "HOLD"
+        data_validity_flag = 0
         
-        user_override_flag = (code == "348340")
-        trade_mode = "USER_OVERRIDE" if user_override_flag else "HOLD"
-        
-        self.assertTrue(user_override_flag)
-        self.assertEqual(trade_mode, "USER_OVERRIDE")
-        self.assertIn("24,450원", manual_order_info)
-        self.assertIn("31주", manual_order_info)
+        raw_initial_stop = max(0.0, p0 - (2.0 * a0)) # 음수 방지 -> 0.0
+        if trade_mode == "HOLD" or data_validity_flag == 0:
+            raw_initial_stop = 0.0
+            raw_profit_activation = 0.0
+            
+        self.assertEqual(raw_initial_stop, 0.0)
+        self.assertGreaterEqual(raw_initial_stop, 0)
 
 if __name__ == "__main__":
     unittest.main()

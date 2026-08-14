@@ -79,6 +79,11 @@ def create_analysis_excel_report(date_str: str,
             target_tick_val = h.get("kiwoom_target_tick_price", 0)
             buy_tick_val = h.get("kiwoom_buy_tick_price", 0)
             exit_tick_val = h.get("kiwoom_exit_tick_price", conf_stop_val)
+            raw_init_stop = h.get("initial_stop_price", 0)
+            disp_init_stop = "HOLD" if (data_val_flag == 0 or trade_mode == "HOLD" or raw_init_stop <= 0) else raw_init_stop
+            raw_act_raw = h.get("profit_activation_raw", 0)
+            disp_act_raw = "HOLD" if (data_val_flag == 0 or trade_mode == "HOLD" or raw_act_raw <= 0) else raw_act_raw
+            disp_trail_delta = 0 if (data_val_flag == 0 or trade_mode == "HOLD") else h.get("profit_trail_delta", 0)
 
         held_data.append({
             "순위": h.get("rank", "순위제외"),
@@ -114,18 +119,19 @@ def create_analysis_excel_report(date_str: str,
             "추매 감시가격(원)": buy_tick_val,
             "반등 확인폭(원)": h.get("buy_rebound_delta", 0),
             "추매 주문상태": buy_status,
-            "초기 손절가(원)": h.get("initial_stop_price", 0),
+            "초기 손절가(원)": disp_init_stop,
             "현재 래칫 손절가(원)": h.get("ratchet_stop_price", conf_stop_val),
             "전일확정 손절가(원)": h.get("prev_confirmed_stop", 0),
             "금일확정 손절가(원)": conf_stop_val,
             "손절선 갱신상태": h.get("stop_update_status", "유지"),
-            "익절 트레일링 원시 활성가(원)": h.get("profit_activation_raw", 0),
+            "익절 트레일링 원시 활성가(원)": disp_act_raw,
             "최종 익절 트레일링 활성가(원)": target_tick_val,
             "익절 활성 여부": h.get("profit_activation_status", "INACTIVE"),
-            "익절 트레일링폭(원)": h.get("profit_trail_delta", 0),
+            "익절 트레일링폭(원)": disp_trail_delta,
             "현재 익절 트레일링선(원)": h.get("profit_trail_price", 0),
             "최종 유효 매도선(원)": exit_tick_val,
             "슬리피지 버퍼(원)": h.get("slippage_buffer", 0),
+            "계좌 위험예산(원)": h.get("risk_budget_amount", 0),
             "위험기준 목표보유수량": h.get("risk_target_qty", h.get("risk_based_qty", 0)),
             "현재 보유수량": h.get("quantity"),
             "위험 초과수량": h.get("excess_qty", 0),

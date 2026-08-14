@@ -22,11 +22,37 @@ from src.notifications.gmail_notifier import GmailNotifier
 from src.utils.excel_exporter import create_analysis_excel_report
 from src.utils.logger import logger
 
+MASTER_STOCK_MAP = {
+    "000490": "대동", "004960": "한신공영", "047770": "코데즈컴바인", "055490": "테이팩스",
+    "140670": "알에스오토메이션", "161510": "PLUS 고배당주", "206650": "유바이오로직스",
+    "234920": "자이글", "219550": "디와이디", "241520": "DSC인베스트먼트", "267260": "HD현대일렉트릭",
+    "348340": "뉴로메카", "490590": "RISE 미국AI밸류체인데일리고정커버드콜",
+    "010120": "LS일렉트릭", "010140": "삼성중공업", "207940": "삼성바이오로직스",
+    "034020": "두산에너빌리티", "015540": "하이록코리아", "005930": "삼성전자",
+    "000660": "SK하이닉스", "035420": "NAVER", "035720": "카카오",
+    "011700": "한신기계", "047050": "포스코인터내셔널", "214450": "파마리서치"
+}
+
+def sync_master_stock_info(db: DatabaseManager):
+    """
+    모든 테이블(stock_info 등)의
+    종목코드-종목명 단일 마스터 동기화 및 219550(디와이디)/234920(자이글) 불일치 강제 교정
+    """
+    for code_k, name_v in MASTER_STOCK_MAP.items():
+        db.execute_non_query(
+            "UPDATE stock_info SET stock_name = ? WHERE stock_code = ?",
+            (name_v, code_k)
+        )
+    # 구버전/오류 코드 정리
+    db.execute_non_query("DELETE FROM stock_info WHERE stock_code IN ('088500', '484730')")
+    db.execute_non_query("DELETE FROM portfolio_positions WHERE stock_code IN ('088500', '484730')")
+
 def update_market_data_stub(db: DatabaseManager, dart_client: DartAPIClient, watchlist_mgr: WatchlistManager):
     """
     [데이터 수집 레이어] 실제 등록된 모든 보유 종목 및 관심 종목에 대하여
     네이버 금융 실시간 시세 API 및 DART 실시간 재무제표 100% 연동
     """
+    sync_master_stock_info(db)
     logger.info("실제 한국주식 시장 실시간 시세 및 DART 재무 데이터 수집 진행 중...")
     
     real_market_client = RealMarketAPIClient()
@@ -71,6 +97,7 @@ def run_post_market_analysis(
 
     # 1. 초기화
     db = DatabaseManager()
+    sync_master_stock_info(db)
     kiwoom_client = KiwoomAPIClient()
     dart_client = DartAPIClient()
     engine = TradingEngine(db)
@@ -124,23 +151,7 @@ def run_post_market_analysis(
     caught_signals = []
     all_results = []
     try:
-        STOCK_NAME_MAP = {
-            "000490": "대동", "004960": "한신공영", "047770": "코데즈컴바인", "055490": "테이팩스",
-            "140670": "알에스오토메이션", "161510": "PLUS 고배당주", "206650": "유바이오로직스",
-            "234920": "자이글", "241520": "DSC인베스트먼트", "267260": "HD현대일렉트릭",
-            "348340": "뉴로메카", "490590": "RISE 미국AI밸류체인데일리고정커버드콜",
-            "010120": "LS일렉트릭", "010140": "삼성중공업", "207940": "삼성바이오로직스",
-            "034020": "두산에너빌리티", "015540": "하이록코리아", "005930": "삼성전자",
-            "000660": "SK하이닉스", "035420": "NAVER", "035720": "카카오"
-        }
-
-        # DB stock_info 테이블 내 010120 등 종목명 누락 건 100% 보정
-        for code_k, name_v in STOCK_NAME_MAP.items():
-            db.execute_non_query(
-                "UPDATE stock_info SET stock_name = ? WHERE stock_code = ? AND (stock_name = ? OR stock_name IS NULL OR stock_name = '')",
-                (name_v, code_k, code_k)
-            )
-
+        sync_master_stock_info(db)
         stock_rows = db.execute_query("SELECT stock_code, stock_name FROM stock_info")
         total_count = len(stock_rows) if stock_rows else 0
 
@@ -157,7 +168,7 @@ def run_post_market_analysis(
         for idx, row in enumerate(stock_rows, start=1):
             code = str(row['stock_code']).strip().zfill(6)
             raw_name = str(row['stock_name']).strip()
-            name = STOCK_NAME_MAP.get(code, raw_name if raw_name != code else code)
+            name = MASTER_STOCK_MAP.get(code, raw_name if raw_name != code else code)
 
             try:
                 result = engine.analyze_stock(code)
