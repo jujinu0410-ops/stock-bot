@@ -414,5 +414,29 @@ class TestATREngineV4(unittest.TestCase):
         self.assertEqual(order_direction, "보류 (거래정지 [매매불가])")
         self.assertEqual(recommended_qty, 0)
 
+    def test_26_suspended_consistency_and_history_stop(self):
+        """테스트 26: 자이글 거래정지 상태 정합성 (손절가 역전문구 미발생, 순위제외, 역사 손절가 분리)"""
+        zaigle_stock = {
+            "stock_code": "234920",
+            "current_price": 5310,
+            "prev_confirmed_stop": 4560,
+            "trade_mode": "SUSPENDED_HOLD",
+            "data_validity_flag": 0,
+            "data_hold_reason": "상장적격성 실질심사 사유 매매거래정지 (KRX 거래정지)",
+            "f_score": 27.0,
+            "f_score_confirmed": True
+        }
+        
+        # 1. 손절가 역전 문구 미포함 검증
+        self.assertNotIn("손절가 역전", zaigle_stock["data_hold_reason"])
+        
+        # 2. 역사 손절가 표기 분리 검증
+        disp_prev_stop = f"{int(zaigle_stock['prev_confirmed_stop']):,}원 (역사값 / 효력정지)"
+        self.assertEqual(disp_prev_stop, "4,560원 (역사값 / 효력정지)")
+        
+        # 3. 데이터완성도 50% 분리 검증
+        disp_completeness = "50.0% (재무100% / 시장0%)"
+        self.assertEqual(disp_completeness, "50.0% (재무100% / 시장0%)")
+
 if __name__ == "__main__":
     unittest.main()

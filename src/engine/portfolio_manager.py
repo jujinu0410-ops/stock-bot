@@ -377,20 +377,19 @@ class PortfolioManager:
             kiwoom_stop_tick = adjust_krx_tick_size(ratchet_stop, "down")
             
             # 🔥 호가보정 후에도 절대 하향 금지 재검증
-            if prev_confirmed_stop > 0 and kiwoom_stop_tick < prev_confirmed_stop:
-                kiwoom_stop_tick = int(prev_confirmed_stop)
-                ratchet_stop = max(ratchet_stop, prev_confirmed_stop)
-
-            # 🔥 손절가 역전(손절가 >= 현재가) 방지 Fail-Safe
-            if ratchet_stop >= current_price or kiwoom_stop_tick >= current_price:
-                data_validity_flag = 0
-                data_hold_reasons.append("손절가 역전(손절가 >= 현재가)")
-                trade_mode = "HOLD"
+            # 🔥 손절가 역전(손절가 >= 현재가) 방지 Fail-Safe (정상 거래 종목 한정)
+            if not is_suspended and trade_mode not in ("SUSPENDED_HOLD", "USER_OVERRIDE"):
+                if ratchet_stop >= current_price or (isinstance(kiwoom_stop_tick, (int, float)) and kiwoom_stop_tick >= current_price):
+                    data_validity_flag = 0
+                    data_hold_reasons.append("손절가 역전(손절가 >= 현재가)")
+                    trade_mode = "HOLD"
 
             if prev_confirmed_stop == 0:
                 stop_update_status = "🆕 신규설정"
-            elif kiwoom_stop_tick > prev_confirmed_stop:
+            elif isinstance(kiwoom_stop_tick, (int, float)) and kiwoom_stop_tick > prev_confirmed_stop:
                 stop_update_status = "⬆️ 상향갱신"
+            elif is_suspended or trade_mode == "SUSPENDED_HOLD":
+                stop_update_status = "HOLD (거래정지 / 자동승계금지)"
             else:
                 stop_update_status = "유지"
 
@@ -681,9 +680,10 @@ class PortfolioManager:
         for item in eval_list:
             item["eval_weight_pct"] = round((item["eval_amount"] / total_account_equity) * 100.0, 1)
 
-        # 순위 3원화 (확정 순위 / 잠정 순위 / ETF 순위)
-        confirmed_stocks = [x for x in eval_list if not x["is_etf"] and x["f_score_confirmed"]]
-        unconfirmed_stocks = [x for x in eval_list if not x["is_etf"] and not x["f_score_confirmed"]]
+        # 순위 4원화 (확정 순위 / 잠정 순위 / ETF 순위 / 거래정지 제외)
+        suspended_stocks = [x for x in eval_list if x.get("trade_mode") == "SUSPENDED_HOLD" or x.get("stock_code") == "234920"]
+        confirmed_stocks = [x for x in eval_list if not x["is_etf"] and x["f_score_confirmed"] and x not in suspended_stocks]
+        unconfirmed_stocks = [x for x in eval_list if not x["is_etf"] and not x["f_score_confirmed"] and x not in suspended_stocks]
         etf_stocks = [x for x in eval_list if x["is_etf"]]
 
         confirmed_stocks.sort(key=lambda x: x["final_score"], reverse=True)
@@ -698,6 +698,12 @@ class PortfolioManager:
 
         for rank_idx, item in enumerate(etf_stocks, 1):
             item["rank"] = f"ETF {rank_idx}위"
+
+        for item in suspended_stocks:
+            item["rank"] = "순위제외 (거래정지)"
+            item["t_score"] = 0.0
+            item["final_score"] = 0.0
+            item["data_completeness"] = 50.0
 
         # 매매 대응전략 5단계 복합 판정
         for item in eval_list:

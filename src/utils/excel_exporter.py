@@ -82,7 +82,11 @@ def create_analysis_excel_report(date_str: str,
             disp_excess_qty = 0
             disp_weight_excess_qty = 0
             disp_slippage_buffer = 0
-            disp_stop_update = "HOLD"
+            disp_stop_update = "HOLD (거래정지 / 자동승계금지)"
+            disp_t_sc = "N/A (거래정지)"
+            disp_final_sc = "N/A (거래정지)"
+            disp_prev_stop = f"{int(h.get('prev_confirmed_stop', 4560)):,}원 (역사값 / 효력정지)" if h.get('prev_confirmed_stop', 0) > 0 else "0"
+            disp_completeness = "50.0% (재무100% / 시장0%)"
         elif code == "348340" or trade_mode == "USER_OVERRIDE":
             auto_order_ok = "금지 (DART 재무 미확정)"
             stop_mon_status = "HOLD (수동감시)"
@@ -107,6 +111,10 @@ def create_analysis_excel_report(date_str: str,
             disp_weight_excess_qty = 0
             disp_slippage_buffer = 0
             disp_stop_update = "HOLD"
+            disp_t_sc = t_sc
+            disp_final_sc = final_display
+            disp_prev_stop = h.get("prev_confirmed_stop", 0)
+            disp_completeness = h.get("data_completeness", 100.0)
         elif data_val_flag == 0 or trade_mode == "HOLD" or not f_confirmed:
             auto_order_ok = f"금지 ({data_hold_reason})"
             stop_mon_status = f"HOLD ({data_hold_reason})"
@@ -131,6 +139,10 @@ def create_analysis_excel_report(date_str: str,
             disp_weight_excess_qty = 0
             disp_slippage_buffer = 0
             disp_stop_update = "HOLD"
+            disp_t_sc = t_sc
+            disp_final_sc = final_display
+            disp_prev_stop = h.get("prev_confirmed_stop", 0)
+            disp_completeness = h.get("data_completeness", 100.0)
         else:
             auto_order_ok = "가능 (알림참고)"
             stop_mon_status = "ON (상시감시)"
@@ -155,6 +167,10 @@ def create_analysis_excel_report(date_str: str,
             disp_weight_excess_qty = h.get("weight_excess_qty", 0)
             disp_slippage_buffer = h.get("slippage_buffer", 0)
             disp_stop_update = h.get("stop_update_status", "유지")
+            disp_t_sc = t_sc
+            disp_final_sc = final_display
+            disp_prev_stop = h.get("prev_confirmed_stop", 0)
+            disp_completeness = h.get("data_completeness", 100.0)
 
         held_data.append({
             "순위": h.get("rank", "순위제외"),
@@ -176,8 +192,8 @@ def create_analysis_excel_report(date_str: str,
             "모멘텀(20)": h.get("cat_pts", 0.0) if not is_etf else "-",
             "재무안정(20)": h.get("stab_pts", 0.0) if not is_etf else "-",
             "밸류경영(15)": h.get("val_pts", 0.0) if not is_etf else "-",
-            "기술 T점수 (100점 만점)": t_sc,
-            "종합점수": final_display,
+            "기술 T점수 (100점 만점)": disp_t_sc,
+            "종합점수": disp_final_sc,
             "OBV데드 발생일자": h.get("obv_dead_date", "N/A"),
             "OBV데드 경과일수": f"{h.get('obv_dead_elapsed_days', 0)}일차",
             "일봉 Chaikin 최근2봉": str(h.get("daily_cho_recent2", [0, 0])),
@@ -192,7 +208,7 @@ def create_analysis_excel_report(date_str: str,
             "추매 주문상태": buy_status,
             "초기 손절가(원)": disp_init_stop,
             "현재 래칫 손절가(원)": disp_ratchet_stop,
-            "전일확정 손절가(원)": h.get("prev_confirmed_stop", 0),
+            "전일확정 손절가(원)": disp_prev_stop,
             "금일확정 손절가(원)": conf_stop_val,
             "손절선 갱신상태": disp_stop_update,
             "익절 트레일링 원시 활성가(원)": disp_act_raw,
@@ -220,7 +236,7 @@ def create_analysis_excel_report(date_str: str,
             "평가금액(원)": h.get("eval_amount"),
             "평가손익(원)": h.get("pnl_amount"),
             "평가손익률(%)": h.get("pnl_pct"),
-            "데이터완성도(%)": h.get("data_completeness", 100.0),
+            "데이터완성도(%)": disp_completeness,
             "실전 대응 전략": action_st
         })
     df_held = pd.DataFrame(held_data)
@@ -319,7 +335,23 @@ def create_analysis_excel_report(date_str: str,
             pass_w = "PASS (미보유 0%)"
 
         # 6대 안전조건 정량 판정 (ETF 예외 반영)
-        if is_etf:
+        analysis_reason = r.get("reason")
+        if code == "234920" or (code in held_v4_map and held_v4_map[code].get("trade_mode") == "SUSPENDED_HOLD"):
+            pass_f = "PASS" if f_sc >= 65.0 else "FAIL"
+            pass_t = "N/A (거래정지)"
+            pass_c = "FAIL (시장데이터 0%)"
+            final_sc_val = "N/A (거래정지)"
+            f_sc_disp = f_sc if f_conf else f"{f_sc:.1f}점 (잠정)"
+            t_sc = "N/A (거래정지)"
+            v4_stop = "HOLD"
+            v4_target = "HOLD"
+            v4_atr = "N/A (거래정지)"
+            v4_ver_note = "V4 연동 (SUSPENDED_HOLD)"
+            comp = "50.0% (재무100% / 시장0%)"
+            buy_approval = "금지 (거래정지)"
+            sig_type = "보류 (거래정지)"
+            analysis_reason = "상장적격성 실질심사 거래정지로 기술분석 중단 (공시 모니터링 대상)"
+        elif is_etf:
             pass_f = "ETF 제외(PASS)"
             pass_t = "PASS" if t_sc >= 65.0 else "FAIL"
             pass_c = "ETF 제외(PASS)"
@@ -336,18 +368,22 @@ def create_analysis_excel_report(date_str: str,
         pass_sup = "PASS" if sup_pass else "FAIL"
 
         all_passed = (
-            "PASS" in pass_f and
-            "PASS" in pass_t and
-            "PASS" in pass_w and
-            "PASS" in pass_c and
-            "PASS" in pass_news and
-            "PASS" in pass_sup
+            "PASS" in str(pass_f) and
+            "PASS" in str(pass_t) and
+            "PASS" in str(pass_w) and
+            "PASS" in str(pass_c) and
+            "PASS" in str(pass_news) and
+            "PASS" in str(pass_sup)
         )
         
-        if all_passed and chg_pct <= -3.0:
+        if code != "234920" and all_passed and chg_pct <= -3.0:
             buy_approval = "승인"
             sig_type = r.get("signal_type")
             rec_amt = r.get("recommended_amount")
+        elif code == "234920":
+            buy_approval = "금지 (거래정지)"
+            sig_type = "보류 (거래정지)"
+            rec_amt = 0
         else:
             buy_approval = "금지(조건미충족)"
             sig_type = "관망"
@@ -380,7 +416,7 @@ def create_analysis_excel_report(date_str: str,
             "익절 감시가격(원)": v4_target,
             "엔진 연동상태": v4_ver_note,
             "데이터완성도(%)": comp,
-            "분석근거": r.get("reason")
+            "분석근거": analysis_reason
         })
     df_summary = pd.DataFrame(summary_data)
 
