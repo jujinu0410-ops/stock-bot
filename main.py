@@ -175,6 +175,12 @@ def run_post_market_analysis(
         logger.info(f" [통합 평가 완료] 내 보유종목: {len(held_status)}개 | 매매 신호 포착: {len(caught_signals)}개")
         logger.info("==================================================")
 
+        # 🔥 [안전장치] 보유종목 평가 유효성 검증: DB에 보유종목이 있는데 평가 결과가 0개인 경우 메일 발송 차단
+        if not held_status or len(held_status) == 0:
+            if held_db_rows and len(held_db_rows) > 0:
+                logger.critical(f"🛑 [발송 차단] 보유종목 평가 실패(0개 검출, DB상 {len(held_db_rows)}개 존재). 불완전 데이터 발송을 방지하기 위해 메일 발송을 취소합니다.")
+                return [], []
+
         # 6. 📊 실제 분석 데이터 종합 엑셀파일(.xlsx) 생성 및 지메일 첨부 발송
         date_str_file = datetime.now().strftime("%Y-%m-%d %H:%M")
         

@@ -316,10 +316,11 @@ class PortfolioManager:
                 candidate_stop = highest_close - (self.config["initial_stop_multiple"] * at)
 
             prev_confirmed_stop = float(p_row.get("previous_confirmed_stop") or p_row.get("confirmed_stop_price") or 0.0)
-            if is_migrated_anchor or prev_confirmed_stop >= current_price:
+            # 🔥 유효한 기존 손절가 승계 원칙: 0보다 크고 현재가 미만이면 정상 보존하여 래칫 적용
+            if prev_confirmed_stop >= current_price or prev_confirmed_stop <= 0:
                 prev_confirmed_stop = 0.0
             
-            # 래칫 원칙: 직전 손절가 및 초기 손절가보다 낮아질 수 없음
+            # 래칫 원칙: 직전 유효 확정 손절가 및 초기 손절가보다 절대 낮아질 수 없음
             ratchet_stop = max(prev_confirmed_stop, raw_initial_stop, candidate_stop)
 
             # 호가단위 보정
@@ -378,20 +379,34 @@ class PortfolioManager:
             weight_cap_qty = math.floor((total_account_equity * (self.config["max_position_weight_pct"] / 100.0)) / (current_price + 1e-9))
             final_risk_target_qty = max(0, min(risk_target_qty, weight_cap_qty))
             excess_qty = max(0, qty - final_risk_target_qty)
+            weight_excess_qty = max(0, qty - weight_cap_qty)
 
             # 권고 방향 및 실제 권고 주문수량 산출
-            if data_validity_flag == 0 or trade_mode == "HOLD":
+            user_override_flag = False
+            manual_order_info = ""
+            if code == "348340": # 뉴로메카 수동 감시주문 오버라이드
+                user_override_flag = True
+                manual_order_info = "활성가 24,450원 / 추적폭 700원 / 31주 (미체결)"
+                trade_mode = "USER_OVERRIDE"
+                order_direction = "수동감시 (24,450원/700원/31주 미체결)"
+                actual_recommended_qty = 31
+            elif data_validity_flag == 0 or trade_mode == "HOLD":
                 order_direction = f"보류 ({' / '.join(data_hold_reasons) if data_hold_reasons else 'DATA_HOLD'})"
                 actual_recommended_qty = 0
+            elif trade_mode == "CONCENTRATION_RISK":
+                if weight_excess_qty > 0:
+                    reduce_qty = max(1, math.floor(weight_excess_qty * 0.33)) # 20% 초과분의 33% 3분할 축소
+                    order_direction = "매도 (20% 초과분할축소 33%)"
+                    actual_recommended_qty = reduce_qty
+                else:
+                    order_direction = "보유 (비중 20% 이내 유지)"
+                    actual_recommended_qty = 0
             elif trade_mode == "RECOVERY":
                 order_direction = "매도 (손실축소 30%)"
                 actual_recommended_qty = max(1, math.floor(qty * 0.30))
             elif trade_mode == "EMERGENCY":
                 order_direction = "매도 (긴급축소 50%)"
                 actual_recommended_qty = max(1, math.floor(qty * 0.50))
-            elif trade_mode == "CONCENTRATION_RISK":
-                order_direction = f"보유 (비중과다 {eval_weight_pct}% 추매금지)"
-                actual_recommended_qty = 0
             elif trade_mode == "NORMAL" and tech_eval.get("signal_type") == "1차 신규매수":
                 order_direction = "매수 (분할진입 50%)"
                 actual_recommended_qty = max(1, math.floor(final_risk_target_qty * 0.5))
@@ -399,10 +414,16 @@ class PortfolioManager:
                 order_direction = "보유 (관망/홀딩)"
                 actual_recommended_qty = 0
 
-            # 10. 호가 보정값 및 HOLD 처리
+            # 10. 호가 보정값 및 HOLD / USER_OVERRIDE 처리
             kiwoom_buy_tick = adjust_krx_tick_size(raw_buy_watch, "down") if raw_buy_watch > 0 else 0
 
-            if data_validity_flag == 0 or trade_mode == "HOLD":
+            if code == "348340":
+                display_stop_tick = "HOLD"
+                display_target_tick = "24,450원 (수동)"
+                display_buy_tick = "HOLD"
+                display_exit_tick = "HOLD"
+                auto_order_enabled = False
+            elif data_validity_flag == 0 or trade_mode == "HOLD":
                 display_stop_tick = "HOLD"
                 display_target_tick = "HOLD"
                 display_buy_tick = "HOLD"
@@ -517,6 +538,9 @@ class PortfolioManager:
                 "weight_cap_qty": weight_cap_qty,
                 "risk_target_qty": final_risk_target_qty,
                 "excess_qty": excess_qty,
+                "weight_excess_qty": weight_excess_qty,
+                "user_override_flag": user_override_flag,
+                "manual_order_info": manual_order_info,
                 "order_direction": order_direction,
                 "recommended_quantity": actual_recommended_qty,
                 "recommended_order_qty": actual_recommended_qty,
@@ -604,12 +628,16 @@ class PortfolioManager:
             is_45m_breakdown = item.get("is_45m_breakdown", False)
             is_cho_outflow = item.get("is_cho_outflow", False)
 
-            if trade_mode == "HOLD" or not f_confirmed or completeness < 90.0:
+            if item.get("user_override_flag", False) or item.get("stock_code") == "348340":
+                item["action_status"] = "⚠️ DART 미확정 [수동감시: 24,450원/700원/31주]"
+            elif trade_mode == "HOLD" or not f_confirmed or completeness < 90.0:
                 item["action_status"] = f"⚠️ {item['data_hold_reason']} (보류)"
             elif trade_mode == "EMERGENCY":
                 item["action_status"] = "🚨 반등 시 긴급 비중축소"
             elif trade_mode == "RECOVERY":
                 item["action_status"] = "🔄 반등 시 손실축소 분할매도"
+            elif trade_mode == "CONCENTRATION_RISK" and item.get("weight_excess_qty", 0) > 0:
+                item["action_status"] = f"⚠️ 비중과다({weight_pct}%) [초과 {item['weight_excess_qty']:,}주 분할축소]"
             elif weight_pct > self.config["max_position_weight_pct"]:
                 if is_tier3_sell:
                     item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + 🚨 매도조건 충족 (추매금지/보유)"

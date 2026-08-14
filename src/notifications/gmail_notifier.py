@@ -243,12 +243,18 @@ class GmailNotifier:
                 atr_display = f"{atr_v:,.0f}원 ({h.get('atr_pct', 0.0):.1f}%)" if atr_v > 0 else "-"
 
                 clean_strategy = action_st
-                if not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:
+                if "수동" in clean_strategy or "USER_OVERRIDE" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
+                    action_kw = "⚠️ DART미확정 (수동감시 31주)"
+                elif not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ DART 재무미확정 (보류)"
                 elif "이상 급등" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ NATR 이상 급등 (보류)"
+                elif "초과" in clean_strategy and "축소" in clean_strategy:
+                    badge_bg, badge_border, badge_color = "#FEF2F2", "#FCA5A5", "#DC2626"
+                    action_kw = "⚠️ 20%초과 분할축소"
                 elif "비중과다" in clean_strategy and "CHO유출" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ 비중과다 + CHO유출"
@@ -339,11 +345,23 @@ class GmailNotifier:
                 s_sign = "+" if s_chg >= 0 else ""
                 clean_act_display = format_strategy_action_html(s_act)
                 
-                if s_mode == "HOLD" or sw.get("data_validity_flag", 1) == 0:
+                if s_code == "348340" or sw.get("user_override_flag", False):
+                    target_str = "24,450원 (수동활성)"
+                    stop_str = "HOLD (주문대기)"
+                    trail_str = "700원 (수동추적)"
+                    sizing_str = f"보유 {sw.get('quantity', 0):,}주 | <b>수동주문: 31주 미체결</b> (DART미확정 신규주문금지)"
+                elif s_mode == "HOLD" or sw.get("data_validity_flag", 1) == 0:
                     target_str = "HOLD (주문대기)"
                     stop_str = "HOLD (주문대기)"
                     trail_str = "HOLD (비활성)"
                     sizing_str = f"보유 {sw.get('quantity', 0):,}주 / 권고: 0주 (데이터 검증 대기)"
+                elif s_mode == "CONCENTRATION_RISK":
+                    target_str = f"{s_ttarget:,}원" if isinstance(s_ttarget, (int, float)) and s_ttarget > 0 else str(s_ttarget)
+                    stop_str = f"{s_tstop:,}원" if isinstance(s_tstop, (int, float)) and s_tstop > 0 else str(s_tstop)
+                    trail_str = f"최고가 대비 {s_trail_delta:,}원 하락 시"
+                    w_ex = sw.get('weight_excess_qty', 0)
+                    r_qty = sw.get('recommended_order_qty', 0)
+                    sizing_str = f"위험목표 {sw.get('risk_target_qty', 0):,}주 | 20%초과 {w_ex:,}주 | <b>권고: {sw.get('order_direction', '매도')} ({r_qty:,}주)</b>"
                 else:
                     target_str = f"{s_ttarget:,}원" if isinstance(s_ttarget, (int, float)) and s_ttarget > 0 else str(s_ttarget)
                     stop_str = f"{s_tstop:,}원" if isinstance(s_tstop, (int, float)) and s_tstop > 0 else str(s_tstop)

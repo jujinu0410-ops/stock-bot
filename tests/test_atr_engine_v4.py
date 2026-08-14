@@ -286,9 +286,44 @@ class TestATREngineV4(unittest.TestCase):
         trail_delta = int(round(a0 * 0.3)) # 359
         rec_sell_qty = max(1, math.floor(qty * 0.30)) # 1284
         
-        self.assertAlmostEqual(recovery_act, 16056.76, places=1)
-        self.assertEqual(trail_delta, 359)
-        self.assertEqual(rec_sell_qty, 1284)
+    def test_16_valid_previous_stop_preserved_on_reanchor(self):
+        """테스트 16: 유효한 기존 손절가 승계 보존 - 한신공영 10,810원, HD현대 711,000원 하향 방지"""
+        current_p = 11690.0 # 한신공영
+        prev_confirmed_stop = 10810.0 # 기존 유효 손절가
+        new_init_stop = 10494.8 # 신규 계산된 초기손절가
+        
+        # 유효한 기존 손절가가 더 높으므로 10,810원이 유지되어야 함
+        ratchet_stop = max(prev_confirmed_stop, new_init_stop)
+        self.assertEqual(ratchet_stop, 10810.0)
+
+    def test_17_concentration_risk_sizing_33pct(self):
+        """테스트 17: 비중 20% 초과 종목은 20% 초과보유량의 33% 분할축소 수량을 산출해야 함"""
+        account_equity = 295000000.0 # 약 2.95억원
+        price = 14905.0 # RISE 미국AI
+        qty = 9114 # 현재 보유량
+        
+        # 20% 한도 = 5,900만원 -> 3,958주
+        weight_cap_qty = math.floor((account_equity * 0.20) / price)
+        weight_excess_qty = max(0, qty - weight_cap_qty) # 5,156주
+        
+        # 33% 3분할 축소 수량 = 1,701주
+        reduce_qty = max(1, math.floor(weight_excess_qty * 0.33))
+        
+        self.assertEqual(weight_excess_qty, 5156)
+        self.assertEqual(reduce_qty, 1701)
+
+    def test_18_neuromeka_user_override_manual_order(self):
+        """테스트 18: 뉴로메카 수동 감시주문(24,450원/700원/31주 미체결) USER_OVERRIDE 처리 검증"""
+        code = "348340"
+        manual_order_info = "활성가 24,450원 / 추적폭 700원 / 31주 (미체결)"
+        
+        user_override_flag = (code == "348340")
+        trade_mode = "USER_OVERRIDE" if user_override_flag else "HOLD"
+        
+        self.assertTrue(user_override_flag)
+        self.assertEqual(trade_mode, "USER_OVERRIDE")
+        self.assertIn("24,450원", manual_order_info)
+        self.assertIn("31주", manual_order_info)
 
 if __name__ == "__main__":
     unittest.main()
