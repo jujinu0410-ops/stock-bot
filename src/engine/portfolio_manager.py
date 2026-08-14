@@ -221,39 +221,69 @@ class PortfolioManager:
             pnl_pct = round((pnl_amount / total_inv) * 100.0, 2) if total_inv > 0 else 0.0
             eval_weight_pct = round((eval_amount / total_account_equity) * 100.0, 1) if total_account_equity > 0 else 0.0
 
+            # 🔥 0. KRX 시장 거래 상태 가드레일 (주권매매거래정지 / 상장적격성 실질심사 / 정리매매 등)
+            is_suspended = False
+            suspension_reason = ""
+            
+            # 1) 명시적 거래정지 종목 맵핑
+            if code == "234920": # 자이글 (2025.10.29~ 상장적격성 실질심사 사유 매매거래정지)
+                is_suspended = True
+                suspension_reason = "상장적격성 실질심사 사유 매매거래정지 (KRX 거래정지)"
+            
+            # 2) 일봉 연속 5봉 거래량 0 또는 OHLC 정체 검사
+            daily_df = self.db.get_daily_prices(code)
+            if not daily_df.empty and len(daily_df) >= 5:
+                recent_vols = daily_df.tail(5)['volume'].tolist()
+                recent_closes = daily_df.tail(5)['close_price'].tolist()
+                if all(v == 0 for v in recent_vols) or (len(set(recent_closes)) == 1 and all(v <= 0 for v in recent_vols)):
+                    is_suspended = True
+                    if not suspension_reason:
+                        suspension_reason = "연속 5봉 거래량 0 (매매거래 정지 의심)"
+
             # 2. 직전 완료봉 Wilder ATR14 (At) 및 NATR(%) 산출
-            at = float(tech_eval.get("atr_14", current_price * 0.03) or (current_price * 0.03))
-            if at <= 0:
-                at = current_price * 0.03
-            natr_pct = round((at / (current_price + 1e-9)) * 100.0, 2)
+            if is_suspended:
+                at = 0.0
+                natr_pct = 0.0
+                p0 = float(current_price) # 거래정지 전 최종 종가
+                a0 = 0.0 # 거래정지 시 기존 A0 무효 폐기
+                cycle_id = f"{code}_INVALID_SUSPENDED_CYCLE"
+                anchor_created_at = p_row.get("anchor_created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                is_migrated_anchor = False
+            else:
+                at = float(tech_eval.get("atr_14", current_price * 0.03) or (current_price * 0.03))
+                if at <= 0:
+                    at = current_price * 0.03
+                natr_pct = round((at / (current_price + 1e-9)) * 100.0, 2)
 
-            # 3. 🔥 P0(감시개시 기준가격) & A0(기준 ATR) 동결 및 기존 보유종목 마이그레이션
-            # 기존 종목 마이그레이션 원칙: P0는 과거 매입평단이 아니라 V4 감시개시 시점의 확인된 현재가/종가!
-            p0 = safe_float(p_row.get("anchor_price_p0"))
-            a0 = safe_float(p_row.get("anchor_atr_a0"))
-            cycle_id = p_row.get("position_cycle_id")
-            anchor_created_at = p_row.get("anchor_created_at")
+                # 3. 🔥 P0(감시개시 기준가격) & A0(기준 ATR) 동결 및 기존 보유종목 마이그레이션
+                p0 = safe_float(p_row.get("anchor_price_p0"))
+                a0 = safe_float(p_row.get("anchor_atr_a0"))
+                cycle_id = p_row.get("position_cycle_id")
+                anchor_created_at = p_row.get("anchor_created_at")
 
-            is_legacy_misanchored = (p0 > current_price * 1.15 and pnl_pct < -10.0)
-            is_migrated_anchor = False
-            if p0 <= 0 or a0 <= 0 or (p_row.get("reanchor_flag", 0) == 1) or is_legacy_misanchored:
-                p0 = float(current_price)
-                a0 = float(at)
-                anchor_created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                cycle_id = f"{code}_{datetime.now().strftime('%Y%m%d')}_V4"
-                is_migrated_anchor = True
+                is_legacy_misanchored = (p0 > current_price * 1.15 and pnl_pct < -10.0)
+                is_migrated_anchor = False
+                if p0 <= 0 or a0 <= 0 or (p_row.get("reanchor_flag", 0) == 1) or is_legacy_misanchored:
+                    p0 = float(current_price)
+                    a0 = float(at)
+                    anchor_created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    cycle_id = f"{code}_{datetime.now().strftime('%Y%m%d')}_V4"
+                    is_migrated_anchor = True
 
             # 4. 🔥 데이터 이상 및 자동 주문설정 차단 검증 (DATA_HOLD)
             data_validity_flag = 1
             data_hold_reasons = []
 
+            if is_suspended:
+                data_validity_flag = 0
+                data_hold_reasons.append(suspension_reason)
             if not f_confirmed:
                 data_validity_flag = 0
                 data_hold_reasons.append("DART 재무 미확정")
             if natr_pct >= self.config["natr_order_block_threshold_pct"]:
                 data_validity_flag = 0
                 data_hold_reasons.append(f"NATR 이상 급등({natr_pct}% >= 20%)")
-            if at <= 0:
+            if at <= 0 and not is_suspended:
                 data_validity_flag = 0
                 data_hold_reasons.append("ATR 비정상(0 이하)")
             if current_price <= 0:
@@ -262,7 +292,9 @@ class PortfolioManager:
 
             # 5. 🔥 매매 모드(Trade Mode) 판정
             mode_override = p_row.get("mode_override")
-            if data_validity_flag == 0:
+            if is_suspended:
+                trade_mode = "SUSPENDED_HOLD"
+            elif data_validity_flag == 0:
                 trade_mode = "HOLD"
             elif mode_override:
                 trade_mode = str(mode_override).upper()
@@ -363,7 +395,7 @@ class PortfolioManager:
                 stop_update_status = "유지"
 
             # 8. 🔥 익절 트레일링 활성 및 실행선 산출
-            if trade_mode in ("HOLD", "USER_OVERRIDE") or data_validity_flag == 0:
+            if trade_mode in ("HOLD", "SUSPENDED_HOLD", "USER_OVERRIDE") or data_validity_flag == 0:
                 profit_act_status = "수동활성대기" if code == "348340" else "HOLD"
                 highest_after_activation = 0.0
                 profit_trail_delta = 700 if code == "348340" else 0
@@ -382,7 +414,7 @@ class PortfolioManager:
                 excess_qty = 0
                 weight_excess_qty = 0
                 slippage_buffer = 0
-                risk_budget_amount = total_account_equity * self.config["default_account_risk_pct"]
+                risk_budget_amount = 0 if trade_mode == "SUSPENDED_HOLD" else total_account_equity * self.config["default_account_risk_pct"]
             else:
                 prev_act_status = p_row.get("profit_activation_status", "INACTIVE")
                 profit_act_status = "ACTIVE" if (current_price >= effective_profit_activation or prev_act_status == "ACTIVE") else "INACTIVE"
@@ -422,7 +454,10 @@ class PortfolioManager:
             # 권고 방향 및 실제 권고 주문수량 산출
             user_override_flag = False
             manual_order_info = ""
-            if code == "348340": # 뉴로메카 수동 감시주문 오버라이드
+            if code == "234920" or trade_mode == "SUSPENDED_HOLD":
+                order_direction = "보류 (거래정지 [매매불가])"
+                actual_recommended_qty = 0
+            elif code == "348340": # 뉴로메카 수동 감시주문 오버라이드
                 user_override_flag = True
                 manual_order_info = "활성가 24,450원 / 추적폭 700원 / 31주 (미체결)"
                 trade_mode = "USER_OVERRIDE"
@@ -455,7 +490,13 @@ class PortfolioManager:
             # 10. 호가 보정값 및 HOLD / USER_OVERRIDE 처리
             kiwoom_buy_tick = adjust_krx_tick_size(raw_buy_watch, "down") if raw_buy_watch > 0 else 0
 
-            if code == "348340":
+            if code == "234920" or trade_mode == "SUSPENDED_HOLD":
+                display_stop_tick = "HOLD"
+                display_target_tick = "HOLD"
+                display_buy_tick = "HOLD"
+                display_exit_tick = "HOLD"
+                auto_order_enabled = False
+            elif code == "348340":
                 display_stop_tick = "HOLD"
                 display_target_tick = "24,450원 (수동)"
                 display_buy_tick = "HOLD"
@@ -674,7 +715,12 @@ class PortfolioManager:
             is_45m_breakdown = item.get("is_45m_breakdown", False)
             is_cho_outflow = item.get("is_cho_outflow", False)
 
-            if item.get("user_override_flag", False) or item.get("stock_code") == "348340":
+            if trade_mode == "SUSPENDED_HOLD" or item.get("stock_code") == "234920":
+                item["action_status"] = "⚠️ 거래정지 [상장적격성 실질심사 (매매불가)]"
+                item["order_direction"] = "보류 (거래정지 [매매불가])"
+                item["recommended_order_qty"] = 0
+                item["recommended_quantity"] = 0
+            elif item.get("user_override_flag", False) or item.get("stock_code") == "348340":
                 item["action_status"] = "⚠️ DART 미확정 [수동감시: 24,450원/700원/31주]"
             elif trade_mode == "HOLD" or not f_confirmed or completeness < 90.0:
                 item["action_status"] = f"⚠️ {item['data_hold_reason']} (보류)"

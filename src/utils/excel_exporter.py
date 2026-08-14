@@ -59,7 +59,31 @@ def create_analysis_excel_report(date_str: str,
         action_st = h.get("action_status", "보유")
 
         # 완전 초기화 (행 간 데이터 누출 100% 원천 방지)
-        if code == "348340" or trade_mode == "USER_OVERRIDE":
+        if code == "234920" or trade_mode == "SUSPENDED_HOLD":
+            auto_order_ok = "금지 (거래정지)"
+            stop_mon_status = "HOLD (거래정지)"
+            stop_order_status = "OFF (HOLD)"
+            target_mon_status = "HOLD (거래정지)"
+            target_order_status = "OFF (HOLD)"
+            buy_status = "OFF (조건미충족)"
+            conf_stop_val = "HOLD"
+            stop_tick_val = "HOLD"
+            target_tick_val = "HOLD"
+            buy_tick_val = "HOLD"
+            exit_tick_val = "HOLD"
+            disp_init_stop = "HOLD"
+            disp_ratchet_stop = "HOLD"
+            disp_act_raw = "HOLD"
+            disp_act_status = "HOLD"
+            disp_trail_delta = "HOLD"
+            disp_trail_price = "HOLD"
+            disp_risk_budget = 0
+            disp_risk_target_qty = "N/A (거래정지)"
+            disp_excess_qty = 0
+            disp_weight_excess_qty = 0
+            disp_slippage_buffer = 0
+            disp_stop_update = "HOLD"
+        elif code == "348340" or trade_mode == "USER_OVERRIDE":
             auto_order_ok = "금지 (DART 재무 미확정)"
             stop_mon_status = "HOLD (수동감시)"
             stop_order_status = "OFF (HOLD)"

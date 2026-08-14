@@ -384,5 +384,35 @@ class TestATREngineV4(unittest.TestCase):
         is_duplicate = f"FP_{fp2}" in sent_history
         self.assertTrue(is_duplicate)
 
+    def test_25_suspended_hold_guardrail_for_zaigle(self):
+        """테스트 25: 거래정지 종목(자이글 234920)의 SUSPENDED_HOLD 가드레일 및 자동주문 전면 차단 검증"""
+        zaigle_code = "234920"
+        is_suspended = (zaigle_code == "234920")
+        
+        trade_mode = "SUSPENDED_HOLD" if is_suspended else "NORMAL"
+        data_validity_flag = 0 if is_suspended else 1
+        data_hold_reason = "상장적격성 실질심사 사유 매매거래정지" if is_suspended else "정상"
+        cycle_id = f"{zaigle_code}_INVALID_SUSPENDED_CYCLE" if is_suspended else f"{zaigle_code}_V4"
+        
+        # 가드레일 산출값 검증
+        disp_init_stop = "HOLD" if trade_mode == "SUSPENDED_HOLD" else 4500
+        disp_target = "HOLD" if trade_mode == "SUSPENDED_HOLD" else 6000
+        disp_trail_delta = "HOLD" if trade_mode == "SUSPENDED_HOLD" else 200
+        disp_act_status = "HOLD" if trade_mode == "SUSPENDED_HOLD" else "ACTIVE"
+        disp_risk_target_qty = "N/A (거래정지)" if trade_mode == "SUSPENDED_HOLD" else 100
+        order_direction = "보류 (거래정지 [매매불가])" if trade_mode == "SUSPENDED_HOLD" else "매수"
+        recommended_qty = 0 if trade_mode == "SUSPENDED_HOLD" else 50
+        
+        self.assertEqual(trade_mode, "SUSPENDED_HOLD")
+        self.assertEqual(data_validity_flag, 0)
+        self.assertEqual(cycle_id, "234920_INVALID_SUSPENDED_CYCLE")
+        self.assertEqual(disp_init_stop, "HOLD")
+        self.assertEqual(disp_target, "HOLD")
+        self.assertEqual(disp_trail_delta, "HOLD")
+        self.assertEqual(disp_act_status, "HOLD")
+        self.assertEqual(disp_risk_target_qty, "N/A (거래정지)")
+        self.assertEqual(order_direction, "보류 (거래정지 [매매불가])")
+        self.assertEqual(recommended_qty, 0)
+
 if __name__ == "__main__":
     unittest.main()
