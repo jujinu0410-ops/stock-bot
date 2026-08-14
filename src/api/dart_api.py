@@ -445,28 +445,65 @@ class DartAPIClient:
         return disclosures
 
     def _generate_disclosure_briefing(self, name: str, code: str, report_nm: str, rcept_no: str, rcept_dt: str) -> Dict[str, Any]:
-        """개별 공시 항목에 대한 맞춤형 1~3줄 브리핑 요약 생성"""
+        """개별 공시 항목에 대한 맞춤형 실적 수치 기반 호재/중립/악재 브리핑 생성"""
         link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 
         if any(k in report_nm for k in ["반기보고서", "분기보고서", "사업보고서"]):
-            summary = "2026년 상반기(반기) 확정 재무제표 및 사업보고서가 DART에 공식 접수되었습니다."
-            impact = "미확정 상태였던 2분기 실적이 확정 수치로 동기화되어 DART F-Score 점수에 정식 반영됩니다."
-            guide = "실적 불확실성이 해소되었으며, 확정 실적 호전 여부에 따라 펀더멘털 점수가 조정됩니다."
+            summary = f"2026년 상반기(반기) 확정 재무제표 및 사업보고서 공시 접수."
+            
+            # 실제 DART 재무제표 데이터 조회
+            try:
+                fin = self.get_financial_statement(code, fiscal_year=2025, reprt_code="11012")
+                if not fin or fin.get("revenue", 0) == 0:
+                    fin = self.get_financial_statement(code, fiscal_year=2025, reprt_code="11011")
+            except Exception:
+                fin = None
+
+            if fin and fin.get("revenue", 0) > 0:
+                rev_eok = fin.get("revenue", 0) / 100000000.0
+                rev_yoy = fin.get("revenue_yoy", 0.0)
+                op = fin.get("operating_profit", 0)
+                op_eok = op / 100000000.0
+                op_yoy = fin.get("op_profit_yoy", 0.0)
+
+                if op > 0 and op_yoy >= 15.0:
+                    impact = f"<span style='color:#059669; font-weight:bold;'>🟢 [호재 / 실적 호전]</span> 매출 {rev_eok:,.0f}억원(YoY {rev_yoy:+.1f}%), 영업이익 {op_eok:,.0f}억원(YoY {op_yoy:+.1f}%)으로 어닝 서프라이즈 달성. 주가 상승 모멘텀 강력."
+                    guide = "호실적에 따른 펀더멘털 신뢰도 상승으로 기존 목표가 도달 시까지 안정적 보유 지속."
+                elif op > 0 and op_yoy >= 0.0:
+                    impact = f"<span style='color:#059669; font-weight:bold;'>🟢 [호재 / 견조한 흑자]</span> 매출 {rev_eok:,.0f}억원(YoY {rev_yoy:+.1f}%), 영업이익 {op_eok:,.0f}억원(YoY {op_yoy:+.1f}%)으로 견조한 흑자 기조 유지. 주가 하방 지지력 확보."
+                    guide = "이익 성장세가 유지되고 있으므로 트레일링 손절가를 상향 관리하며 홀딩."
+                elif op > 0 and op_yoy < 0.0:
+                    impact = f"<span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 영업익 둔화]</span> 매출 {rev_eok:,.0f}억원(YoY {rev_yoy:+.1f}%), 영업이익 {op_eok:,.0f}억원(YoY {op_yoy:+.1f}%)으로 흑자는 유지했으나 이익률 감소."
+                    guide = "실적 둔화에 따른 차익 매물 출회 가능성에 대비하여 단기 지지선 이탈 여부 모니터링."
+                elif op < 0 and op_yoy > 0.0:
+                    impact = f"<span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 적자 축소]</span> 매출 {rev_eok:,.0f}억원, 영업손실 {op_eok:,.0f}억원으로 적자 지속이나 전년 대비 손실폭 축소."
+                    guide = "하반기 흑자전환 가시성을 점검하며 단기 반등 시 비중 조절 검토."
+                else:
+                    impact = f"<span style='color:#DC2626; font-weight:bold;'>🔴 [악재 / 적자 지속·확대]</span> 매출 {rev_eok:,.0f}억원, 영업손실 {op_eok:,.0f}억원으로 적자 지속 및 수익성 부진."
+                    guide = "펀더멘털 불확실성이 지속되므로 트레일링 손절가 및 사용자 우선 설정가를 엄격히 준수."
+            else:
+                impact = "<span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 데이터 파싱 중]</span> 상반기 실적 보고서 접수 완료 (상세 재무제표 동기화 진행 중)."
+                guide = "확정 실적 발표에 따른 시장 수급 반응을 주시하며 기존 전략 유지."
+
         elif any(k in report_nm for k in ["단일판매", "공급계약"]):
-            summary = "신규 단일판매 및 대규모 공급계약 체결 공시가 접수되었습니다."
-            impact = "수주잔고 증가 및 향후 매출 인식 가시성이 높아지는 긍정적 펀더멘털 모멘텀입니다."
-            guide = "계약 금액의 최근 매출액 대비 비중을 확인하고 단기 수급 유입에 유의합니다."
-        elif any(k in report_nm for k in ["유상증자", "무상증자", "전환사채", "신주인수권부사채"]):
-            summary = "자금 조달 및 신주 발행 관련 주요사항보고서가 공시되었습니다."
-            impact = "신주 발행에 따른 주주가치 희석 가능성 또는 신규 설비투자 자금 확보 효과가 공존합니다."
-            guide = "신주 발행가액, 증자 방식(제3자 배정 vs 일반공모) 및 권리락/상장 일정을 필수 점검합니다."
+            summary = "신규 단일판매 및 대규모 공급계약 체결 공시 접수."
+            impact = "<span style='color:#059669; font-weight:bold;'>🟢 [호재 / 수주 모멘텀]</span> 대규모 공급계약 체결로 수주잔고 및 향후 매출 인식 가시성 확대. 단기 주가 상승 모멘텀."
+            guide = "계약 금액의 최근 매출액 대비 비중을 확인하고 단기 수급 유입 시 1차 목표가 도달 여부 주시."
+        elif any(k in report_nm for k in ["유상증자", "전환사채", "신주인수권부사채"]):
+            summary = "자금 조달 및 신주 발행(증자/사채) 주요사항보고서 접수."
+            impact = "<span style='color:#DC2626; font-weight:bold;'>🔴 [경계 / 지분 희석 부담]</span> 신주 발행에 따른 주당가치 희석 및 단기 오버행(잠재 매물) 우려 공존."
+            guide = "신주 발행가액, 증자 방식(제3자 배정 vs 일반공모) 및 납입 일정을 면밀히 모니터링하여 대응."
+        elif "무상증자" in report_nm:
+            summary = "주주가치 제고를 위한 무상증자 결정 공시 접수."
+            impact = "<span style='color:#059669; font-weight:bold;'>🟢 [호재 / 주주환원]</span> 유통 주식수 확대 및 주주 친화 정책으로 단기 투자심리 개선 호재."
+            guide = "권리락 일정 및 신주 배정 기준일을 체크하여 보유 포지션 유지."
         elif "계열회사와의상품" in report_nm:
-            summary = "동일인 등 출자계열회사와의 상품·용역 거래내역 변경 공시입니다."
-            impact = "그룹사 내부거래 규모 조정으로 기업 펀더멘털에 미치는 즉각적인 영향은 제한적입니다."
-            guide = "통상적인 영업 거래 공시이므로 기존 보유 및 매매 전략을 유지합니다."
+            summary = "동일인 등 출자계열회사와의 상품·용역 거래내역 변경 공시."
+            impact = "<span style='color:#64748B; font-weight:bold;'>🟡 [중립 / 내부거래 조정]</span> 그룹사 내부거래 규모 조정으로 기업 펀더멘털에 미치는 즉각적인 영향은 제한적."
+            guide = "통상적인 영업 거래 공시이므로 기존 보유 및 매매 전략을 그대로 유지."
         else:
-            summary = f"주요 경영 사항 및 공시({report_nm})가 접수되었습니다."
-            impact = "공시 세부 조항 및 첨부 내용을 통한 추가 확인이 권장됩니다."
+            summary = f"주요 경영 사항 및 공시({report_nm}) 접수."
+            impact = "<span style='color:#64748B; font-weight:bold;'>🟡 [중립 / 일반 공시]</span> 통상적 공시 사항으로 세부 내용 확인 필요."
             guide = "직접 링크를 통해 세부 계약/결정 사항을 확인하시기 바랍니다."
 
         return {
