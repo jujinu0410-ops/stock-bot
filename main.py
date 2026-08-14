@@ -229,9 +229,14 @@ def run_post_market_analysis(
             disclosures=disclosures
         )
         
-        # 🔥 중복 발송 방지 검사 (동일 날짜/회차 메일 이미 발송 시 중복 발송 건너뛰기)
-        if not force and db.is_dispatch_already_sent(dispatch_id):
-            logger.info(f"🛑 [중복 발송 방지] {dispatch_id} ({dispatch_tag}) 리포트가 오늘 이미 성공적으로 발송되었습니다. 메일 발송을 안전하게 건너뜁니다. (강제 재발송 필요 시 --force 옵션 사용)")
+        import hashlib
+        balance_signature = "_".join(sorted([f"{h['stock_code']}:{h.get('quantity',0)}:{h.get('current_price',0)}" for h in held_status]))
+        dispatch_fingerprint = hashlib.md5(f"{date_str}_{session_code}_{balance_signature}".encode()).hexdigest()[:12]
+        fingerprint_id = f"FP_{dispatch_fingerprint}"
+
+        # 🔥 중복 발송 방지 검사 (동일 날짜/회차 or 동일 잔고 해시 메일 이미 발송 시 건너뛰기)
+        if not force and (db.is_dispatch_already_sent(dispatch_id) or db.is_dispatch_already_sent(fingerprint_id)):
+            logger.info(f"🛑 [중복 발송 방지] {dispatch_id} (Fingerprint: {dispatch_fingerprint}) 리포트가 오늘 이미 성공적으로 발송되었습니다. 메일 발송을 안전하게 건너뜁니다. (강제 재발송 필요 시 --force 옵션 사용)")
         else:
             sent_success = notifier.send_email(
                 subject=subject,
@@ -240,7 +245,8 @@ def run_post_market_analysis(
             )
             if sent_success:
                 db.record_dispatch_success(dispatch_id, dispatch_tag, notifier.recipient_email, subject)
-                logger.info(f"내 종목 정밀 평가 지메일 리포트 성공 발송 및 발송 기록 완료! [식별자: {dispatch_id}]")
+                db.record_dispatch_success(fingerprint_id, dispatch_tag, notifier.recipient_email, subject)
+                logger.info(f"내 종목 정밀 평가 지메일 리포트 성공 발송 및 발송 기록 완료! [식별자: {dispatch_id}, FP: {dispatch_fingerprint}]")
             else:
                 logger.warning("지메일 발송에 실패했거나 설정이 미비합니다. 로컬 로그 파일을 확인하세요.")
 

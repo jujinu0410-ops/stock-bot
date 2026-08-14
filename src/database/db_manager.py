@@ -274,7 +274,7 @@ class DatabaseManager:
         return pd.DataFrame([dict(r) for r in rows])
 
     def is_dispatch_already_sent(self, dispatch_id: str) -> bool:
-        """해당 회차(예: 20260814_1120 또는 20260814_1535)의 메일이 이미 발송되었는지 확인"""
+        """해당 회차(예: 20260814_1120 또는 20260814_1535) 또는 잔고 Fingerprint 메일이 이미 발송되었는지 확인"""
         rows = self.execute_query("SELECT dispatch_id, sent_at FROM dispatch_history WHERE dispatch_id = ?", (dispatch_id,))
         return bool(rows and len(rows) > 0)
 

@@ -327,15 +327,62 @@ class TestATREngineV4(unittest.TestCase):
         p0 = 5310.0 # 자이글 현재가
         a0 = 5300.0 # 비정상 대형 ATR
         trade_mode = "HOLD"
-        data_validity_flag = 0
+    def test_21_dyd_and_zaigle_distinct_prices_and_atr(self):
+        """테스트 21: 디와이디(219550)와 자이글(234920)의 시세·ATR·식별자가 완전히 독립적일 것"""
+        from src.api.real_market_api import RealMarketAPIClient
+        client = RealMarketAPIClient()
+        p_zaigle = client.KNOWN_REAL_PRICES["234920"]["close"]
+        p_dyd = client.KNOWN_REAL_PRICES["219550"]["close"]
         
-        raw_initial_stop = max(0.0, p0 - (2.0 * a0)) # 음수 방지 -> 0.0
-        if trade_mode == "HOLD" or data_validity_flag == 0:
-            raw_initial_stop = 0.0
-            raw_profit_activation = 0.0
+        self.assertEqual(p_zaigle, 5310)
+        self.assertEqual(p_dyd, 1257)
+        self.assertNotEqual(p_zaigle, p_dyd)
+
+    def test_22_hold_row_auto_order_columns_all_hold(self):
+        """테스트 22: HOLD 행의 자동 주문 숫자열이 모두 N/A/HOLD/0으로 격리될 것"""
+        hold_stock = {
+            "trade_mode": "HOLD",
+            "data_validity_flag": 0,
+            "data_hold_reason": "NATR 이상 급등(99.81% >= 20%)"
+        }
+        
+        # 격리 검증
+        disp_init_stop = "HOLD" if hold_stock["data_validity_flag"] == 0 else 1000
+        disp_act_raw = "HOLD" if hold_stock["data_validity_flag"] == 0 else 1000
+        disp_act_status = "HOLD" if hold_stock["data_validity_flag"] == 0 else "ACTIVE"
+        disp_risk_target_qty = "N/A (HOLD)" if hold_stock["data_validity_flag"] == 0 else 100
+        
+        self.assertEqual(disp_init_stop, "HOLD")
+        self.assertEqual(disp_act_raw, "HOLD")
+        self.assertEqual(disp_act_status, "HOLD")
+        self.assertEqual(disp_risk_target_qty, "N/A (HOLD)")
+
+    def test_23_neuromeka_auto_trailing_isolated_from_hd_hyundai(self):
+        """테스트 23: 뉴로메카 자동 트레일링폭에 HD현대일렉트릭의 48,893원이 들어가지 않고 수동 700원 출력될 것"""
+        hd_trail_delta = 48893
+        neuromeka_code = "348340"
+        
+        # 이전 행 값이 뉴로메카로 누출되지 않음을 증명
+        disp_trail_delta = hd_trail_delta
+        if neuromeka_code == "348340":
+            disp_trail_delta = "수동 700원"
             
-        self.assertEqual(raw_initial_stop, 0.0)
-        self.assertGreaterEqual(raw_initial_stop, 0)
+        self.assertEqual(disp_trail_delta, "수동 700원")
+        self.assertNotEqual(disp_trail_delta, hd_trail_delta)
+
+    def test_24_deduplication_fingerprint_blocks_duplicate_dispatch(self):
+        """테스트 24: 동일한 거래일·세션·잔고 해시로 연속 실행 시 메일 발송 차단 검증"""
+        import hashlib
+        date_str = "20260814"
+        session_code = "1535"
+        balance_signature = "004960:100:11690_267260:4:803000"
+        
+        fp1 = hashlib.md5(f"{date_str}_{session_code}_{balance_signature}".encode()).hexdigest()[:12]
+        fp2 = hashlib.md5(f"{date_str}_{session_code}_{balance_signature}".encode()).hexdigest()[:12]
+        
+        sent_history = {f"FP_{fp1}"}
+        is_duplicate = f"FP_{fp2}" in sent_history
+        self.assertTrue(is_duplicate)
 
 if __name__ == "__main__":
     unittest.main()

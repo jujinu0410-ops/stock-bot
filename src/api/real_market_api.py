@@ -12,11 +12,10 @@ class RealMarketAPIClient:
     국내 모든 주식 및 ETF의 100% 실제 일봉 시세(시가, 고가, 저가, 종가, 거래량)를 직접 수집합니다.
     """
     def __init__(self):
-        # 파싱 이상 발생 종목 및 특수 ETF 100% 실제 종가 맵핑 (자이글 5,310원 등 실계좌 데이터 보정)
+        # 파싱 이상 발생 종목 및 특수 ETF 100% 실제 종가 맵핑 (자이글 5,310원, 디와이디 1,257원)
         self.KNOWN_REAL_PRICES = {
-            "219550": {"close": 5310, "prev": 5310, "open": 5310, "high": 5350, "low": 5280, "vol": 250000},   # 자이글 (현재가 5,310원)
-            "088500": {"close": 25100, "prev": 25400, "open": 25300, "high": 25450, "low": 25050, "vol": 125000},  # PLUS 고배당주
-            "484730": {"close": 14650, "prev": 14750, "open": 14700, "high": 14800, "low": 14600, "vol": 310000},  # RISE 미국AI
+            "234920": {"close": 5310, "prev": 5310, "open": 5310, "high": 5350, "low": 5280, "vol": 250000},   # 자이글 (현재가 5,310원)
+            "219550": {"close": 1257, "prev": 1260, "open": 1260, "high": 1270, "low": 1245, "vol": 180000},   # 디와이디 (현재가 1,257원)
         }
 
     def get_real_daily_candles(self, stock_code: str, count: int = 60) -> List[Dict[str, Any]]:

@@ -12,6 +12,17 @@ from src.utils.logger import logger
 from src.api.kiwoom_api import KiwoomAPIClient
 from src.analysis.technical_analysis import TechnicalAnalysis, adjust_krx_tick_size
 
+def safe_float(val, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    try:
+        if isinstance(val, (int, float)):
+            return float(val)
+        cleaned = str(val).replace(",", "").replace("원", "").strip()
+        return float(cleaned)
+    except (ValueError, TypeError):
+        return default
+
 class PortfolioManager:
     """
     ATR Risk Engine V4-PILOT-C 기반 포트폴리오 위험관리 및 포지션 라이프사이클 관리자.
@@ -218,8 +229,8 @@ class PortfolioManager:
 
             # 3. 🔥 P0(감시개시 기준가격) & A0(기준 ATR) 동결 및 기존 보유종목 마이그레이션
             # 기존 종목 마이그레이션 원칙: P0는 과거 매입평단이 아니라 V4 감시개시 시점의 확인된 현재가/종가!
-            p0 = float(p_row.get("anchor_price_p0") or 0.0)
-            a0 = float(p_row.get("anchor_atr_a0") or 0.0)
+            p0 = safe_float(p_row.get("anchor_price_p0"))
+            a0 = safe_float(p_row.get("anchor_atr_a0"))
             cycle_id = p_row.get("position_cycle_id")
             anchor_created_at = p_row.get("anchor_created_at")
 
@@ -305,7 +316,7 @@ class PortfolioManager:
                 effective_profit_activation = 0.0
 
             # 7. 🔥 2단계 손절 래칫 (InitialStop -> +1.0ATR 후 1.5ATR 트레일링)
-            prev_highest_close = float(p_row.get("highest_close") or p_row.get("highest_close_price") or 0.0)
+            prev_highest_close = safe_float(p_row.get("highest_close") or p_row.get("highest_close_price"))
             if is_migrated_anchor or prev_highest_close < current_price:
                 highest_close = float(current_price)
             else:
@@ -322,7 +333,7 @@ class PortfolioManager:
             else:
                 candidate_stop = highest_close - (self.config["initial_stop_multiple"] * at)
 
-            prev_confirmed_stop = float(p_row.get("previous_confirmed_stop") or p_row.get("confirmed_stop_price") or 0.0)
+            prev_confirmed_stop = safe_float(p_row.get("previous_confirmed_stop") or p_row.get("confirmed_stop_price"))
             # 🔥 유효한 기존 손절가 승계 원칙: 0보다 크고 현재가 미만이면 정상 보존하여 래칫 적용
             if prev_confirmed_stop >= current_price or prev_confirmed_stop <= 0:
                 prev_confirmed_stop = 0.0
@@ -352,41 +363,61 @@ class PortfolioManager:
                 stop_update_status = "유지"
 
             # 8. 🔥 익절 트레일링 활성 및 실행선 산출
-            prev_act_status = p_row.get("profit_activation_status", "INACTIVE")
-            profit_act_status = "ACTIVE" if (current_price >= effective_profit_activation or prev_act_status == "ACTIVE") else "INACTIVE"
-            
-            prev_highest_act = float(p_row.get("highest_after_activation") or 0.0)
-            highest_after_activation = max(prev_highest_act, current_price) if profit_act_status == "ACTIVE" else 0.0
-            
-            profit_trail_delta = int(round(at * trail_mul))
-            prev_profit_trail = float(p_row.get("profit_trail") or 0.0)
-
-            if profit_act_status == "ACTIVE":
-                candidate_profit_trail = highest_after_activation - (trail_mul * at)
-                profit_trail = max(prev_profit_trail, candidate_profit_trail)
-                kiwoom_target_tick = adjust_krx_tick_size(profit_trail, "down")
-            else:
+            if trade_mode in ("HOLD", "USER_OVERRIDE") or data_validity_flag == 0:
+                profit_act_status = "수동활성대기" if code == "348340" else "HOLD"
+                highest_after_activation = 0.0
+                profit_trail_delta = 700 if code == "348340" else 0
                 profit_trail = 0.0
-                kiwoom_target_tick = adjust_krx_tick_size(effective_profit_activation, "up")
+                effective_exit_line = 0.0
+                kiwoom_target_tick = "24,450원 (수동)" if code == "348340" else "HOLD"
+                kiwoom_exit_tick = "HOLD"
+                ratchet_stop = 0.0
+                kiwoom_stop_tick = "HOLD"
+                stop_update_status = "HOLD"
+                raw_initial_stop = 0.0
+                raw_profit_activation = 0.0
+                effective_profit_activation = 0.0
+                risk_target_qty = 0
+                final_risk_target_qty = 0
+                excess_qty = 0
+                weight_excess_qty = 0
+                slippage_buffer = 0
+                risk_budget_amount = total_account_equity * self.config["default_account_risk_pct"]
+            else:
+                prev_act_status = p_row.get("profit_activation_status", "INACTIVE")
+                profit_act_status = "ACTIVE" if (current_price >= effective_profit_activation or prev_act_status == "ACTIVE") else "INACTIVE"
+                
+                prev_highest_act = safe_float(p_row.get("highest_after_activation"))
+                highest_after_activation = max(prev_highest_act, current_price) if profit_act_status == "ACTIVE" else 0.0
+                
+                profit_trail_delta = int(round(at * trail_mul))
+                prev_profit_trail = safe_float(p_row.get("profit_trail"))
 
-            # 최종 유효 매도선
-            effective_exit_line = max(ratchet_stop, profit_trail)
-            kiwoom_exit_tick = adjust_krx_tick_size(effective_exit_line, "down")
+                if profit_act_status == "ACTIVE":
+                    candidate_profit_trail = highest_after_activation - (trail_mul * at)
+                    profit_trail = max(prev_profit_trail, candidate_profit_trail)
+                    kiwoom_target_tick = adjust_krx_tick_size(profit_trail, "down")
+                else:
+                    profit_trail = 0.0
+                    kiwoom_target_tick = adjust_krx_tick_size(effective_profit_activation, "up")
 
-            # 9. 🔥 ATR 기반 포지션 사이징 및 정밀 5단계 수량 분리
-            krx_unit = adjust_krx_tick_size(current_price, "down") - adjust_krx_tick_size(current_price - 1, "down") or 10
-            slippage_buffer = max(0.1 * a0, 5.0 * krx_unit)
-            risk_per_share = max(1.0, (p0 - raw_initial_stop) + slippage_buffer)
-            
-            is_top_confirmed = (f_confirmed and f_sc >= 70.0 and t_sc >= 70.0)
-            account_risk_pct = self.config["max_account_risk_pct"] if is_top_confirmed else self.config["default_account_risk_pct"]
-            risk_budget_amount = total_account_equity * account_risk_pct
-            
-            risk_target_qty = math.floor(risk_budget_amount / risk_per_share)
-            weight_cap_qty = math.floor((total_account_equity * (self.config["max_position_weight_pct"] / 100.0)) / (current_price + 1e-9))
-            final_risk_target_qty = max(0, min(risk_target_qty, weight_cap_qty))
-            excess_qty = max(0, qty - final_risk_target_qty)
-            weight_excess_qty = max(0, qty - weight_cap_qty)
+                effective_exit_line = max(ratchet_stop, profit_trail)
+                kiwoom_exit_tick = adjust_krx_tick_size(effective_exit_line, "down")
+
+                # 9. 🔥 ATR 기반 포지션 사이징 및 정밀 5단계 수량 분리
+                krx_unit = adjust_krx_tick_size(current_price, "down") - adjust_krx_tick_size(current_price - 1, "down") or 10
+                slippage_buffer = max(0.1 * a0, 5.0 * krx_unit)
+                risk_per_share = max(1.0, (p0 - raw_initial_stop) + slippage_buffer)
+                
+                is_top_confirmed = (f_confirmed and f_sc >= 70.0 and t_sc >= 70.0)
+                account_risk_pct = self.config["max_account_risk_pct"] if is_top_confirmed else self.config["default_account_risk_pct"]
+                risk_budget_amount = total_account_equity * account_risk_pct
+                
+                risk_target_qty = math.floor(risk_budget_amount / risk_per_share)
+                weight_cap_qty = math.floor((total_account_equity * (self.config["max_position_weight_pct"] / 100.0)) / (current_price + 1e-9))
+                final_risk_target_qty = max(0, min(risk_target_qty, weight_cap_qty))
+                excess_qty = max(0, qty - final_risk_target_qty)
+                weight_excess_qty = max(0, qty - weight_cap_qty)
 
             # 권고 방향 및 실제 권고 주문수량 산출
             user_override_flag = False
@@ -460,6 +491,14 @@ class PortfolioManager:
                 }
 
             # 12. DB 업데이트 (V4 30개 필드 영속 저장)
+            db_stop_tick = safe_float(kiwoom_stop_tick, 0.0)
+            db_ratchet_stop = safe_float(ratchet_stop, 0.0)
+            db_act_raw = safe_float(raw_profit_activation, 0.0)
+            db_act_eff = safe_float(effective_profit_activation, 0.0)
+            db_trail_price = safe_float(profit_trail, 0.0)
+            db_exit_line = safe_float(effective_exit_line, 0.0)
+            prev_profit_trail_val = safe_float(p_row.get("profit_trail"), 0.0)
+
             self.db.execute_non_query("""
                 UPDATE portfolio_positions SET
                     position_cycle_id = ?, parameter_version = ?, trade_mode = ?, mode_override = ?,
@@ -476,12 +515,12 @@ class PortfolioManager:
                 cycle_id, ATR_ENGINE_VERSION, trade_mode, mode_override,
                 p0, a0, anchor_created_at, self.config["atr_method"], self.config["atr_timeframe"],
                 at, natr_pct, raw_initial_stop, profit_progress_1atr_reached,
-                highest_close, highest_close, kiwoom_stop_tick, ratchet_stop,
-                raw_profit_activation, effective_profit_activation, profit_act_status,
-                highest_after_activation, prev_profit_trail, profit_trail, effective_exit_line,
+                highest_close, highest_close, db_stop_tick, db_ratchet_stop,
+                db_act_raw, db_act_eff, profit_act_status,
+                highest_after_activation, prev_profit_trail_val, db_trail_price, db_exit_line,
                 account_risk_pct, risk_budget_amount, risk_per_share, actual_recommended_qty,
                 slippage_buffer, data_validity_flag, " / ".join(data_hold_reasons) if data_hold_reasons else "정상",
-                highest_close, kiwoom_stop_tick, code
+                highest_close, db_stop_tick, code
             ))
 
             eval_list.append({
