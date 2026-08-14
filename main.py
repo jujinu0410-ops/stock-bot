@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime
 import pandas as pd
 import numpy as np
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 # 프로젝트 루트 디렉토리 설정
 BASE_DIR = Path(__file__).resolve().parent
@@ -19,6 +19,7 @@ from src.engine.trading_engine import TradingEngine
 from src.engine.portfolio_manager import PortfolioManager
 from src.engine.watchlist_manager import WatchlistManager
 from src.notifications.gmail_notifier import GmailNotifier
+from src.utils.excel_exporter import create_analysis_excel_report
 from src.utils.logger import logger
 
 def update_market_data_stub(db: DatabaseManager, dart_client: DartAPIClient, watchlist_mgr: WatchlistManager):
@@ -51,17 +52,22 @@ def update_market_data_stub(db: DatabaseManager, dart_client: DartAPIClient, wat
 
     logger.info("실시간 실제 시세 및 DART 재무 데이터 최신화 완료")
 
-def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[str] = None, remove_code: Optional[str] = None):
+def run_post_market_analysis(
+    add_code: Optional[str] = None,
+    add_name: Optional[str] = None,
+    remove_code: Optional[str] = None,
+    force: bool = False
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     실시간 계좌 보유 종목 평가 ➔ 관심 종목 스캔 ➔ 이메일 리포트 발송 실행 함수
     """
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d %H:%M:%S")
-    date_title_str = f"{now.month}월 {now.day}일"
+    date_str = now.strftime("%Y%m%d")
 
-    logger.info("==================================================")
+    logger.info("=" * 50)
     logger.info(f" [내 계좌 보유 종목 중심 실시간 정밀 평가 & 리포트 발송] - {today_str}")
-    logger.info("==================================================")
+    logger.info("=" * 50)
 
     # 1. 초기화
     db = DatabaseManager()
@@ -169,12 +175,11 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
         logger.info(f" [통합 평가 완료] 내 보유종목: {len(held_status)}개 | 매매 신호 포착: {len(caught_signals)}개")
         logger.info("==================================================")
 
-        # 5. 📊 실제 분석 데이터 종합 엑셀파일(.xlsx) 생성 및 지메일 첨부 발송
-        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        # 6. 📊 실제 분석 데이터 종합 엑셀파일(.xlsx) 생성 및 지메일 첨부 발송
+        date_str_file = datetime.now().strftime("%Y-%m-%d %H:%M")
         
-        from src.utils.excel_exporter import create_analysis_excel_report
         excel_path = create_analysis_excel_report(
-            date_str=date_str,
+            date_str=date_str_file,
             held_portfolio=held_status,
             all_results=all_results,
             db_manager=db
@@ -185,14 +190,12 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
 
         now_dt = datetime.now()
         hour_now = now_dt.hour
-        if hour_now < 13:
-            dispatch_tag = "1차 장중 리포트(11:20)"
-        else:
-            dispatch_tag = "2차 장마감 정밀 리포트(15:35)"
+        session_code = "1120" if hour_now < 13 else "1535"
+        dispatch_id = f"{now_dt.strftime('%Y%m%d')}_{session_code}"
+        dispatch_tag = "1차 장중 리포트(11:20)" if hour_now < 13 else "2차 장마감 정밀 리포트(15:35)"
 
         subject = f"[{dispatch_tag}] {now_dt.month}월 {now_dt.day}일 내 계좌 보유 종목 정밀 평가 & 관심 종목 리포트"
         
-        notifier = GmailNotifier()
         html_report = notifier.generate_html_report(
             date_str=date_str,
             total_count=len(all_results),
@@ -201,15 +204,20 @@ def run_post_market_analysis(add_code: Optional[str] = None, add_name: Optional[
             held_portfolio=held_status
         )
         
-        sent_success = notifier.send_email(
-            subject=subject,
-            html_content=html_report,
-            attachments=[excel_path, csv_held_path, csv_summary_path]
-        )
-        if sent_success:
-            logger.info("내 종목 정밀 평가 지메일 리포트 (본문 CSV, 백업 CSV 및 ASCII XLSX 첨부) 성공 발송 완료!")
+        # 🔥 중복 발송 방지 검사 (동일 날짜/회차 메일 이미 발송 시 중복 발송 건너뛰기)
+        if not force and db.is_dispatch_already_sent(dispatch_id):
+            logger.info(f"🛑 [중복 발송 방지] {dispatch_id} ({dispatch_tag}) 리포트가 오늘 이미 성공적으로 발송되었습니다. 메일 발송을 안전하게 건너뜁니다. (강제 재발송 필요 시 --force 옵션 사용)")
         else:
-            logger.warning("지메일 발송에 실패했거나 설정이 미비합니다. 로컬 로그 파일을 확인하세요.")
+            sent_success = notifier.send_email(
+                subject=subject,
+                html_content=html_report,
+                attachments=[excel_path, csv_held_path, csv_summary_path]
+            )
+            if sent_success:
+                db.record_dispatch_success(dispatch_id, dispatch_tag, notifier.recipient_email, subject)
+                logger.info(f"내 종목 정밀 평가 지메일 리포트 성공 발송 및 발송 기록 완료! [식별자: {dispatch_id}]")
+            else:
+                logger.warning("지메일 발송에 실패했거나 설정이 미비합니다. 로컬 로그 파일을 확인하세요.")
 
     except Exception as e:
         logger.critical(f"시스템 실행 중 예외 발생: {e}", exc_info=True)
@@ -223,6 +231,7 @@ if __name__ == "__main__":
     parser.add_argument("--remove-code", type=str, help="관심종목 제거 코드")
     parser.add_argument("--add-holding", nargs=4, metavar=('CODE', 'NAME', 'QTY', 'PRICE'), help="실제 보유 종목 추가 (예: --add-holding 005930 삼성전자 10 70000)")
     parser.add_argument("--clear-holdings", action="store_true", help="기존 테스트/모의 보유 종목 모두 삭제")
+    parser.add_argument("--force", action="store_true", help="중복 발송 방지 검사를 우회하여 메일 강제 재발송")
     args = parser.parse_args()
 
     db_init = DatabaseManager()
@@ -238,5 +247,6 @@ if __name__ == "__main__":
     run_post_market_analysis(
         add_code=args.add_code,
         add_name=args.add_name,
-        remove_code=args.remove_code
+        remove_code=args.remove_code,
+        force=args.force
     )

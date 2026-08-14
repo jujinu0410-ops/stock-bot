@@ -241,3 +241,16 @@ class DatabaseManager:
         if not rows:
             return pd.DataFrame()
         return pd.DataFrame([dict(r) for r in rows])
+
+    def is_dispatch_already_sent(self, dispatch_id: str) -> bool:
+        """해당 회차(예: 20260814_1120 또는 20260814_1535)의 메일이 이미 발송되었는지 확인"""
+        rows = self.execute_query("SELECT dispatch_id, sent_at FROM dispatch_history WHERE dispatch_id = ?", (dispatch_id,))
+        return bool(rows and len(rows) > 0)
+
+    def record_dispatch_success(self, dispatch_id: str, dispatch_type: str, recipient: str, subject: str) -> None:
+        """메일 발송 성공 기록 저장"""
+        self.execute_non_query("""
+            INSERT OR REPLACE INTO dispatch_history (dispatch_id, dispatch_type, recipient, subject, sent_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (dispatch_id, dispatch_type, recipient, subject))
+

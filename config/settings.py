@@ -134,6 +134,15 @@ TABLE_SCHEMAS = {
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (stock_code) REFERENCES stock_info(stock_code)
         );
+    """,
+    "dispatch_history": """
+        CREATE TABLE IF NOT EXISTS dispatch_history (
+            dispatch_id TEXT PRIMARY KEY,
+            dispatch_type TEXT,
+            sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            recipient TEXT,
+            subject TEXT
+        );
     """
 }
 
