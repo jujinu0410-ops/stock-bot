@@ -455,5 +455,30 @@ class TestATREngineV4(unittest.TestCase):
         self.assertIn("⚫ 거래정지 보류/공시감시", html_out)
         self.assertNotIn("🟢 계속 보유/홀딩", html_out)
 
+    def test_29_disclosure_priority_guide_rules(self):
+        """테스트 29: DART 공시 브리핑의 매매 대응 가이드가 포지션 전략(Trade Mode)을 최우선 준수할 것"""
+        from src.api.dart_api import DartAPIClient
+        client = DartAPIClient()
+        
+        # 1. 자이글(SUSPENDED_HOLD)
+        zaigle_stock = {"stock_code": "234920", "trade_mode": "SUSPENDED_HOLD", "recommended_order_qty": 0}
+        b_zaigle = client._generate_disclosure_briefing("자이글", "234920", "반기보고서 (2026.06)", "202608140001", "20260814", stock_info=zaigle_stock)
+        self.assertIn("매매재개 전 가격·ATR 대응 금지", b_zaigle["guide"])
+        
+        # 2. DSC인베스트먼트(RECOVERY)
+        dsc_stock = {"stock_code": "241520", "trade_mode": "RECOVERY", "recommended_order_qty": 34}
+        b_dsc = client._generate_disclosure_briefing("DSC인베스트먼트", "241520", "반기보고서 (2026.06)", "202608140002", "20260814", stock_info=dsc_stock)
+        self.assertIn("30%(34주) 손실축소 분할매도", b_dsc["guide"])
+        
+        # 3. 테이팩스(CONCENTRATION_RISK)
+        tpx_stock = {"stock_code": "055490", "trade_mode": "CONCENTRATION_RISK", "recommended_order_qty": 103}
+        b_tpx = client._generate_disclosure_briefing("테이팩스", "055490", "반기보고서 (2026.06)", "202608140003", "20260814", stock_info=tpx_stock)
+        self.assertIn("20% 초과 수량(103주) 분할축소", b_tpx["guide"])
+        
+        # 4. 뉴로메카(USER_OVERRIDE)
+        nrm_stock = {"stock_code": "348340", "trade_mode": "USER_OVERRIDE", "recommended_order_qty": 31}
+        b_nrm = client._generate_disclosure_briefing("뉴로메카", "348340", "반기보고서 (2026.06)", "202608140004", "20260814", stock_info=nrm_stock)
+        self.assertIn("사용자 수동 감시주문(활성가 24,450원 / 추적폭 700원 / 31주 미체결)", b_nrm["guide"])
+
 if __name__ == "__main__":
     unittest.main()
