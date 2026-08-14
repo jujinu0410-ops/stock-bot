@@ -57,10 +57,14 @@ class PortfolioManager:
         if positions and len(positions) > 0 and self.kiwoom.is_valid_key():
             logger.info(f"[PortfolioManager] 🔥 키움 REST API 실계좌 연동 성공! (실제 보유: {len(positions)}개 종목)")
             
-            # 기존 오프라인 잔고 DB 완전 초기화 후 키움 실계좌 잔고만 등록
-            self.clear_all_holdings()
+            # 기존 트레일링 최고종가/확정손절가 보존을 위해 전체 삭제 대신 UPSERT 및 매도종목만 선별 삭제
+            active_codes = [pos["stock_code"] for pos in positions]
             for pos in positions:
                 self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
+            
+            if active_codes:
+                placeholders = ",".join(["?"] * len(active_codes))
+                self.db.execute_non_query(f"DELETE FROM portfolio_positions WHERE stock_code NOT IN ({placeholders})", tuple(active_codes))
             
             # config/portfolio_holdings.json 파일도 실계좌 잔고로 자동 동기화 덮어쓰기
             cfg_path = pathlib.Path("config/portfolio_holdings.json")
@@ -81,18 +85,24 @@ class PortfolioManager:
                     with open(cfg_path, "r", encoding="utf-8") as f:
                         positions = json.load(f)
                     if positions:
-                        self.clear_all_holdings()
+                        active_codes = [pos["stock_code"] for pos in positions]
                         for pos in positions:
                             self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
+                        if active_codes:
+                            placeholders = ",".join(["?"] * len(active_codes))
+                            self.db.execute_non_query(f"DELETE FROM portfolio_positions WHERE stock_code NOT IN ({placeholders})", tuple(active_codes))
                         return positions
                 except Exception as e:
                     logger.error(f"[PortfolioManager] JSON 백업 로드 실패: {e}")
 
         # 모든 연동 실패 시 기본 mock 반환
         mock_positions = self.kiwoom._get_mock_account_positions()
-        self.clear_all_holdings()
+        active_codes = [pos["stock_code"] for pos in mock_positions]
         for pos in mock_positions:
             self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
+        if active_codes:
+            placeholders = ",".join(["?"] * len(active_codes))
+            self.db.execute_non_query(f"DELETE FROM portfolio_positions WHERE stock_code NOT IN ({placeholders})", tuple(active_codes))
         return mock_positions
 
     def get_held_portfolio_status(self, engine=None) -> List[Dict[str, Any]]:
