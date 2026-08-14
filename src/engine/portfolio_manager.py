@@ -208,6 +208,7 @@ class PortfolioManager:
             eval_amount = qty * current_price
             pnl_amount = eval_amount - total_inv
             pnl_pct = round((pnl_amount / total_inv) * 100.0, 2) if total_inv > 0 else 0.0
+            eval_weight_pct = round((eval_amount / total_account_equity) * 100.0, 1) if total_account_equity > 0 else 0.0
 
             # 2. 직전 완료봉 Wilder ATR14 (At) 및 NATR(%) 산출
             at = float(tech_eval.get("atr_14", current_price * 0.03) or (current_price * 0.03))
@@ -215,18 +216,20 @@ class PortfolioManager:
                 at = current_price * 0.03
             natr_pct = round((at / (current_price + 1e-9)) * 100.0, 2)
 
-            # 3. 🔥 P0(감시개시 기준가격) & A0(기준 ATR) 동결 및 승계 로직
+            # 3. 🔥 P0(감시개시 기준가격) & A0(기준 ATR) 동결 및 기존 보유종목 마이그레이션
+            # 기존 종목 마이그레이션 원칙: P0는 과거 매입평단이 아니라 V4 감시개시 시점의 확인된 현재가/종가!
             p0 = float(p_row.get("anchor_price_p0") or 0.0)
             a0 = float(p_row.get("anchor_atr_a0") or 0.0)
             cycle_id = p_row.get("position_cycle_id")
             anchor_created_at = p_row.get("anchor_created_at")
 
+            is_legacy_misanchored = (p0 > current_price * 1.15 and pnl_pct < -10.0)
             is_migrated_anchor = False
-            if p0 <= 0 or a0 <= 0:
-                p0 = avg_p if avg_p > 0 else current_price
-                a0 = at
+            if p0 <= 0 or a0 <= 0 or (p_row.get("reanchor_flag", 0) == 1) or is_legacy_misanchored:
+                p0 = float(current_price)
+                a0 = float(at)
                 anchor_created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                cycle_id = f"{code}_{datetime.now().strftime('%Y%m%d')}_MIGRATED"
+                cycle_id = f"{code}_{datetime.now().strftime('%Y%m%d')}_V4"
                 is_migrated_anchor = True
 
             # 4. 🔥 데이터 이상 및 자동 주문설정 차단 검증 (DATA_HOLD)
@@ -252,42 +255,69 @@ class PortfolioManager:
                 trade_mode = "HOLD"
             elif mode_override:
                 trade_mode = str(mode_override).upper()
+            elif eval_weight_pct > self.config.get("max_position_weight_pct", 20.0):
+                trade_mode = "CONCENTRATION_RISK" # 단일 비중 20% 초과 종목
             elif pnl_pct <= -25.0 and code == "348340":
                 trade_mode = "EMERGENCY"  # 뉴로메카 등 고위험 비상축소
-            elif pnl_pct <= -20.0:
+            elif pnl_pct <= -15.0:
                 trade_mode = "RECOVERY"   # 손실 종목 반등 시 손실축소
             else:
                 trade_mode = "NORMAL"
 
-            # 6. 🔥 V4 고정 감시가격 (P0, A0 기반) 산출
-            buy_watch_mul = self.config["buy_watch_multiple"]      # 1.5
-            buy_rebound_mul = self.config["buy_rebound_multiple"]  # 0.5
-            init_stop_mul = self.config["initial_stop_multiple"]    # 2.0
-            profit_act_mul = self.config["profit_activation_multiple"] # 3.0
+            # 6. 🔥 모드별 고정 감시가격 (P0, A0 기반) 및 트레일링 파라미터 산출
+            if trade_mode == "RECOVERY":
+                # RECOVERY: 일반 P0+3ATR 금지, 단기 기술적 반등 1.2 ATR 활성, 0.3 ATR 트레일링
+                buy_watch_mul = 0.0
+                buy_rebound_mul = 0.0
+                init_stop_mul = 1.5
+                profit_act_mul = 1.2
+                trail_mul = 0.3
+            elif trade_mode == "EMERGENCY":
+                buy_watch_mul = 0.0
+                buy_rebound_mul = 0.0
+                init_stop_mul = 1.0
+                profit_act_mul = 1.0
+                trail_mul = 0.15
+            elif trade_mode == "CONCENTRATION_RISK":
+                buy_watch_mul = 0.0
+                buy_rebound_mul = 0.0
+                init_stop_mul = self.config["initial_stop_multiple"] # 2.0
+                profit_act_mul = self.config["profit_activation_multiple"] # 3.0
+                trail_mul = self.config["normal_profit_trail_multiple"] # 0.8
+            else: # NORMAL
+                buy_watch_mul = self.config["buy_watch_multiple"]      # 1.5
+                buy_rebound_mul = self.config["buy_rebound_multiple"]  # 0.5
+                init_stop_mul = self.config["initial_stop_multiple"]    # 2.0
+                profit_act_mul = self.config["profit_activation_multiple"] # 3.0
+                trail_mul = self.config["normal_profit_trail_multiple"] # 0.8
 
-            raw_buy_watch = p0 - (buy_watch_mul * a0)
-            rebound_delta = int(round(a0 * buy_rebound_mul))
+            raw_buy_watch = p0 - (buy_watch_mul * a0) if buy_watch_mul > 0 else 0.0
+            rebound_delta = int(round(a0 * buy_rebound_mul)) if buy_rebound_mul > 0 else 0
             raw_initial_stop = p0 - (init_stop_mul * a0)
             raw_profit_activation = p0 + (profit_act_mul * a0)
-            
-            # 보유종목 상승률 캡 (필요 시 적용값과 원시값 구분)
             effective_profit_activation = raw_profit_activation
-            profit_cap_applied = False
 
             # 7. 🔥 2단계 손절 래칫 (InitialStop -> +1.0ATR 후 1.5ATR 트레일링)
             prev_highest_close = float(p_row.get("highest_close") or p_row.get("highest_close_price") or 0.0)
-            highest_close = max(prev_highest_close, float(current_price))
+            if is_migrated_anchor or prev_highest_close < current_price:
+                highest_close = float(current_price)
+            else:
+                highest_close = max(prev_highest_close, float(current_price))
             
             prev_1atr_reached = bool(p_row.get("profit_progress_1atr_reached", 0))
             profit_progress_1atr_reached = 1 if (highest_close >= (p0 + (1.0 * a0)) or prev_1atr_reached) else 0
 
             # +1.0 ATR 달성 여부에 따른 후보 손절가 계산 (직전 완료봉 At 적용)
-            if profit_progress_1atr_reached == 1:
+            if trade_mode in ("RECOVERY", "EMERGENCY"):
+                candidate_stop = highest_close - (init_stop_mul * at)
+            elif profit_progress_1atr_reached == 1:
                 candidate_stop = highest_close - (self.config["trailing_stop_multiple"] * at)
             else:
                 candidate_stop = highest_close - (self.config["initial_stop_multiple"] * at)
 
             prev_confirmed_stop = float(p_row.get("previous_confirmed_stop") or p_row.get("confirmed_stop_price") or 0.0)
+            if is_migrated_anchor or prev_confirmed_stop >= current_price:
+                prev_confirmed_stop = 0.0
             
             # 래칫 원칙: 직전 손절가 및 초기 손절가보다 낮아질 수 없음
             ratchet_stop = max(prev_confirmed_stop, raw_initial_stop, candidate_stop)
@@ -299,6 +329,12 @@ class PortfolioManager:
             if prev_confirmed_stop > 0 and kiwoom_stop_tick < prev_confirmed_stop:
                 kiwoom_stop_tick = int(prev_confirmed_stop)
                 ratchet_stop = max(ratchet_stop, prev_confirmed_stop)
+
+            # 🔥 손절가 역전(손절가 >= 현재가) 방지 Fail-Safe
+            if ratchet_stop >= current_price or kiwoom_stop_tick >= current_price:
+                data_validity_flag = 0
+                data_hold_reasons.append("손절가 역전(손절가 >= 현재가)")
+                trade_mode = "HOLD"
 
             if prev_confirmed_stop == 0:
                 stop_update_status = "🆕 신규설정"
@@ -314,14 +350,6 @@ class PortfolioManager:
             prev_highest_act = float(p_row.get("highest_after_activation") or 0.0)
             highest_after_activation = max(prev_highest_act, current_price) if profit_act_status == "ACTIVE" else 0.0
             
-            # 모드별 트레일링폭 결정
-            if trade_mode == "RECOVERY":
-                trail_mul = self.config["recovery_trail_min"] + self.config["recovery_trail_max"] / 2.0 # 0.3
-            elif trade_mode == "EMERGENCY":
-                trail_mul = self.config["emergency_trail_multiple"] # 0.15
-            else:
-                trail_mul = self.config["normal_profit_trail_multiple"] # 0.8
-
             profit_trail_delta = int(round(at * trail_mul))
             prev_profit_trail = float(p_row.get("profit_trail") or 0.0)
 
@@ -337,7 +365,7 @@ class PortfolioManager:
             effective_exit_line = max(ratchet_stop, profit_trail)
             kiwoom_exit_tick = adjust_krx_tick_size(effective_exit_line, "down")
 
-            # 9. 🔥 ATR 기반 포지션 사이징 및 계좌 위험예산
+            # 9. 🔥 ATR 기반 포지션 사이징 및 정밀 5단계 수량 분리
             krx_unit = adjust_krx_tick_size(current_price, "down") - adjust_krx_tick_size(current_price - 1, "down") or 10
             slippage_buffer = max(0.1 * a0, 5.0 * krx_unit)
             risk_per_share = max(1.0, (p0 - raw_initial_stop) + slippage_buffer)
@@ -346,22 +374,45 @@ class PortfolioManager:
             account_risk_pct = self.config["max_account_risk_pct"] if is_top_confirmed else self.config["default_account_risk_pct"]
             risk_budget_amount = total_account_equity * account_risk_pct
             
-            risk_based_qty = math.floor(risk_budget_amount / risk_per_share)
+            risk_target_qty = math.floor(risk_budget_amount / risk_per_share)
             weight_cap_qty = math.floor((total_account_equity * (self.config["max_position_weight_pct"] / 100.0)) / (current_price + 1e-9))
-            recommended_qty = max(0, min(risk_based_qty, weight_cap_qty))
+            final_risk_target_qty = max(0, min(risk_target_qty, weight_cap_qty))
+            excess_qty = max(0, qty - final_risk_target_qty)
 
-            # 10. 호가 보정값 정리
+            # 권고 방향 및 실제 권고 주문수량 산출
+            if data_validity_flag == 0 or trade_mode == "HOLD":
+                order_direction = f"보류 ({' / '.join(data_hold_reasons) if data_hold_reasons else 'DATA_HOLD'})"
+                actual_recommended_qty = 0
+            elif trade_mode == "RECOVERY":
+                order_direction = "매도 (손실축소 30%)"
+                actual_recommended_qty = max(1, math.floor(qty * 0.30))
+            elif trade_mode == "EMERGENCY":
+                order_direction = "매도 (긴급축소 50%)"
+                actual_recommended_qty = max(1, math.floor(qty * 0.50))
+            elif trade_mode == "CONCENTRATION_RISK":
+                order_direction = f"보유 (비중과다 {eval_weight_pct}% 추매금지)"
+                actual_recommended_qty = 0
+            elif trade_mode == "NORMAL" and tech_eval.get("signal_type") == "1차 신규매수":
+                order_direction = "매수 (분할진입 50%)"
+                actual_recommended_qty = max(1, math.floor(final_risk_target_qty * 0.5))
+            else:
+                order_direction = "보유 (관망/홀딩)"
+                actual_recommended_qty = 0
+
+            # 10. 호가 보정값 및 HOLD 처리
             kiwoom_buy_tick = adjust_krx_tick_size(raw_buy_watch, "down") if raw_buy_watch > 0 else 0
 
-            if data_validity_flag == 0:
+            if data_validity_flag == 0 or trade_mode == "HOLD":
                 display_stop_tick = "HOLD"
                 display_target_tick = "HOLD"
                 display_buy_tick = "HOLD"
+                display_exit_tick = "HOLD"
                 auto_order_enabled = False
             else:
                 display_stop_tick = kiwoom_stop_tick
                 display_target_tick = kiwoom_target_tick
                 display_buy_tick = kiwoom_buy_tick
+                display_exit_tick = kiwoom_exit_tick
                 auto_order_enabled = True
 
             # 11. 45분봉 수급 지표 수집
@@ -400,7 +451,7 @@ class PortfolioManager:
                 highest_close, highest_close, kiwoom_stop_tick, ratchet_stop,
                 raw_profit_activation, effective_profit_activation, profit_act_status,
                 highest_after_activation, prev_profit_trail, profit_trail, effective_exit_line,
-                account_risk_pct, risk_budget_amount, risk_per_share, recommended_qty,
+                account_risk_pct, risk_budget_amount, risk_per_share, actual_recommended_qty,
                 slippage_buffer, data_validity_flag, " / ".join(data_hold_reasons) if data_hold_reasons else "정상",
                 highest_close, kiwoom_stop_tick, code
             ))
@@ -457,14 +508,18 @@ class PortfolioManager:
                 "kiwoom_target_tick_price": display_target_tick,
                 "kiwoom_exit_tick_price": kiwoom_exit_tick if auto_order_enabled else "HOLD",
 
-                # 포지션 사이징
+                # 포지션 사이징 및 5단계 세부 수량
                 "slippage_buffer": int(round(slippage_buffer)),
                 "risk_per_share": int(round(risk_per_share)),
                 "account_risk_pct": account_risk_pct * 100.0,
                 "risk_budget_amount": int(round(risk_budget_amount)),
-                "risk_based_qty": risk_based_qty,
+                "risk_based_qty": risk_target_qty,
                 "weight_cap_qty": weight_cap_qty,
-                "recommended_quantity": recommended_qty,
+                "risk_target_qty": final_risk_target_qty,
+                "excess_qty": excess_qty,
+                "order_direction": order_direction,
+                "recommended_quantity": actual_recommended_qty,
+                "recommended_order_qty": actual_recommended_qty,
                 "data_validity_flag": data_validity_flag,
                 "data_hold_reason": " / ".join(data_hold_reasons) if data_hold_reasons else "정상",
                 "auto_order_enabled": auto_order_enabled,

@@ -331,14 +331,24 @@ class GmailNotifier:
                 s_name, s_code = sw.get('stock_name'), sw.get('stock_code')
                 s_chg, s_act = sw.get('daily_change_pct', 0.0), sw.get('action_status', '보유')
                 s_mode = sw.get('trade_mode', 'NORMAL')
-                s_ttarget, s_tstop = sw.get('kiwoom_target_tick_price', 0), sw.get('confirmed_stop_price', 0)
+                s_ttarget = sw.get('kiwoom_target_tick_price', 'HOLD')
+                s_tstop = sw.get('kiwoom_stop_tick_price', 'HOLD')
                 s_at = sw.get('current_completed_atr', sw.get('atr_14', 0))
-                s_trail_delta = sw.get('profit_trail_delta', int(s_at * 0.8))
+                s_trail_delta = abs(sw.get('profit_trail_delta', int(s_at * 0.8)))
                 s_color = "#DC2626" if s_chg >= 0 else "#2563EB"
                 s_sign = "+" if s_chg >= 0 else ""
                 clean_act_display = format_strategy_action_html(s_act)
-                target_str = f"{s_ttarget:,}원" if isinstance(s_ttarget, (int, float)) and s_ttarget > 0 else str(s_ttarget)
-                stop_str = f"{s_tstop:,}원" if isinstance(s_tstop, (int, float)) and s_tstop > 0 else str(s_tstop)
+                
+                if s_mode == "HOLD" or sw.get("data_validity_flag", 1) == 0:
+                    target_str = "HOLD (주문대기)"
+                    stop_str = "HOLD (주문대기)"
+                    trail_str = "HOLD (비활성)"
+                    sizing_str = f"보유 {sw.get('quantity', 0):,}주 / 권고: 0주 (데이터 검증 대기)"
+                else:
+                    target_str = f"{s_ttarget:,}원" if isinstance(s_ttarget, (int, float)) and s_ttarget > 0 else str(s_ttarget)
+                    stop_str = f"{s_tstop:,}원" if isinstance(s_tstop, (int, float)) and s_tstop > 0 else str(s_tstop)
+                    trail_str = f"최고가 대비 {s_trail_delta:,}원 하락 시"
+                    sizing_str = f"위험목표 {sw.get('risk_target_qty', 0):,}주 | 현재 {sw.get('quantity', 0):,}주 | <b>권고: {sw.get('order_direction', '보유')} ({sw.get('recommended_order_qty', 0):,}주)</b>"
                 
                 meaningful_cards_html += f"""
                 <div style="background:#FFFFFF; border-left:5px solid {s_color}; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
@@ -348,7 +358,8 @@ class GmailNotifier:
                     </div>
                     <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
                         • <strong>목표/손절:</strong> <span style="color:#059669; font-weight:bold;">{target_str}</span> / <span style="color:#DC2626; font-weight:bold;">{stop_str}</span><br>
-                        • <strong>트레일링 폭:</strong> -{s_trail_delta:,}원
+                        • <strong>트레일링 폭:</strong> {trail_str}<br>
+                        • <strong>포지션 사이징:</strong> {sizing_str}
                     </div>
                 </div>
                 """

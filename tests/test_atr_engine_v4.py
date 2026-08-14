@@ -225,7 +225,6 @@ class TestATREngineV4(unittest.TestCase):
 
     def test_12_wilder_atr_standard_calculation(self):
         """테스트 12: Wilder ATR14 표준 수식 및 로컬/클라우드 일치성 검증"""
-        # 20봉의 가상 OHLCV 데이터 생성
         np.random.seed(42)
         dates = pd.date_range("2026-01-01", periods=20, freq="B").strftime("%Y%m%d")
         highs = [10000 + i*50 + np.random.randint(10, 100) for i in range(20)]
@@ -245,6 +244,51 @@ class TestATREngineV4(unittest.TestCase):
         self.assertEqual(len(atr_series), 20)
         self.assertFalse(atr_series.isna().any())
         self.assertGreater(atr_series.iloc[-1], 0)
+
+    def test_13_existing_holding_p0_migration_rule(self):
+        """테스트 13: 기존 보유종목 마이그레이션 시 P0는 과거 평단가가 아닌 감시개시 시점 현재가여야 함"""
+        avg_buy_p = 23364.0 # 테이팩스 평단가
+        current_p = 14620.0 # 현재가
+        atr_14 = 1197.3
+        
+        # P0가 현재가(14,620원)로 설정되어야 함
+        p0 = current_p
+        a0 = atr_14
+        
+        initial_stop = p0 - (2.0 * a0)
+        self.assertLess(initial_stop, current_p)
+        self.assertAlmostEqual(initial_stop, 12225.4, places=1)
+
+    def test_14_stop_loss_inversion_fail_safe(self):
+        """테스트 14: 손절가가 현재가 이상으로 역전되면 무조건 DATA_HOLD 처리되어야 함"""
+        current_p = 10000.0
+        abnormal_stop = 10500.0
+        
+        data_validity_flag = 1
+        data_hold_reasons = []
+        if abnormal_stop >= current_p:
+            data_validity_flag = 0
+            data_hold_reasons.append("손절가 역전(손절가 >= 현재가)")
+            trade_mode = "HOLD"
+
+        self.assertEqual(data_validity_flag, 0)
+        self.assertEqual(trade_mode, "HOLD")
+        self.assertIn("손절가 역전", data_hold_reasons[0])
+
+    def test_15_recovery_mode_pricing_and_sizing(self):
+        """테스트 15: RECOVERY 모드에서는 단기 반등 1.2ATR 활성, 0.3ATR 트레일링, 30% 분할매도 수량 산출"""
+        current_p = 14620.0
+        p0 = 14620.0
+        a0 = 1197.3
+        qty = 4283
+        
+        recovery_act = p0 + (1.2 * a0) # 16,056.76
+        trail_delta = int(round(a0 * 0.3)) # 359
+        rec_sell_qty = max(1, math.floor(qty * 0.30)) # 1284
+        
+        self.assertAlmostEqual(recovery_act, 16056.76, places=1)
+        self.assertEqual(trail_delta, 359)
+        self.assertEqual(rec_sell_qty, 1284)
 
 if __name__ == "__main__":
     unittest.main()

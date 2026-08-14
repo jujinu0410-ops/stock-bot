@@ -87,7 +87,10 @@ def create_analysis_excel_report(date_str: str,
             "계좌평가비중(%)": h.get("eval_weight_pct", 0.0),
             "ATR 엔진 버전": h.get("parameter_version", "V4-PILOT-C"),
             "매매모드": trade_mode,
-            "기준가격 P0(원)": h.get("anchor_price_p0", h.get("avg_buy_price")),
+            "기준가격 P0(감시개시가, 원)": h.get("anchor_price_p0", h.get("current_price")),
+            "매입평단가(원)": h.get("avg_buy_price"),
+            "현재가(원)": h.get("current_price"),
+            "당일등락률(%)": h.get("daily_change_pct", 0.0),
             "고정 기준 ATR A0(원)": h.get("anchor_atr_a0", h.get("atr_14")),
             "현재 완료봉 ATR At(원)": h.get("current_completed_atr", h.get("atr_14")),
             "NATR(%)": h.get("natr_pct", h.get("atr_pct", 0.0)),
@@ -107,21 +110,16 @@ def create_analysis_excel_report(date_str: str,
             "45분봉 ADX(14)": h.get("adx_14_45m", 0.0),
             "45분봉 OBV추세": h.get("obv_45m_trend", "-"),
             "45분봉 Chaikin_Osc": h.get("chaikin_osc_45m", 0),
-            "보유수량": h.get("quantity"),
-            "매입평단가(원)": h.get("avg_buy_price"),
-            "현재가(원)": h.get("current_price"),
-            "당일등락률(%)": h.get("daily_change_pct", 0.0),
             "감시시작후 최고종가(원)": h.get("highest_close_price", h.get("current_price")),
-            "추매 감시가격 P0-1.5A0(원)": buy_tick_val,
-            "반등 확인폭 +0.5A0(원)": h.get("buy_rebound_delta", 0),
+            "추매 감시가격(원)": buy_tick_val,
+            "반등 확인폭(원)": h.get("buy_rebound_delta", 0),
             "추매 주문상태": buy_status,
-            "초기 손절가 P0-2.0A0(원)": h.get("initial_stop_price", 0),
+            "초기 손절가(원)": h.get("initial_stop_price", 0),
             "현재 래칫 손절가(원)": h.get("ratchet_stop_price", conf_stop_val),
             "전일확정 손절가(원)": h.get("prev_confirmed_stop", 0),
             "금일확정 손절가(원)": conf_stop_val,
             "손절선 갱신상태": h.get("stop_update_status", "유지"),
-            "익절 트레일링 원시 활성가 P0+3.0A0(원)": h.get("profit_activation_raw", 0),
-            "상승률 캡 적용값(원)": h.get("profit_activation_effective", 0),
+            "익절 트레일링 원시 활성가(원)": h.get("profit_activation_raw", 0),
             "최종 익절 트레일링 활성가(원)": target_tick_val,
             "익절 활성 여부": h.get("profit_activation_status", "INACTIVE"),
             "익절 트레일링폭(원)": h.get("profit_trail_delta", 0),
@@ -129,9 +127,11 @@ def create_analysis_excel_report(date_str: str,
             "최종 유효 매도선(원)": exit_tick_val,
             "슬리피지 버퍼(원)": h.get("slippage_buffer", 0),
             "계좌 위험예산(원)": h.get("risk_budget_amount", 0),
-            "위험기준 권고수량": h.get("risk_based_qty", 0),
-            "20% 비중기준 수량": h.get("weight_cap_qty", 0),
-            "최종 권고수량": h.get("recommended_quantity", 0),
+            "위험기준 목표보유수량": h.get("risk_target_qty", h.get("risk_based_qty", 0)),
+            "현재 보유수량": h.get("quantity"),
+            "위험 초과수량": h.get("excess_qty", 0),
+            "권고 주문방향": h.get("order_direction", "보유"),
+            "실제 권고 주문수량": h.get("recommended_order_qty", h.get("recommended_quantity", 0)),
             "데이터 유효성": data_hold_reason if data_val_flag == 0 else "정상",
             "자동 주문설정 가능 여부": auto_order_ok,
             "손절 가격감시": stop_mon_status,
@@ -203,6 +203,9 @@ def create_analysis_excel_report(date_str: str,
 
     df_dart = pd.DataFrame(dart_data)
 
+    # 보유 종목 V4 값 매핑 (시트 3 일관성 동기화용)
+    held_v4_map = {h["stock_code"]: h for h in held_portfolio}
+
     # --- 3. 시트 3: 전체 종목 시세/수급 & 6대 안전조건 검증 요약 ---
     summary_data = []
     for r in all_results:
@@ -214,6 +217,19 @@ def create_analysis_excel_report(date_str: str,
         f_conf = r.get("f_score_confirmed", True)
         chg_pct = r.get("daily_change_pct", 0.0)
         sup_pass = r.get("supply_demand_pass", False)
+
+        # 보유 종목인 경우 V4 정밀 엔진 값 100% 동기화
+        if code in held_v4_map:
+            h_info = held_v4_map[code]
+            v4_stop = h_info.get("kiwoom_stop_tick_price", r.get("kiwoom_stop_tick_price", 0))
+            v4_target = h_info.get("kiwoom_target_tick_price", r.get("kiwoom_target_tick_price", 0))
+            v4_atr = h_info.get("current_completed_atr", h_info.get("atr_14", r.get("atr_14", 0.0)))
+            v4_ver_note = f"V4 연동 ({h_info.get('trade_mode', 'NORMAL')})"
+        else:
+            v4_stop = r.get("kiwoom_stop_tick_price", 0)
+            v4_target = r.get("kiwoom_target_tick_price", 0)
+            v4_atr = r.get("atr_14", 0.0)
+            v4_ver_note = "관심종목 (V4 감시대기)"
 
         # 계좌비중 시트 간 100% 동기화 연동
         held_weight = held_weight_map.get(code, 0.0)
@@ -238,10 +254,9 @@ def create_analysis_excel_report(date_str: str,
             final_sc_val = r.get("final_score")
             f_sc_disp = f_sc if f_conf else f"{f_sc:.1f}점 (잠정)"
 
-        pass_news = "UNCONFIRMED(FAIL)"  # 공시/뉴스 미확인 시 안전을 위해 FAIL 처리
+        pass_news = "UNCONFIRMED(FAIL)"
         pass_sup = "PASS" if sup_pass else "FAIL"
 
-        # 6대 안전조건 100% 동시 충족 검증
         all_passed = (
             "PASS" in pass_f and
             "PASS" in pass_t and
@@ -282,13 +297,10 @@ def create_analysis_excel_report(date_str: str,
             "종합점수": final_sc_val,
             "현재가(원)": r.get("latest_close"),
             "당일등락률(%)": chg_pct,
-            "14일 ATR(원)": r.get("atr_14", 0.0),
-            "손절 감시가격(원)": r.get("kiwoom_stop_tick_price", 0),
-            "손절 가격감시": "ON (상시감시)",
-            "손절 주문전송": "OFF (알림전용)",
-            "익절 감시가격(원)": r.get("kiwoom_target_tick_price", 0),
-            "익절 가격감시": "ON (상시감시)",
-            "익절 주문전송": "OFF (알림전용)",
+            "14일 ATR(원)": v4_atr,
+            "손절 감시가격(원)": v4_stop,
+            "익절 감시가격(원)": v4_target,
+            "엔진 연동상태": v4_ver_note,
             "데이터완성도(%)": comp,
             "분석근거": r.get("reason")
         })
