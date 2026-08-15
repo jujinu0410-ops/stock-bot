@@ -1,6 +1,8 @@
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 data/test_*.db
 .env
+logs/*.log
+logs/preview/
+scratch/
+

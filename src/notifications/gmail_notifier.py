@@ -4,7 +4,8 @@ from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import re
-from config.settings import GMAIL_USER, GMAIL_APP_PASSWORD
+from config.settings import GMAIL_USER, GMAIL_APP_PASSWORD, EMAIL_RENDER_VERSION
+from src.notifications.mobile_renderer_v2 import generate_mobile_html_report_v2
 from src.utils.logger import logger
 
 def format_cho_array_html(arr):
@@ -127,7 +128,54 @@ class GmailNotifier:
         disclosures: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """
-        보유 종목 중심 정밀 평가 리포트 HTML 생성 (요청대로 딱 2개의 매트릭스 표만 순서 맞춰 출력 + DART 공시 브리핑 글 박스)
+        환경변수 EMAIL_RENDER_VERSION에 따라 V1 또는 V2 렌더러로 라우팅 (V2 예외 시 V1으로 자동 Fallback)
+        """
+        render_ver = getattr(self, "render_version", EMAIL_RENDER_VERSION)
+        if render_ver not in ("V1", "V2"):
+            logger.warning(f"[GmailNotifier] 유효하지 않은 EMAIL_RENDER_VERSION='{render_ver}'. 기본 V1 렌더러로 안전하게 복구합니다.")
+            render_ver = "V1"
+
+        if render_ver == "V2":
+            try:
+                return generate_mobile_html_report_v2(
+                    date_str=date_str,
+                    total_count=total_count,
+                    caught_signals=caught_signals,
+                    all_results=all_results,
+                    held_portfolio=held_portfolio,
+                    disclosures=disclosures
+                )
+            except Exception as e:
+                logger.error(f"[GmailNotifier] V2 모바일 렌더러 실행 중 예외 발생, V1 렌더러로 안전 복구(Fallback): {e}", exc_info=True)
+                return self.generate_html_report_v1(
+                    date_str=date_str,
+                    total_count=total_count,
+                    caught_signals=caught_signals,
+                    all_results=all_results,
+                    held_portfolio=held_portfolio,
+                    disclosures=disclosures
+                )
+        else:
+            return self.generate_html_report_v1(
+                date_str=date_str,
+                total_count=total_count,
+                caught_signals=caught_signals,
+                all_results=all_results,
+                held_portfolio=held_portfolio,
+                disclosures=disclosures
+            )
+
+    def generate_html_report_v1(
+        self,
+        date_str: str,
+        total_count: int,
+        caught_signals: List[Dict[str, Any]],
+        all_results: List[Dict[str, Any]],
+        held_portfolio: List[Dict[str, Any]] = None,
+        disclosures: Optional[List[Dict[str, Any]]] = None
+    ) -> str:
+        """
+        [V1 렌더러 - 불변 보존] 보유 종목 중심 정밀 평가 리포트 HTML 생성 (2개 매트릭스 표 + DART 공시 브리핑 글 박스)
         """
         held_count = len(held_portfolio) if held_portfolio else 0
         profit_count = 0

@@ -1,0 +1,398 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; background-color: #F4F6F9; margin: 0; padding: 0; }
+                .container { max-width: 720px; margin: 0 auto; background: #FFFFFF; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+                .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div style="background:linear-gradient(135deg, #1E1E2E 0%, #2A2D3E 100%); color:#FFFFFF; padding:18px 14px; text-align:left;">
+                    <div style="font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#A78BFA; font-weight:bold; margin-bottom:4px;">Kiwoom REST & DART Integrated Analysis</div>
+                    <h1 style="margin:0; font-size:17px; font-weight:800; color:#FFFFFF;">📊 내 종목 정밀 평가 및 수치 종합점수 리포트</h1>
+                    <div style="margin-top:4px; font-size:11px; color:#9CA3AF;">기준일시: 2026-08-14 20:58</div>
+                </div>
+                <div style="padding:10px;">
+                    <div style="display:flex; justify-content:space-around; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:12px; padding:14px; margin-bottom:20px; text-align:center;">
+                        <div>
+                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">내 계좌 보유 종목</div>
+                            <div style="font-size:18px; font-weight:bold; color:#0F172A;">10개</div>
+                        </div>
+                        <div style="border-left:1px solid #CBD5E1; padding-left:20px;">
+                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">수익 종목</div>
+                            <div style="font-size:18px; font-weight:bold; color:#10B981;">2개</div>
+                        </div>
+                        <div style="border-left:1px solid #CBD5E1; padding-left:20px;">
+                            <div style="font-size:12px; color:#64748B; margin-bottom:4px;">손실 종목</div>
+                            <div style="font-size:18px; font-weight:bold; color:#EF4444;">8개</div>
+                        </div>
+                    </div>
+
+                    
+            <div style="background:#FFFBEB; border:2px solid #F59E0B; border-radius:10px; padding:14px; margin-bottom:20px;"><h3>⚡ V4-PILOT-C 주요 대응 지침</h3>
+                <div style="background:#FFFFFF; border-left:5px solid #2563EB; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <strong style="font-size:13px; color:#0F172A;">뉴로메카 (348340) / <span style="color:#2563EB;">USER_OVERRIDE</span> / <span style="color:#B45309; font-weight:bold;">⚠️ DART 미확정 수동감시: 25,000원/750원/30주</span></strong>
+                        <span style="font-weight:bold; color:#2563EB; font-size:13px;">등락: -2.00%</span>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
+                        • <strong>목표/손절:</strong> <span style="color:#059669; font-weight:bold;">24,450원 (수동활성)</span> / <span style="color:#DC2626; font-weight:bold;">HOLD (주문대기)</span><br>
+                        • <strong>트레일링 폭:</strong> 700원 (수동추적)<br>
+                        • <strong>포지션 사이징:</strong> 보유 100주 | <b>수동주문: 31주 미체결</b> (DART미확정 신규주문금지)
+                    </div>
+                </div>
+                
+                <div style="background:#FFFFFF; border-left:5px solid #DC2626; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <strong style="font-size:13px; color:#0F172A;">알에스오토메이션 (140670) / <span style="color:#2563EB;">RECOVERY</span> / <span style="color:#1D4ED8; font-weight:bold;">🔄 반등 시 손실축소 분할매도</span></strong>
+                        <span style="font-weight:bold; color:#DC2626; font-size:13px;">등락: +2.00%</span>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
+                        • <strong>목표/손절:</strong> <span style="color:#059669; font-weight:bold;">12,000원</span> / <span style="color:#DC2626; font-weight:bold;">9,300원</span><br>
+                        • <strong>트레일링 폭:</strong> 최고가 대비 310원 하락 시<br>
+                        • <strong>포지션 사이징:</strong> 위험목표 350주 | 현재 500주 | <b>권고: 매도 (150주)</b>
+                    </div>
+                </div>
+                
+                <div style="background:#FFFFFF; border-left:5px solid #DC2626; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <strong style="font-size:13px; color:#0F172A;">DSC인베스트먼트 (241520) / <span style="color:#2563EB;">RECOVERY</span> / <span style="color:#1D4ED8; font-weight:bold;">🔄 반등 시 손실축소 분할매도</span></strong>
+                        <span style="font-weight:bold; color:#DC2626; font-size:13px;">등락: +0.90%</span>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
+                        • <strong>목표/손절:</strong> <span style="color:#059669; font-weight:bold;">9,700원</span> / <span style="color:#DC2626; font-weight:bold;">7,000원</span><br>
+                        • <strong>트레일링 폭:</strong> 최고가 대비 290원 하락 시<br>
+                        • <strong>포지션 사이징:</strong> 위험목표 70주 | 현재 100주 | <b>권고: 매도 (30주)</b>
+                    </div>
+                </div>
+                
+                <div style="background:#FFFFFF; border-left:5px solid #2563EB; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <strong style="font-size:13px; color:#0F172A;">테이팩스 (055490) / <span style="color:#2563EB;">CONCENTRATION_RISK</span> / <span style="color:#B45309; font-weight:bold;">⚠️ 비중과다(21.5%) 초과 300주 분할축소</span></strong>
+                        <span style="font-weight:bold; color:#2563EB; font-size:13px;">등락: -0.80%</span>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
+                        • <strong>목표/손절:</strong> <span style="color:#059669; font-weight:bold;">18,000원</span> / <span style="color:#DC2626; font-weight:bold;">12,000원</span><br>
+                        • <strong>트레일링 폭:</strong> 최고가 대비 950원 하락 시<br>
+                        • <strong>포지션 사이징:</strong> 위험목표 700주 | 20%초과 300주 | <b>권고: 매도 (100주)</b>
+                    </div>
+                </div>
+                
+                <div style="background:#FFFFFF; border-left:5px solid #2563EB; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <strong style="font-size:13px; color:#0F172A;">유바이오로직스 (206650) / <span style="color:#2563EB;">RECOVERY</span> / <span style="color:#1D4ED8; font-weight:bold;">🔄 반등 시 손실축소 분할매도</span></strong>
+                        <span style="font-weight:bold; color:#2563EB; font-size:13px;">등락: -1.20%</span>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
+                        • <strong>목표/손절:</strong> <span style="color:#059669; font-weight:bold;">9,900원</span> / <span style="color:#DC2626; font-weight:bold;">8,200원</span><br>
+                        • <strong>트레일링 폭:</strong> 최고가 대비 190원 하락 시<br>
+                        • <strong>포지션 사이징:</strong> 위험목표 210주 | 현재 300주 | <b>권고: 매도 (90주)</b>
+                    </div>
+                </div>
+                
+                <div style="background:#FFFFFF; border-left:5px solid #DC2626; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <strong style="font-size:13px; color:#0F172A;">RISE 미국AI밸류체인데일리고정커버드콜 (490590) / <span style="color:#2563EB;">CONCENTRATION_RISK</span> / <span style="color:#B45309; font-weight:bold;">⚠️ 비중과다(45.0%) 초과 5,000주 분할축소</span></strong>
+                        <span style="font-weight:bold; color:#DC2626; font-size:13px;">등락: +0.50%</span>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
+                        • <strong>목표/손절:</strong> <span style="color:#059669; font-weight:bold;">16,000원</span> / <span style="color:#DC2626; font-weight:bold;">14,000원</span><br>
+                        • <strong>트레일링 폭:</strong> 최고가 대비 330원 하락 시<br>
+                        • <strong>포지션 사이징:</strong> 위험목표 5,000주 | 20%초과 5,000주 | <b>권고: 매도 (1,650주)</b>
+                    </div>
+                </div>
+                
+                <div style="background:#FFFFFF; border-left:5px solid #DC2626; border-radius:8px; padding:10px 14px; margin-bottom:10px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <strong style="font-size:13px; color:#0F172A;">자이글 (234920) / <span style="color:#2563EB;">SUSPENDED_HOLD</span> / <span style="color:#475569; font-weight:bold; background:#F1F5F9; padding:2px 6px; border-radius:4px; border:1px solid #94A3B8;">⚫ 거래정지 보류/공시감시</span></strong>
+                        <span style="font-weight:bold; color:#DC2626; font-size:13px;">등락: +0.00%</span>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; background:#F8FAFC; padding:8px 10px; border-radius:6px; line-height:1.6;">
+                        • <strong>목표/손절:</strong> <span style="color:#059669; font-weight:bold;">HOLD (거래정지)</span> / <span style="color:#DC2626; font-weight:bold;">HOLD (거래정지)</span><br>
+                        • <strong>트레일링 폭:</strong> HOLD (비활성)<br>
+                        • <strong>포지션 사이징:</strong> 보유 1,000주 / 권고: 0주 (상장적격성 실질심사 매매거래정지 [공시감시])
+                    </div>
+                </div>
+                </div>
+            <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
+                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">⏱️ 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표</h3>
+                <div style="font-size:11px; color:#64748B; margin-bottom:10px;">※ 매도대응 및 위험관리 종목 우선 배치 ➔ 종합점수 오름차순(낮은 순) 정렬</div>
+                <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                    <thead>
+                        <tr style="background:#F1F5F9; color:#334155; text-align:left; border-bottom:2px solid #CBD5E1;">
+                            <th style="padding:6px 6px; background:#EFF6FF; color:#1E40AF; text-align:center;">대응 전략</th>
+                            <th style="padding:6px 4px;">종목명 (코드)</th>
+                            <th style="padding:6px 4px; text-align:center;">OBV (데드발생일자)</th>
+                            <th style="padding:6px 4px; text-align:center;">45m OBV</th>
+                            <th style="padding:6px 4px; text-align:center;">일봉 Chaikin 최근2봉</th>
+                            <th style="padding:6px 4px; text-align:center;">45m Chaikin 최근2봉</th>
+                            <th style="padding:6px 4px;">ADX +DI/-DI 우세방향</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#B45309; font-weight:bold;">⚠️ DART 미확정 수동감시: 25,000원/750원/30주</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">뉴로메카 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(348340)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">2026-08-07 (5일차)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">45m 이탈</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#1D4ED8; font-weight:bold;">-3,000</span>, <span style="color:#1D4ED8; font-weight:bold;">-4,500</span>] <span style="color:#1D4ED8; font-size:12px; font-weight:bold;">▼</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#1D4ED8; font-weight:bold;">-800</span>, <span style="color:#1D4ED8; font-weight:bold;">-1,000</span>] <span style="color:#1D4ED8; font-size:12px; font-weight:bold;">▼</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#1D4ED8; font-weight:bold;">-DI우세</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">🔄 반등 시 손실축소 분할매도</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">알에스오토메이션 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(140670)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">2026-08-12 (2일차)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+1,000</span>, <span style="color:#DC2626; font-weight:bold;">+1,500</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+300</span>, <span style="color:#DC2626; font-weight:bold;">+500</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#DC2626; font-weight:bold;">+DI우세</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">🔄 반등 시 손실축소 분할매도</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">DSC인베스트먼트 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(241520)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">2026-08-13 (1일차)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+800</span>, <span style="color:#DC2626; font-weight:bold;">+1,100</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+200</span>, <span style="color:#DC2626; font-weight:bold;">+330</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#DC2626; font-weight:bold;">+DI우세</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#B45309; font-weight:bold;">⚠️ 비중과다(21.5%) 초과 300주 분할축소</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">테이팩스 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(055490)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">2026-08-11 (3일차)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">45m 이탈</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#1D4ED8; font-weight:bold;">-4,000</span>, <span style="color:#1D4ED8; font-weight:bold;">-5,500</span>] <span style="color:#1D4ED8; font-size:12px; font-weight:bold;">▼</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#1D4ED8; font-weight:bold;">-1,000</span>, <span style="color:#1D4ED8; font-weight:bold;">-1,400</span>] <span style="color:#1D4ED8; font-size:12px; font-weight:bold;">▼</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#1D4ED8; font-weight:bold;">-DI우세</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">🔄 반등 시 손실축소 분할매도</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">유바이오로직스 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(206650)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">2026-08-10 (4일차)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#1D4ED8; font-weight:bold;">45m 이탈</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#1D4ED8; font-weight:bold;">-1,500</span>, <span style="color:#1D4ED8; font-weight:bold;">-2,000</span>] <span style="color:#1D4ED8; font-size:12px; font-weight:bold;">▼</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#1D4ED8; font-weight:bold;">-400</span>, <span style="color:#1D4ED8; font-weight:bold;">-600</span>] <span style="color:#1D4ED8; font-size:12px; font-weight:bold;">▼</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#1D4ED8; font-weight:bold;">-DI우세</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#B45309; font-weight:bold;">⚠️ 비중과다(45.0%) 초과 5,000주 분할축소</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">RISE 미국AI밸류체인데일리고정커버드콜 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(490590)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+18,000</span>, <span style="color:#DC2626; font-weight:bold;">+23,000</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+4,500</span>, <span style="color:#DC2626; font-weight:bold;">+5,800</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#DC2626; font-weight:bold;">+DI우세</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#475569; font-weight:bold; background:#F1F5F9; padding:2px 6px; border-radius:4px; border:1px solid #94A3B8;">⚫ 거래정지 보류/공시감시</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">자이글 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(234920)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#64748B; font-weight:bold;">N/A</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#64748B; font-weight:bold;">N/A</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#64748B;">[N/A, N/A]</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#64748B;">[N/A, N/A]</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#64748B;">N/A (거래정지)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#059669; font-weight:bold;">🟢 계속 보유/홀딩</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">한신공영 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(004960)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+12,000</span>, <span style="color:#DC2626; font-weight:bold;">+15,000</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+3,000</span>, <span style="color:#DC2626; font-weight:bold;">+4,000</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#DC2626; font-weight:bold;">+DI우세</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#059669; font-weight:bold;">🟢 계속 보유/홀딩</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">HD현대일렉트릭 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(267260)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+60,000</span>, <span style="color:#DC2626; font-weight:bold;">+78,000</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+14,000</span>, <span style="color:#DC2626; font-weight:bold;">+18,000</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#DC2626; font-weight:bold;">+DI우세</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 6px; background:#EFF6FF; text-align:center;"><span style="color:#059669; font-weight:bold;">🟢 계속 보유/홀딩</span></td>
+                    <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">PLUS 고배당주 <span style="font-size:9.5px; color:#64748B; font-weight:normal;">(161510)</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;"><span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+3,500</span>, <span style="color:#DC2626; font-weight:bold;">+4,200</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; text-align:center;">[<span style="color:#DC2626; font-weight:bold;">+900</span>, <span style="color:#DC2626; font-weight:bold;">+1,100</span>] <span style="color:#DC2626; font-size:12px; font-weight:bold;">▲</span></td>
+                    <td style="padding:6px 4px; color:#475569;"><span style="color:#DC2626; font-weight:bold;">+DI우세</span></td>
+                </tr>
+                </tbody>
+                </table>
+            </div>
+
+            <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:2px solid #E2E8F0; padding-bottom:8px;">
+                    <div>
+                        <h2 style="margin:0; font-size:15px; color:#0F172A;">💼 내 계좌 보유 종목 정밀 평가 (10종목)</h2>
+                        <div style="font-size:11px; color:#64748B; margin-top:2px;">※ 매도대응 우선 정렬 / 계좌비중 20% 초과 종목 추매금지 및 14일 ATR 기반 트레일링 가격 산출 연동</div>
+                    </div>
+                    <div style="font-size:13px; font-weight:bold; color:#EF4444; text-align:right;">
+                        총 평가손익: -18.72%<br><span style="font-size:11px;">(-11,401,000원)</span>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                <table style="width:100%; border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#F8FAFC; font-size:11px; color:#64748B; text-align:left; border-bottom:1px solid #E2E8F0;">
+                            <th style="padding:6px 6px; background:#F0FDF4; color:#166534; text-align:center;">대응 전략</th>
+                            <th style="padding:6px 4px;">종목명 (코드)</th>
+                            <th style="padding:6px 4px; background:#EDE9FE; color:#5B21B6; text-align:center;">종합점수<br><span style="font-size:9px; font-weight:normal; color:#64748B;">(F / T점수)</span></th>
+                            <th style="padding:6px 4px; text-align:center;">현재가(등락률)</th>
+                            <th style="padding:6px 4px; color:#D97706; text-align:center;">14일 ATR</th>
+                            <th style="padding:6px 4px; text-align:center;">평가손익(률)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#FFFBEB; border:1px solid #FCD34D; color:#B45309; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">⚠️ DART미확정 (수동감시 31주)</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">뉴로메카<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(348340)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#D97706; font-size:13px;'>49.0점</span><br><span style='font-size:9.5px; color:#D97706;'>(F:25.0 / T:66.0)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#2563EB; font-weight:bold; font-size:12px;">24,000원</span><br><span style="font-size:9.5px; color:#2563EB; font-weight:bold;">(-2.00%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#334155;">-</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: 57.0</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#2563EB; text-align:center;">-70.00%<br><span style="font-size:9.5px; font-weight:normal;">(-1,680,000원)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#EFF6FF; border:1px solid #93C5FD; color:#1D4ED8; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">🔄 손실축소 분할매도</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">알에스오토메이션<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(140670)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#059669; font-size:13px;'>60.0점</span><br><span style='font-size:9.5px; color:#64748B;'>(F:50.0 / T:65.0)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#DC2626; font-weight:bold; font-size:12px;">10,000원</span><br><span style="font-size:9.5px; color:#DC2626; font-weight:bold;">( +2.00%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#334155;">1,000원 (10.0%)</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: 30.0</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#2563EB; text-align:center;">-40.00%<br><span style="font-size:9.5px; font-weight:normal;">(-2,000,000원)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#EFF6FF; border:1px solid #93C5FD; color:#1D4ED8; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">🔄 손실축소 분할매도</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">DSC인베스트먼트<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(241520)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#059669; font-size:13px;'>73.0점</span><br><span style='font-size:9.5px; color:#64748B;'>(F:84.0 / T:66.0)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#DC2626; font-weight:bold; font-size:12px;">7,700원</span><br><span style="font-size:9.5px; color:#DC2626; font-weight:bold;">( +0.90%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#334155;">970원 (12.5%)</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: 33.0</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#2563EB; text-align:center;">-50.00%<br><span style="font-size:9.5px; font-weight:normal;">(-500,000원)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#FEF2F2; border:1px solid #FCA5A5; color:#DC2626; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">⚠️ 20%초과 분할축소</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">테이팩스<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(055490)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#059669; font-size:13px;'>75.0점</span><br><span style='font-size:9.5px; color:#64748B;'>(F:90.0 / T:65.0)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#2563EB; font-weight:bold; font-size:12px;">12,000원</span><br><span style="font-size:9.5px; color:#2563EB; font-weight:bold;">(-0.80%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#334155;">1,200원 (10.0%)</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: 42.0</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#2563EB; text-align:center;">-30.00%<br><span style="font-size:9.5px; font-weight:normal;">(-3,600,000원)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#EFF6FF; border:1px solid #93C5FD; color:#1D4ED8; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">🔄 손실축소 분할매도</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">유바이오로직스<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(206650)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#059669; font-size:13px;'>78.0점</span><br><span style='font-size:9.5px; color:#64748B;'>(F:100.0 / T:63.0)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#2563EB; font-weight:bold; font-size:12px;">8,800원</span><br><span style="font-size:9.5px; color:#2563EB; font-weight:bold;">(-1.20%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#334155;">620원 (7.0%)</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: 37.0</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#2563EB; text-align:center;">-42.00%<br><span style="font-size:9.5px; font-weight:normal;">(-1,000,000원)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#FEF2F2; border:1px solid #FCA5A5; color:#DC2626; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">⚠️ 20%초과 분할축소</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">RISE<br>미국AI밸류체인데일리고정커버드콜<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(490590)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#4338CA; font-size:13px;'>80.0점</span><br><span style='font-size:9.5px; color:#64748B;'>(ETF T점수)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#DC2626; font-weight:bold; font-size:12px;">14,000원</span><br><span style="font-size:9.5px; color:#DC2626; font-weight:bold;">( +0.50%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#334155;">400원 (2.8%)</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: 40.0</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#2563EB; text-align:center;">-9.00%<br><span style="font-size:9.5px; font-weight:normal;">(-1,260,000원)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#F1F5F9; border:1px solid #94A3B8; color:#475569; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">⚫ 거래정지 보류/공시감시</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">자이글<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(234920)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#64748B; font-size:12px;'>N/A</span><br><span style='font-size:9.5px; color:#64748B;'>(거래정지)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#475569; font-weight:bold; font-size:12px;">5,300원</span><br><span style="font-size:9.5px; color:#475569;">(0.00%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#64748B;">N/A (거래정지)</span><br><span style="font-size:9px; color:#64748B;">45m: N/A</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#2563EB; text-align:center;">-29.00%<br><span style="font-size:9.5px; font-weight:normal;">(-1,500,000원)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#F0F9FF; border:1px solid #BAE6FD; color:#0369A1; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">🟢 계속 보유/홀딩</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">한신공영<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(004960)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#059669; font-size:13px;'>75.0점</span><br><span style='font-size:9.5px; color:#64748B;'>(F:70.0 / T:80.0)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#DC2626; font-weight:bold; font-size:12px;">11,500원</span><br><span style="font-size:9.5px; color:#DC2626; font-weight:bold;">( +1.50%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#334155;">600원 (5.2%)</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: 38.0</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#DC2626; text-align:center;">+5.00%<br><span style="font-size:9.5px; font-weight:normal;">(+575,000원)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#F0F9FF; border:1px solid #BAE6FD; color:#0369A1; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">🟢 계속 보유/홀딩</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">HD현대일렉트릭<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(267260)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#059669; font-size:13px;'>76.0점</span><br><span style='font-size:9.5px; color:#64748B;'>(F:92.0 / T:66.0)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#DC2626; font-weight:bold; font-size:12px;">800,000원</span><br><span style="font-size:9.5px; color:#DC2626; font-weight:bold;">( +3.50%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#334155;">61,000원 (7.6%)</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: 35.5</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#DC2626; text-align:center;">+8.00%<br><span style="font-size:9.5px; font-weight:normal;">(+64,000원)</span></td>
+                </tr>
+                
+                <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
+                    <td style="padding:6px 4px; background:#F8FAFC;"><span style="background:#F0F9FF; border:1px solid #BAE6FD; color:#0369A1; padding:3px 6px; border-radius:5px; font-weight:bold; font-size:10px; display:inline-block;">🟢 계속 보유/홀딩</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#0F172A; max-width:85px; word-break:break-word; line-height:1.25;">PLUS 고배당주<br><span style="font-size:9.5px; color:#64748B; font-weight:normal;">(161510)</span></td>
+                    <td style="padding:6px 3px; text-align:center; background:#F5F3FF;"><span style='font-weight:bold; color:#4338CA; font-size:13px;'>79.0점</span><br><span style='font-size:9.5px; color:#64748B;'>(ETF T점수)</span></td>
+                    <td style="padding:6px 3px; text-align:center;"><span style="color:#DC2626; font-weight:bold; font-size:12px;">25,000원</span><br><span style="font-size:9.5px; color:#DC2626; font-weight:bold;">( +0.40%)</span></td>
+                    <td style="padding:6px 3px; color:#475569; text-align:center;"><span style="font-weight:bold; color:#334155;">750원 (3.0%)</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: 31.0</span></td>
+                    <td style="padding:6px 3px; font-weight:bold; color:#2563EB; text-align:center;">-8.00%<br><span style="font-size:9.5px; font-weight:normal;">(-500,000원)</span></td>
+                </tr>
+                
+                    </tbody>
+                </table>
+                </div>
+            </div>
+
+            <!-- 🔥 [글 박스] 보유 종목 최신 DART 주요 공시 & 브리핑 -->
+            
+            <div style="background:#F8FAFC; border:1px solid #94A3B8; border-left:4px solid #2563EB; border-radius:8px; padding:14px; margin-bottom:20px; box-shadow:0 2px 8px rgba(0,0,0,0.03);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid #CBD5E1; padding-bottom:6px;">
+                    <h3 style="margin:0; font-size:14px; color:#1E3A8A; font-weight:bold;">
+                        📢 보유 종목 최신 DART 주요 공시 & 브리핑 (총 2건)
+                    </h3>
+                    <span style="font-size:10.5px; color:#64748B;">클릭 시 전자공시 원문 이동</span>
+                </div>
+                
+                <div style="margin-bottom:10px; padding:10px 12px; background:#FFFFFF; border:1px solid #E2E8F0; border-radius:6px;">
+                    <div style="font-weight:bold; font-size:12.5px; color:#0F172A; margin-bottom:4px;">
+                        📌 <span style="color:#1E3A8A;">한신공영(004960)</span> - <a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260814000688" target="_blank" style="color:#2563EB; text-decoration:underline;">반기보고서 (2026.06)</a>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; line-height:1.5;">
+                        • <b>공시 요약</b>: 2026년 반기보고서(11012) 공시 접수. (F점수 산출 기준: 2025년 사업보고서 11011 유지)<br>
+                        • <b>시장 의미</b>: <span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 반기보고서 접수]</span> 2026년 반기보고서 (상반기 누적) 접수 완료. (세부 반기 누적 실적 정밀 파싱 전까지 2025년 결산 F점수 기준 보수적 유지)<br>
+                        • <b>대응 가이드</b>: 실적 및 펀더멘털 안정성에 기반하여 기존 V4 목표가 및 트레일링 손절선 기준 안정적 보유 지속.
+                    </div>
+                </div>
+                
+                <div style="margin-bottom:10px; padding:10px 12px; background:#FFFFFF; border:1px solid #E2E8F0; border-radius:6px;">
+                    <div style="font-weight:bold; font-size:12.5px; color:#0F172A; margin-bottom:4px;">
+                        📌 <span style="color:#1E3A8A;">자이글(234920)</span> - <a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260814000123" target="_blank" style="color:#2563EB; text-decoration:underline;">반기보고서 (2026.06)</a>
+                    </div>
+                    <div style="font-size:11.5px; color:#334155; line-height:1.5;">
+                        • <b>공시 요약</b>: 2026년 반기보고서(11012) 공시 접수. (F점수 산출 기준: 2025년 사업보고서 11011 유지)<br>
+                        • <b>시장 의미</b>: <span style='color:#D97706; font-weight:bold;'>🟡 [중립 / 반기보고서 접수]</span> 2026년 반기보고서 (상반기 누적) 접수 완료. (세부 반기 누적 실적 정밀 파싱 전까지 2025년 결산 F점수 기준 보수적 유지)<br>
+                        • <b>대응 가이드</b>: 매매재개 전 가격·ATR 대응 금지. 상장적격성 심사, 개선기간, 거래재개 또는 상장폐지 관련 후속 공시만 감시.
+                    </div>
+                </div>
+                
+            </div>
+            
+            
+                </div>
+            </div>
+        </body>
+        </html>
+        
