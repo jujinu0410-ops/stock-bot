@@ -3,6 +3,8 @@ __pycache__/
 data/test_*.db
 .env
 logs/*.log
+logs/*.xlsx
+logs/*.csv
 logs/preview/
 scratch/
 

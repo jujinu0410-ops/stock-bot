@@ -244,5 +244,65 @@ class TestMobileRendererV2(unittest.TestCase):
         self.assertNotIn("즉시 매도", html_v2)
         self.assertIn("반등 시 손실축소 분할매도", html_v2)
 
+    def test_08_krw_no_decimal_point_and_integer_formatting(self):
+        """테스트 08: 원화 가격 소수점(.0) 제거 및 쉼표 포함 정수 원 단위 포맷팅 검증"""
+        # 1. 10개 종목 전체 리포트에서 '숫자.소수점원' 패턴 완전 부재 검증
+        html_v2 = generate_mobile_html_report_v2(
+            date_str=self.date_str,
+            total_count=18,
+            caught_signals=[],
+            all_results=[],
+            held_portfolio=SAMPLE_HELD_PORTFOLIO,
+            disclosures=SAMPLE_DISCLOSURES
+        )
+
+        decimal_krw_matches = re.findall(r'\d+\.\d+원', html_v2)
+        self.assertEqual(decimal_krw_matches, [], f"원화 금액에 소수점이 남아있습니다: {decimal_krw_matches}")
+        self.assertNotIn(".0원", html_v2)
+
+        # 2. float 형태의 원화 입력값이 주어졌을 때 정수 쉼표 포맷팅 검증
+        float_sample_stock = dict(SAMPLE_HELD_PORTFOLIO[0])
+        float_sample_stock["current_price"] = 23600.0
+        float_sample_stock["pnl_amount"] = -7034396.0
+        float_sample_stock["kiwoom_target_tick_price"] = 28000.0
+        float_sample_stock["kiwoom_stop_tick_price"] = 21000.0
+        float_sample_stock["profit_trail_delta"] = 750.0
+        float_sample_stock["atr_14"] = 1031.0
+        float_sample_stock["atr_pct"] = 9.5
+        float_sample_stock["daily_change_pct"] = 10.28
+        float_sample_stock["final_score"] = 48.8
+        float_sample_stock["adx_14_45m"] = 56.9
+
+        html_float = generate_mobile_html_report_v2(
+            date_str=self.date_str,
+            total_count=1,
+            caught_signals=[],
+            all_results=[],
+            held_portfolio=[float_sample_stock],
+            disclosures=[]
+        )
+
+        # 정수 원 단위 확인
+        self.assertIn("23,600원", html_float)
+        self.assertIn("-7,034,396원", html_float)
+        self.assertIn("28,000원", html_float)
+        self.assertIn("21,000원", html_float)
+        self.assertIn("750원", html_float)
+        self.assertIn("1,031원 (9.5%)", html_float)
+        self.assertNotIn("23,600.0원", html_float)
+        self.assertNotIn("-7034396.0원", html_float)
+
+        # 비율·점수·지표 소수점 보존 확인
+        self.assertIn("+10.28%", html_float)
+        self.assertIn("48.8점", html_float)
+        self.assertIn("45m ADX: 56.9", html_float)
+
+        # 특수 문자열 상태값 보존 확인
+        html_suspended = generate_mobile_html_report_v2(self.date_str, 1, [], [], FIXTURE_SUSPENDED_HOLD, [])
+        self.assertIn("HOLD (거래정지)", html_suspended)
+        self.assertIn("HOLD (비활성)", html_suspended)
+        self.assertIn("N/A (거래정지)", html_suspended)
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -59,6 +59,37 @@ def format_adx_chip_v2(di_dom_str: str) -> str:
     else:
         return f"<span style='background:#F8FAFC; border:1px solid #E2E8F0; color:#475569; font-size:10px; padding:2px 5px; border-radius:4px;'>{di_dom_str}</span>"
 
+def format_krw(val: Any) -> str:
+    """
+    모든 원화(KRW) 금액/가격을 쉼표가 포함된 정수 원 단위(예: '23,600원', '-7,034,396원')로 안전 변환.
+    - 문자열 상태값('HOLD', 'N/A', '거래정지', '수동 관리' 등)은 그대로 반환
+    - 부동소수점(float)인 경우 반올림하여 정수화 (예: 23600.0 -> '23,600원')
+    - 예상치 못한 유의미한 소수값(0.0이 아닌 소수) 유입 시 경고 로그 기록 후 반올림 적용
+    """
+    if val is None:
+        return "-"
+    if isinstance(val, bool):
+        return str(val)
+    if isinstance(val, str):
+        val_clean = val.strip()
+        if any(keyword in val_clean.upper() for keyword in ("HOLD", "N/A", "NONE", "거래정지", "주문대기", "수동 관리", "미체결", "비활성")):
+            return val_clean
+        if val_clean == "-":
+            return "-"
+        try:
+            val_num = float(val_clean.replace(",", "").replace("원", ""))
+            return format_krw(val_num)
+        except ValueError:
+            return val_clean
+    if isinstance(val, (int, float)):
+        if isinstance(val, float):
+            int_val = round(val)
+            if abs(val - int_val) > 1e-4:
+                logger.warning(f"[MobileRendererV2] 원화 금액에 소수점 값 감지: {val} -> 반올림하여 {int_val:,}원으로 변환")
+            return f"{int_val:,}원"
+        return f"{val:,}원"
+    return str(val)
+
 def format_strategy_badge_v2(raw_action: str, trade_mode: str, stock_code: str) -> str:
     """모바일용 전략 상태 배지 포맷팅 (원천 전략 조건문 100% 보존)"""
     clean = raw_action
@@ -172,6 +203,8 @@ def generate_mobile_html_report_v2(
         total_pnl_pct = round((total_pnl_amt / total_eval_inv) * 100.0, 2) if total_eval_inv > 0 else 0.0
         pnl_color_total = "#10B981" if total_pnl_amt >= 0 else "#EF4444"
         pnl_sign_total = "+" if total_pnl_amt >= 0 else ""
+        total_pnl_amt_disp = format_krw(total_pnl_amt)
+        total_pnl_amt_str = f"+{total_pnl_amt_disp}" if (isinstance(total_pnl_amt, (int, float)) and total_pnl_amt > 0) else total_pnl_amt_disp
 
         for h in held_sorted:
             code = str(h.get("stock_code")).zfill(6)
@@ -228,7 +261,7 @@ def generate_mobile_html_report_v2(
             else:
                 score_display = f"<span style='color:#059669; font-weight:bold;'>{final_sc:.1f}점</span> <span style='font-size:9.5px; color:#64748B;'>(F:{f_sc:.1f}/T:{t_sc:.1f})</span>"
 
-            # 핵심 매매 가격/수량 디스플레이 포맷 (원천 데이터 기반)
+            # 핵심 매매 가격/수량 디스플레이 포맷 (원천 데이터 기반 + format_krw 소수점 제거)
             if code == "234920" or trade_mode == "SUSPENDED_HOLD":
                 target_disp = "HOLD (거래정지)"
                 stop_disp = "HOLD (거래정지)"
@@ -237,31 +270,31 @@ def generate_mobile_html_report_v2(
                 sizing_disp = f"보유 {held_qty:,}주 / <b>주문상태: 비활성 (0주)</b> [상장적격성 실질심사 매매거래정지]"
                 left_border = "#94A3B8"
             elif code == "348340" or h.get("user_override_flag", False) or trade_mode == "USER_OVERRIDE":
-                target_disp = f"{k_target:,}원 (수동활성)" if isinstance(k_target, (int, float)) else f"{k_target} (수동활성)"
+                target_disp = f"{format_krw(k_target)} (수동활성)" if isinstance(k_target, (int, float)) else f"{k_target} (수동활성)"
                 stop_disp = "HOLD (주문대기)"
-                trail_disp = f"{trail_delta:,}원 (수동추적)" if isinstance(trail_delta, (int, float)) else f"{trail_delta} (수동추적)"
+                trail_disp = f"{format_krw(trail_delta)} (수동추적)" if isinstance(trail_delta, (int, float)) else f"{trail_delta} (수동추적)"
                 atr_disp = "수동 관리"
                 sizing_disp = f"보유 {held_qty:,}주 | <b>수동주문: {rec_qty:,}주 미체결</b> (DART미확정 신규주문금지)"
                 left_border = "#F59E0B"
             elif trade_mode == "CONCENTRATION_RISK":
-                target_disp = f"{k_target:,}원" if isinstance(k_target, (int, float)) and k_target > 0 else str(k_target)
-                stop_disp = f"{k_stop:,}원" if isinstance(k_stop, (int, float)) and k_stop > 0 else str(k_stop)
-                trail_disp = f"최고가 대비 {abs(trail_delta):,}원 하락 시"
-                atr_disp = f"{atr_v:,.0f}원 ({atr_pct:.1f}%)" if atr_v > 0 else "-"
+                target_disp = format_krw(k_target) if isinstance(k_target, (int, float)) and k_target > 0 else str(k_target)
+                stop_disp = format_krw(k_stop) if isinstance(k_stop, (int, float)) and k_stop > 0 else str(k_stop)
+                trail_disp = f"최고가 대비 {format_krw(abs(trail_delta))} 하락 시" if isinstance(trail_delta, (int, float)) and trail_delta != 0 else "HOLD (비활성)"
+                atr_disp = f"{format_krw(atr_v)} ({atr_pct:.1f}%)" if isinstance(atr_v, (int, float)) and atr_v > 0 else "-"
                 sizing_disp = f"위험목표 {risk_target_qty:,}주 | 20%초과 {excess_qty:,}주 | <b>권고: {order_dir} ({rec_qty:,}주)</b>"
                 left_border = "#EF4444"
             elif trade_mode == "RECOVERY":
-                target_disp = f"{k_target:,}원" if isinstance(k_target, (int, float)) and k_target > 0 else str(k_target)
-                stop_disp = f"{k_stop:,}원" if isinstance(k_stop, (int, float)) and k_stop > 0 else str(k_stop)
-                trail_disp = f"최고가 대비 {abs(trail_delta):,}원 하락 시"
-                atr_disp = f"{atr_v:,.0f}원 ({atr_pct:.1f}%)" if atr_v > 0 else "-"
+                target_disp = format_krw(k_target) if isinstance(k_target, (int, float)) and k_target > 0 else str(k_target)
+                stop_disp = format_krw(k_stop) if isinstance(k_stop, (int, float)) and k_stop > 0 else str(k_stop)
+                trail_disp = f"최고가 대비 {format_krw(abs(trail_delta))} 하락 시" if isinstance(trail_delta, (int, float)) and trail_delta != 0 else "HOLD (비활성)"
+                atr_disp = f"{format_krw(atr_v)} ({atr_pct:.1f}%)" if isinstance(atr_v, (int, float)) and atr_v > 0 else "-"
                 sizing_disp = f"위험목표 {risk_target_qty:,}주 | 보유 {held_qty:,}주 | <b>권고: {order_dir} (손실축소 {rec_qty:,}주)</b>"
                 left_border = "#3B82F6"
             else:  # NORMAL
-                target_disp = f"{k_target:,}원" if isinstance(k_target, (int, float)) and k_target > 0 else str(k_target)
-                stop_disp = f"{k_stop:,}원" if isinstance(k_stop, (int, float)) and k_stop > 0 else str(k_stop)
-                trail_disp = f"최고가 대비 {abs(trail_delta):,}원 하락 시"
-                atr_disp = f"{atr_v:,.0f}원 ({atr_pct:.1f}%)" if atr_v > 0 else "-"
+                target_disp = format_krw(k_target) if isinstance(k_target, (int, float)) and k_target > 0 else str(k_target)
+                stop_disp = format_krw(k_stop) if isinstance(k_stop, (int, float)) and k_stop > 0 else str(k_stop)
+                trail_disp = f"최고가 대비 {format_krw(abs(trail_delta))} 하락 시" if isinstance(trail_delta, (int, float)) and trail_delta != 0 else "HOLD (비활성)"
+                atr_disp = f"{format_krw(atr_v)} ({atr_pct:.1f}%)" if isinstance(atr_v, (int, float)) and atr_v > 0 else "-"
                 sizing_disp = f"위험목표 {risk_target_qty:,}주 | 보유 {held_qty:,}주 | <b>권고: {order_dir} ({rec_qty:,}주)</b>"
                 left_border = "#10B981"
 
@@ -277,6 +310,10 @@ def generate_mobile_html_report_v2(
                 cho_chip = f"일봉 {format_cho_chip_v2(daily_cho)} / 45m {format_cho_chip_v2(intra_cho)}"
                 adx_chip = f"{format_adx_chip_v2(di_dom)} <span style='color:#4338CA; font-weight:bold; font-size:10px;'>45m ADX: {adx_45m:.1f}</span>"
 
+            cur_price_disp = format_krw(cur_price)
+            pnl_amt_disp = format_krw(pnl_amt)
+            pnl_amt_str = f"+{pnl_amt_disp}" if (isinstance(pnl_amt, (int, float)) and pnl_amt > 0) else pnl_amt_disp
+
             stock_cards_html += f"""
             <div data-stock-code="{code}" data-trade-mode="{trade_mode}" style="background:#FFFFFF; border:1px solid #E2E8F0; border-left:4px solid {left_border}; border-radius:8px; padding:12px; margin-bottom:12px; box-shadow:0 1px 4px rgba(0,0,0,0.03);">
                 <!-- 1. 카드 헤더 (종목명/코드 + 전략배지 + 현재가/등락률) -->
@@ -291,7 +328,7 @@ def generate_mobile_html_report_v2(
                     </div>
                     <div style="text-align:right;">
                         <div style="font-size:14px; font-weight:bold; color:{price_color};">
-                            {cur_price:,}원
+                            {cur_price_disp}
                         </div>
                         <div style="font-size:11px; font-weight:bold; color:{price_color};">
                             ({price_sign}{daily_chg:.2f}%)
@@ -305,7 +342,7 @@ def generate_mobile_html_report_v2(
                         <span style="color:#64748B;">종합:</span> {score_display}
                     </div>
                     <div>
-                        <span style="color:#64748B;">손익:</span> <b style="color:{pnl_color};">{pnl_sign}{pnl_pct:.2f}%</b> <span style="font-size:10px; color:{pnl_color};">({pnl_sign}{pnl_amt:,}원)</span>
+                        <span style="color:#64748B;">손익:</span> <b style="color:{pnl_color};">{pnl_sign}{pnl_pct:.2f}%</b> <span style="font-size:10px; color:{pnl_color};">({pnl_amt_str})</span>
                     </div>
                 </div>
 
@@ -398,7 +435,7 @@ def generate_mobile_html_report_v2(
             <div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:10px 12px; margin-bottom:14px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                     <span style="font-size:12px; color:#475569; font-weight:bold;">💼 보유 포트폴리오 요약</span>
-                    <span style="font-size:12px; font-weight:bold; color:{pnl_color_total};">총 손익: {pnl_sign_total}{total_pnl_pct:.2f}% ({pnl_sign_total}{total_pnl_amt:,}원)</span>
+                    <span style="font-size:12px; font-weight:bold; color:{pnl_color_total};">총 손익: {pnl_sign_total}{total_pnl_pct:.2f}% ({total_pnl_amt_str})</span>
                 </div>
                 <div style="display:flex; justify-content:space-around; text-align:center; font-size:11px; border-top:1px solid #E2E8F0; padding-top:6px;">
                     <div>보유: <b>{held_count}종목</b></div>
