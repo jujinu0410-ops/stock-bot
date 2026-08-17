@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, Tuple
@@ -50,15 +51,26 @@ def calculate_wilder_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
         
     return atr
 
-def adjust_krx_tick_size(price: float, direction: str = "down") -> int:
+def adjust_krx_tick_size(price: float, direction: str = "down", is_etf: bool = False) -> int:
     """
-    한국거래소(KRX) 주식 호가단위 규칙에 맞게 가격을 보정합니다.
+    한국거래소(KRX) 주식/ETF 호가단위 규칙에 맞게 가격을 보정합니다.
+    - ETF/ETN: 전 가격대 5원 균일 호가단위
+    - 일반 주식:
+        < 2,000원: 1원
+        2,000 ~ < 5,000원: 5원
+        5,000 ~ < 20,000원: 10원
+        20,000 ~ < 50,000원: 50원
+        50,000 ~ < 200,000원: 100원
+        200,000 ~ < 500,000원: 500원
+        >= 500,000원: 1,000원
     """
     p = float(price)
     if p <= 0:
         return 0
 
-    if p < 2000:
+    if is_etf:
+        unit = 5
+    elif p < 2000:
         unit = 1
     elif p < 5000:
         unit = 5
@@ -66,8 +78,6 @@ def adjust_krx_tick_size(price: float, direction: str = "down") -> int:
         unit = 10
     elif p < 50000:
         unit = 50
-    elif p < 20000:
-        unit = 10
     elif p < 200000:
         unit = 100
     elif p < 500000:
@@ -75,19 +85,21 @@ def adjust_krx_tick_size(price: float, direction: str = "down") -> int:
     else:
         unit = 1000
 
+    rounded_p = round(p, 6)
     if direction == "down":
-        return int((p // unit) * unit)
+        return int(math.floor(rounded_p / unit) * unit)
     elif direction == "up":
-        return int(((p + unit - 1) // unit) * unit)
+        return int(math.ceil(rounded_p / unit) * unit)
     else:
-        return int(round(p / unit) * unit)
+        return int(round(rounded_p / unit) * unit)
 
 class TechnicalAnalysis:
     """
     일봉 데이터를 기반으로 주요 보조지표를 산출하고 일봉/45분봉 복합 대응전략(1~5순위)을 평가합니다.
     """
-    def __init__(self, daily_df: pd.DataFrame):
+    def __init__(self, daily_df: pd.DataFrame, is_etf: bool = False):
         self.df = daily_df.copy()
+        self.is_etf = is_etf
         if not self.df.empty:
             self.df['stk_date'] = pd.to_datetime(self.df['stk_date'])
             self.df = self.df.sort_values('stk_date').reset_index(drop=True)
@@ -415,18 +427,9 @@ class TechnicalAnalysis:
         natr_pct = round((atr_14 / (close_p + 1e-9)) * 100.0, 2)
         atr_pct = natr_pct
 
-        # V4 설정 배수 적용
-        buy_watch_mul = ATR_CONFIG.get("buy_watch_multiple", 1.5)
-        stop_mul = ATR_CONFIG.get("initial_stop_multiple", 2.0)
-        target_mul = ATR_CONFIG.get("profit_activation_multiple", 3.0)
-
-        raw_trailing_buy_p = close_p - (buy_watch_mul * atr_14)
-        raw_trailing_stop_p = close_p - (stop_mul * atr_14)
-        raw_trailing_target_p = close_p + (target_mul * atr_14)
-
-        kiwoom_buy_tick_p = adjust_krx_tick_size(raw_trailing_buy_p, "down")
-        kiwoom_stop_tick_p = adjust_krx_tick_size(raw_trailing_stop_p, "down")
-        kiwoom_target_tick_p = adjust_krx_tick_size(raw_trailing_target_p, "up")
+        # ATR Risk Engine 기반 매수 전 후보 가격선(Candidate Preview) 산출
+        from src.engine.risk_engine import ATRRiskEngine
+        cand_prev = ATRRiskEngine.calculate_candidate_preview(close_p, atr_14, is_etf=self.is_etf)
 
         return {
             "t_raw": t_raw,
@@ -438,12 +441,17 @@ class TechnicalAnalysis:
             "atr_method": ATR_CONFIG.get("atr_method", "WILDER"),
             "atr_timeframe": ATR_CONFIG.get("atr_timeframe", "1D_COMPLETED"),
             "parameter_version": ATR_ENGINE_VERSION,
-            "trailing_buy_price": int(round(raw_trailing_buy_p)),
-            "trailing_stop_price": int(round(raw_trailing_stop_p)),
-            "trailing_target_price": int(round(raw_trailing_target_p)),
-            "kiwoom_buy_tick_price": kiwoom_buy_tick_p,
-            "kiwoom_stop_tick_price": kiwoom_stop_tick_p,
-            "kiwoom_target_tick_price": kiwoom_target_tick_p,
+            "lifecycle_status": cand_prev["lifecycle_status"],
+            "candidate_reference_price": cand_prev["candidate_reference_price"],
+            "candidate_reference_atr": cand_prev["candidate_reference_atr"],
+            "trailing_buy_price": int(round(cand_prev["raw_buy_price"])),
+            "trailing_stop_price": int(round(cand_prev["raw_stop_price"])),
+            "trailing_target_price": int(round(cand_prev["raw_target_price"])),
+            "kiwoom_buy_tick_price": cand_prev["candidate_buy_price"],
+            "kiwoom_stop_tick_price": cand_prev["candidate_stop_price"],
+            "kiwoom_target_tick_price": cand_prev["candidate_target_price"],
+            "buy_rebound_delta": cand_prev["buy_rebound_delta"],
+            "sell_drop_delta": cand_prev["sell_drop_delta"],
             "supply_demand_pass": supply_demand_pass,
             "obv_dead_date": obv_dead_date,
             "obv_dead_elapsed_days": obv_dead_elapsed_days,

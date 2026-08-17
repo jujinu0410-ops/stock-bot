@@ -1,6 +1,10 @@
 __pycache__/
 *.py[cod]
 data/test_*.db
+test_*.db
+*.db-journal
+*.db-wal
+*.db-shm
 .env
 logs/*.log
 logs/*.xlsx

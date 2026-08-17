@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional, List
 from src.database.db_manager import DatabaseManager
 from src.analysis.technical_analysis import TechnicalAnalysis
 from src.analysis.fundamental_analysis import FundamentalAnalysis
+from src.analysis.intraday_analysis import Intraday45mAnalyzer
 from src.utils.logger import logger
 
 class TradingEngine:
@@ -11,6 +12,7 @@ class TradingEngine:
     """
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
+        self.intraday_analyzer = Intraday45mAnalyzer()
 
     def analyze_stock(self, stock_code: str, analysis_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
@@ -45,11 +47,12 @@ class TradingEngine:
             dart_data = dict(dart_rows[0]) if dart_rows else {}
 
             # 4. 기술적 및 기본적 분석 엔진 수행
-            ta = TechnicalAnalysis(df_daily)
-            tech_res = ta.evaluate_signals()
-
             fa = FundamentalAnalysis(dart_data)
             fund_res = fa.evaluate()
+            is_etf = fund_res.get('is_etf', False)
+
+            ta = TechnicalAnalysis(df_daily, is_etf=is_etf)
+            tech_res = ta.evaluate_signals()
 
             # 종합 데이터 완성도 (%)
             total_completeness = min(tech_res['tech_completeness'], fund_res['data_completeness'])
@@ -131,6 +134,9 @@ class TradingEngine:
             }
             self.db.upsert_trading_signal(signal_db_record)
 
+            # 5. 45분봉 정밀 수급 및 전술 지표 연산
+            intra_res = self.intraday_analyzer.analyze_45m_indicators(stock_code)
+
             return {
                 "stock_code": stock_code,
                 "stock_name": stock_name,
@@ -159,14 +165,48 @@ class TradingEngine:
                 "target_profit_price": target_profit_price,
                 "atr_14": tech_res.get('atr_14', 0.0),
                 "atr_pct": tech_res.get('atr_pct', 0.0),
+                "lifecycle_status": tech_res.get('lifecycle_status', 'PREVIEW_ONLY'),
+                "candidate_reference_price": tech_res.get('candidate_reference_price', latest_close),
+                "candidate_reference_atr": tech_res.get('candidate_reference_atr', tech_res.get('atr_14', 0.0)),
                 "trailing_buy_price": tech_res.get('trailing_buy_price', stop_loss_price),
                 "trailing_stop_price": tech_res.get('trailing_stop_price', stop_loss_price),
                 "trailing_target_price": tech_res.get('trailing_target_price', target_profit_price),
                 "kiwoom_buy_tick_price": tech_res.get('kiwoom_buy_tick_price', stop_loss_price),
                 "kiwoom_stop_tick_price": tech_res.get('kiwoom_stop_tick_price', stop_loss_price),
                 "kiwoom_target_tick_price": tech_res.get('kiwoom_target_tick_price', target_profit_price),
+                "buy_rebound_delta": tech_res.get('buy_rebound_delta', 0),
+                "sell_drop_delta": tech_res.get('sell_drop_delta', 0),
                 "supply_demand_pass": tech_res.get('supply_demand_pass', False),
-                "reason": tech_res['reason']
+                "reason": tech_res['reason'],
+                
+                # 일봉 원자값 지표
+                "obv_dead_date": tech_res.get("obv_dead_date", "N/A"),
+                "obv_dead_elapsed_days": tech_res.get("obv_dead_elapsed_days", 0),
+                "daily_cho_recent2": tech_res.get("daily_cho_recent2", [0, 0]),
+                "daily_cho_is_subzero_2bars": tech_res.get("daily_cho_is_subzero_2bars", False),
+                "daily_adx_di_dominance": tech_res.get("adx_di_dominance", "-"),
+                "is_minus_di_dominant": tech_res.get("is_minus_di_dominant", False),
+
+                # 45분봉 원자값 지표 및 Provenance 메타데이터
+                "intraday_source": intra_res.get("intraday_source", "NONE"),
+                "intraday_row_count": intra_res.get("intraday_row_count", 0),
+                "intraday_last_timestamp": intra_res.get("intraday_last_timestamp", "N/A"),
+                "intraday_quality": intra_res.get("intraday_quality", "🔴 INVALID (분봉 데이터 미수집)"),
+                "intraday_error_code": intra_res.get("intraday_error_code", "NO_INTRADAY_DATA"),
+                "adx_14_45m": intra_res.get("adx_14_45m"),
+                "plus_di_45m": intra_res.get("plus_di_45m"),
+                "minus_di_45m": intra_res.get("minus_di_45m"),
+                "adx_di_dominance_45m": intra_res.get("adx_di_dominance_45m", "N/A"),
+                "obv_45m": intra_res.get("obv_45m"),
+                "obv_45m_trend": intra_res.get("obv_45m_trend", "N/A"),
+                "chaikin_osc_45m": intra_res.get("chaikin_osc_45m"),
+                "chaikin_flow_45m": intra_res.get("chaikin_flow_45m", "N/A"),
+                "intraday_cho_recent2": intra_res.get("intraday_cho_recent2"),
+                "intraday_cho_is_subzero_2bars": intra_res.get("intraday_cho_is_subzero_2bars", False),
+                "is_45m_breakdown": intra_res.get("is_45m_breakdown", False),
+                "is_obv_dead": intra_res.get("is_obv_dead", False),
+                "is_cho_outflow": intra_res.get("is_cho_outflow", False),
+                "is_45m_bearish_2plus": intra_res.get("is_45m_bearish_2plus", False)
             }
 
         except Exception as e:

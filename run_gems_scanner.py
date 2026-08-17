@@ -4,41 +4,52 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog
 from pathlib import Path
 from datetime import datetime
+from typing import List, Tuple
 
 # 프로젝트 루트 경로 추가
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
-from scan_stock_for_gems import scan_stock_for_gems
+from scan_stock_for_gems import scan_stock_dto, scan_stock_for_gems
+from src.core.dto import ScanResultDTO
+from src.formatters.gems_formatter import render_multi_gems_markdown, render_multi_gems_json
 from src.utils.logger import logger
 
-def process_stocks(stock_inputs: list) -> str:
-    results = []
-    header = f"""================================================================================
-🤖 [Gemini Gems 전용] 관심 종목 {len(stock_inputs)}개 정밀 진단 통합 리포트
-수집 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S KST')}
-================================================================================
-"""
-    results.append(header)
-    for idx, item in enumerate(stock_inputs, 1):
+def process_stocks_to_dtos(stock_inputs: list) -> List[ScanResultDTO]:
+    """
+    입력된 종목 목록에 대해 순차적으로 시세/재무 수집 및 진단을 수행하고 ScanResultDTO 리스트를 생성합니다.
+    """
+    dtos = []
+    for item in stock_inputs:
         item_str = item.strip()
         if not item_str:
             continue
         try:
-            report = scan_stock_for_gems(item_str)
-            results.append(f"\n--- [종목 {idx}/{len(stock_inputs)}: {item_str}] ---\n" + report)
+            dto = scan_stock_dto(item_str)
+            dtos.append(dto)
         except Exception as e:
             logger.error(f"종목 {item_str} 진단 중 오류: {e}")
-            results.append(f"\n❌ 종목 {item_str} 수집 실패: {e}\n")
-            
-    footer = """================================================================================
-💡 사용 방법:
-이 파일 내용 전체를 복사하여 구글 Gemini Gems 챗봇 질문창에 붙여넣으신 후
-"위 종목들의 매수 승인 여부와 6대 안전조건 충족 평가를 각각 요약해 줘" 라고 질문하세요!
-================================================================================
-"""
-    results.append(footer)
-    return "\n".join(results)
+            dtos.append(ScanResultDTO(
+                stock_code=item_str,
+                stock_name=item_str,
+                collected_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S KST'),
+                action_strategy=f"❌ 종목 {item_str} 수집 실패: {e}"
+            ))
+    return dtos
+
+def process_stocks(stock_inputs: list) -> str:
+    """
+    종목 목록을 입력받아 DTO 수집 ➔ JSON 구조화 ➔ Markdown Formatter 렌더링을 거쳐
+    최종 Gemini Gems 통합 텍스트 리포트를 반환합니다.
+    """
+    dtos = process_stocks_to_dtos(stock_inputs)
+    
+    # 1. DTO ➔ JSON 직렬화 (내부 데이터 구조화 파이프라인)
+    _json_dump = render_multi_gems_json(dtos)
+    
+    # 2. DTO ➔ Markdown 렌더러 변환
+    full_report = render_multi_gems_markdown(dtos)
+    return full_report
 
 def get_desktop_path() -> Path:
     """Windows 레지스트리 기반 OneDrive/한글 바탕화면 동적 탐색"""
