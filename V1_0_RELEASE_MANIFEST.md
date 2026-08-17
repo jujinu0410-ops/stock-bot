@@ -25,11 +25,11 @@
 │ Layer 1: Kiwoom REST & 45m Intraday Technical Gate (Phase 3.1 Reliability & Lineage)   │
 │          • ADX, DMI, OBV(9), Chaikin Oscillator(13,26), 일목균형표 45분봉 정밀판정    │
 │          • Gate: BUY_ALLOWED / BUY_ALLOWED_CONDITIONAL / BUY_WAIT / BUY_BLOCKED        │
-│          • 3단계 분할매수 신호 생성기 (1차 50% / 2차 -1.5 ATR 30% / 3차 돌파 20%)     │
+│          • 3단계 분할매수 신호 생성기 (1차 50% / 2차 P0-1.5A0 감시선 도달 후 +0.5A0 반등 시 30% / 3차 돌파 20%) │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │ Layer 2: ATR V4 Trailing & Position Risk Engine (Phase 2 Capital & Risk Engine)        │
 │          • 총자산 0.5% 리스크 예산, P0/A0/S0 1차 체결 기반 원자적 확정                │
-│          • 트레일링 익절 (+3.0 ATR 활성화, -0.6 ATR 추락 청산), 초기손절 (-1.5 ATR)    │
+│          • 트레일링 익절 (+3.0 ATR 활성화, -0.8 ATR 추락 청산), 초기손절 (-1.5 ATR)    │
 │          • RISK_LOCK 수동 예외 방어 모드 지원                                          │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │ Layer 3: OpenDART 8-Quarter Fundamental Evidence Layer (Phase 4.1 Flow/Stock & Fresh)  │
