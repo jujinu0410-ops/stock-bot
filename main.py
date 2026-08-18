@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import sys
 import os
 import argparse
@@ -5,6 +6,7 @@ from pathlib import Path
 from datetime import datetime
 import pandas as pd
 import numpy as np
+import re
 from typing import Optional, List, Dict, Any, Tuple
 
 # 프로젝트 루트 디렉토리 설정
@@ -87,6 +89,104 @@ def _get_git_commit_sha() -> str:
     except Exception:
         return "UNKNOWN"
 
+def verify_pipeline_stock_code_consistency(
+    raw_kiwoom_positions: Optional[List[Dict[str, Any]]],
+    db_manager: DatabaseManager,
+    held_status: List[Dict[str, Any]],
+    excel_path: Path,
+    html_report: str
+) -> None:
+    """
+    발송 직전 파이프라인 전 계층의 종목코드 집합 일치성 전수 검증:
+    1. 키움 API 연속조회 원본 종목코드 집합 (raw_kiwoom_codes)
+    2. DB portfolio_positions 활성 종목코드 집합 (db_active_codes)
+    3. held_status 평가 리스트 종목코드 집합 (held_status_codes)
+    4. 생성된 XLSX 파일의 보유종목 시트 종목코드 집합 (xlsx_codes)
+    5. 생성된 이메일 HTML 카드의 종목코드 집합 (email_card_codes)
+    
+    하나라도 개수나 코드가 다르면 RuntimeError를 발생시켜 메일 발송 차단 및 GitHub Actions 실패 처리
+    """
+    import re
+    import pandas as pd
+
+    # 1. 키움 원본 (수집된 경우)
+    if raw_kiwoom_positions is not None:
+        raw_kiwoom_codes = {str(p["stock_code"]).strip().zfill(6) for p in raw_kiwoom_positions if int(p.get("quantity", 0)) > 0}
+    else:
+        raw_kiwoom_codes = set()
+    
+    # 2. DB 활성 종목
+    db_rows = db_manager.execute_query("SELECT stock_code FROM portfolio_positions WHERE quantity > 0")
+    db_active_codes = {str(r["stock_code"]).strip().zfill(6) for r in db_rows} if db_rows else set()
+
+    # 3. held_status
+    held_status_codes = {str(h["stock_code"]).strip().zfill(6) for h in held_status}
+
+    # 4. XLSX 파일
+    xlsx_codes = set()
+    try:
+        def _to_code(val):
+            if val is None or pd.isna(val):
+                return None
+            s = str(val).strip().replace("A", "").split(".")[0]
+            if s.isdigit() and len(s) <= 6:
+                return s.zfill(6)
+            return None
+
+        xlsx_df = pd.read_excel(excel_path, sheet_name=0)
+        code_col = None
+        for col in xlsx_df.columns:
+            if "종목코드" in str(col) or "code" in str(col).lower():
+                code_col = col
+                break
+        if code_col is None and len(xlsx_df.columns) > 1:
+            code_col = xlsx_df.columns[1]
+        elif code_col is None and len(xlsx_df.columns) > 0:
+            code_col = xlsx_df.columns[0]
+
+        if code_col is not None:
+            for c in xlsx_df[code_col]:
+                code_str = _to_code(c)
+                if code_str:
+                    xlsx_codes.add(code_str)
+    except Exception as e_xlsx:
+        logger.error(f"[무결성 검증] XLSX 파일 읽기 실패: {e_xlsx}")
+        raise RuntimeError(f"XLSX 파일 종목코드 검증 실패: {e_xlsx}")
+
+    # 5. 이메일 HTML 카드 (V2 data-stock-code 속성 또는 V1 괄호 안 6자리 코드)
+    email_card_codes = set(re.findall(r'data-stock-code="(\d{6})"', html_report))
+    if not email_card_codes:
+        # V1 또는 fallback HTML인 경우 held_status와 교집합하는 6자리 종목코드 추출
+        raw_v1_codes = set(re.findall(r'\((\d{6})\)', html_report))
+        email_card_codes = raw_v1_codes.intersection(held_status_codes) if raw_v1_codes else raw_v1_codes
+
+    logger.info("=" * 50)
+    logger.info("🔍 [발송 직전 전 계층 종목코드 무결성 검증]")
+    logger.info(f"1. 키움 API 원본 수집 ({len(raw_kiwoom_codes)}개): {sorted(list(raw_kiwoom_codes))}")
+    logger.info(f"2. DB 활성 종목 ({len(db_active_codes)}개): {sorted(list(db_active_codes))}")
+    logger.info(f"3. held_status 평가 ({len(held_status_codes)}개): {sorted(list(held_status_codes))}")
+    logger.info(f"4. XLSX 보유시트 ({len(xlsx_codes)}개): {sorted(list(xlsx_codes))}")
+    logger.info(f"5. 이메일 카드 ({len(email_card_codes)}개): {sorted(list(email_card_codes))}")
+    logger.info("=" * 50)
+
+    # 일치성 검증
+    mismatches = []
+    if raw_kiwoom_positions is not None and raw_kiwoom_codes != db_active_codes:
+        mismatches.append(f"키움 API 원본 vs DB 불일치 (키움: {len(raw_kiwoom_codes)}개, DB: {len(db_active_codes)}개, 차이: {raw_kiwoom_codes ^ db_active_codes})")
+    if db_active_codes != held_status_codes:
+        mismatches.append(f"DB vs held_status 불일치 (DB: {len(db_active_codes)}개, held_status: {len(held_status_codes)}개, 차이: {db_active_codes ^ held_status_codes})")
+    if held_status_codes != xlsx_codes:
+        mismatches.append(f"held_status vs XLSX 불일치 (held_status: {len(held_status_codes)}개, XLSX: {len(xlsx_codes)}개, 차이: {held_status_codes ^ xlsx_codes})")
+    if held_status_codes != email_card_codes:
+        mismatches.append(f"held_status vs 이메일 카드 불일치 (held_status: {len(held_status_codes)}개, 이메일카드: {len(email_card_codes)}개, 차이: {held_status_codes ^ email_card_codes})")
+
+    if mismatches:
+        err_msg = f"🛑 [종목코드 불일치 감지 - 발송 차단] 전 계층 종목코드 집합이 일치하지 않습니다:\n" + "\n".join(mismatches)
+        logger.critical(err_msg)
+        raise RuntimeError(err_msg)
+
+    logger.info(f"✅ [무결성 검증 통과] 키움API-DB-held_status-XLSX-이메일 전 계층의 {len(held_status_codes)}개 종목코드가 100% 완벽히 일치합니다.")
+
 def run_post_market_analysis(
     add_code: Optional[str] = None,
     add_name: Optional[str] = None,
@@ -126,8 +226,9 @@ def run_post_market_analysis(
         watchlist_mgr.remove_stock(remove_code)
 
     # 2. 내 계좌 보유 종목 키움 API 실시간 동기화
+    raw_kiwoom_positions = None
     try:
-        portfolio_mgr.sync_portfolio_from_kiwoom()
+        raw_kiwoom_positions = portfolio_mgr.sync_portfolio_from_kiwoom()
     except Exception as e_sync:
         logger.error(f"보유 계좌 동기화 중 오류 발생: {e_sync}", exc_info=True)
         raise
@@ -251,6 +352,9 @@ def run_post_market_analysis(
             logger.critical("🛑 [V2 렌더러 실패] EMAIL_RENDER_VERSION=V2 설정 상태에서 V2 렌더러 예외로 V1 fallback이 발생했습니다. 운영 무결성을 위해 작업을 실패 처리합니다.")
             raise RuntimeError("EMAIL_RENDER_VERSION=V2 설정 상태에서 V2 렌더러 예외로 V1 fallback 발생")
         
+        # 🔥 [발송 직전 전수 검증] 키움 API 원본 - DB - held_status - XLSX - 이메일 카드 간 종목코드 100% 동일성 검증
+        verify_pipeline_stock_code_consistency(raw_kiwoom_positions, db, held_status, excel_path, html_report)
+
         import hashlib
         balance_signature = "_".join(sorted([f"{h['stock_code']}:{h.get('quantity',0)}:{h.get('current_price',0)}" for h in held_status]))
         dispatch_fingerprint = hashlib.md5(f"{date_str}_{session_code}_{balance_signature}".encode()).hexdigest()[:12]
