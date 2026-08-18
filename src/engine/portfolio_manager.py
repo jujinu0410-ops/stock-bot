@@ -186,7 +186,11 @@ class PortfolioManager:
         """
         DB에 저장된 실제 보유 종목들에 대해 V4-PILOT-C 엔진을 가동하여
         P0/A0 기반 고정 감시가, 2단계 손절 래칫, 익절 트레일링, 포지션 사이징 및 정밀 평가를 수행합니다.
-        키움 잔고 원본 메타데이터(raw_balance_price, current_price, current_price_source, fallback_used)를 온전히 보존하여 평가합니다.
+        
+        [2-Pass 일관성 아키텍처]
+        - Pass 1: 모든 보유종목의 최종 적용 가격(current_price) 및 원천을 먼저 확정하고 전체 계좌 평가액을 단일 기준으로 산출
+        - Pass 2: 확정된 계좌 평가액과 동일한 적용 가격을 기반으로 평가손익, 계좌비중, 20% 초과수량 및 포지션 사이징 산출
+        - 검증: 정상 보유종목 비중 합계가 99.9% ~ 100.1% 범위인지 엄격히 검증하여 분자/분모 불일치 시 차단
         """
         rows = self.db.execute_query("""
             SELECT p.*, s.stock_name
@@ -206,66 +210,24 @@ class PortfolioManager:
                 code_k = str(lp.get("stock_code", "")).strip().zfill(6)
                 live_pos_map[code_k] = lp
 
-        # 전체 포트폴리오 1차 평가금액 계산 (계좌 위험예산 및 비중 산출용)
-        raw_holdings = []
+        # ----------------------------------------------------
+        # Pass 1: 모든 종목의 최종 적용 가격, 원천, 분석 결과를 먼저 확정 및 계좌 평가액 산출
+        # ----------------------------------------------------
+        confirmed_holdings = []
         for r in rows:
             code = str(r["stock_code"]).strip().zfill(6)
             name = r["stock_name"]
             qty = int(r["quantity"])
             avg_p = float(r["avg_buy_price"])
-            
+            total_inv = qty * avg_p
+
             live_meta = live_pos_map.get(code, {})
             raw_bal_p = int(live_meta.get("raw_balance_price", 0)) if live_meta else 0
-            pos_cur_p = int(live_meta.get("current_price", 0)) if live_meta else 0
-            src_str = live_meta.get("current_price_source", "UNAVAILABLE") if live_meta else "UNAVAILABLE"
-            fb_used = bool(live_meta.get("fallback_used", False)) if live_meta else False
+            kiwoom_cur_p = int(live_meta.get("current_price", 0)) if live_meta else 0
+            kiwoom_source = live_meta.get("current_price_source", "UNAVAILABLE") if live_meta else "UNAVAILABLE"
 
             daily_df = self.db.get_daily_prices(code)
             market_close_p = float(daily_df.iloc[-1]["close_price"]) if not daily_df.empty else 0.0
-            
-            # 가격 결정
-            if pos_cur_p > 0:
-                calc_cur_p = float(pos_cur_p)
-            elif market_close_p > 0:
-                calc_cur_p = market_close_p
-                fb_used = True
-                src_str = "REAL_MARKET_CLOSE"
-            else:
-                calc_cur_p = 0.0
-                fb_used = True
-                src_str = "UNAVAILABLE"
-
-            raw_holdings.append({
-                "code": code,
-                "name": name,
-                "qty": qty,
-                "avg_p": avg_p,
-                "cur_p": calc_cur_p,
-                "raw_balance_price": raw_bal_p,
-                "current_price_source": src_str,
-                "fallback_used": fb_used,
-                "market_close_price": market_close_p,
-                "eval_amt": qty * calc_cur_p,
-                "row": dict(r),
-                "daily_df": daily_df
-            })
-
-        total_account_equity = sum(h["eval_amt"] for h in raw_holdings) or 1.0
-
-        eval_list = []
-        for h in raw_holdings:
-            code = h["code"]
-            name = h["name"]
-            qty = h["qty"]
-            avg_p = h["avg_p"]
-            total_inv = qty * avg_p
-            daily_df = h["daily_df"]
-            current_price = h["cur_p"]
-            raw_balance_price = h["raw_balance_price"]
-            cur_price_source = h["current_price_source"]
-            fallback_used = h["fallback_used"]
-            market_close_price = h["market_close_price"]
-            p_row = h["row"]
 
             # 1. 기술적 지표 및 기본 분석 데이터 추출
             tech_eval = {}
@@ -281,10 +243,6 @@ class PortfolioManager:
                 try:
                     analysis = engine.analyze_stock(code, name)
                     if analysis:
-                        eng_cp = float(analysis.get("current_price", 0.0) or 0.0)
-                        if eng_cp > 0:
-                            current_price = eng_cp
-                            cur_price_source = "REAL_MARKET_CLOSE"
                         f_sc = float(analysis.get("f_score", 50.0) or 50.0)
                         t_sc = float(analysis.get("t_score", 50.0) or 50.0)
                         final_sc = float(analysis.get("final_score", 50.0) or 50.0)
@@ -294,32 +252,117 @@ class PortfolioManager:
                 except Exception as e_an:
                     logger.error(f"[{code}] 종목 분석 중 예외: {e_an}")
 
-            # 라이브 가격 검증: 가격이 0 이하이면 즉시 차단
-            if current_price <= 0:
-                logger.critical(f"[PortfolioManager] 🛑 [가격 검증 실패] 종목 {name}({code})의 라이브 가격을 확인할 수 없습니다 (current_price <= 0). 메일 발송을 차단합니다.")
-                raise RuntimeError(f"종목 {name}({code}) 가격 검증 실패 (라이브 가격 확인 불가)")
-
             if not daily_df.empty and len(daily_df) >= 5:
                 ta = TechnicalAnalysis(daily_df, is_etf=is_etf)
                 tech_eval = ta.evaluate_signals()
             elif analysis:
                 tech_eval = analysis
 
-            eval_amount = qty * current_price
-            pnl_amount = eval_amount - total_inv
-            pnl_pct = round((pnl_amount / total_inv) * 100.0, 2) if total_inv > 0 else 0.0
-            eval_weight_pct = round((eval_amount / total_account_equity) * 100.0, 1) if total_account_equity > 0 else 0.0
+            # 2. 최종 가격 결정 우선순위 통일:
+            # 1) 분석 엔진의 검증된 시세가격 (engine analysis current_price > 0)
+            # 2) 키움 cur_prc (kiwoom_cur_p > 0 and source == KIWOOM_CUR_PRC)
+            # 3) 키움 pred_close_pric (kiwoom_cur_p > 0 and source == KIWOOM_PRED_CLOSE)
+            # 4) 시세 DB 정규장 종가 (market_close_p > 0)
+            engine_cp = float(analysis.get("current_price", 0.0) or 0.0) if analysis else 0.0
 
-            # 가격 원천 및 괴리 감사 로그 (Section 4 & 7)
-            raw_bal_str = f"{raw_balance_price:,}원" if raw_balance_price > 0 else "0원(미제공)"
-            mkt_close_str = f"{int(market_close_price):,}원" if market_close_price > 0 else "미확인"
+            if engine_cp > 0:
+                final_price = engine_cp
+                price_source = "MARKET_ANALYSIS_ENGINE"
+                fallback_used = False
+            elif kiwoom_cur_p > 0 and kiwoom_source == "KIWOOM_CUR_PRC":
+                final_price = float(kiwoom_cur_p)
+                price_source = "KIWOOM_CUR_PRC"
+                fallback_used = False
+            elif kiwoom_cur_p > 0 and kiwoom_source == "KIWOOM_PRED_CLOSE":
+                final_price = float(kiwoom_cur_p)
+                price_source = "KIWOOM_PRED_CLOSE"
+                fallback_used = True
+            elif market_close_p > 0:
+                final_price = market_close_p
+                price_source = "DB_MARKET_CLOSE"
+                fallback_used = True
+            else:
+                final_price = 0.0
+                price_source = "UNAVAILABLE"
+                fallback_used = True
+
+            # 라이브 가격 검증: 가격이 0 이하이면 즉시 차단
+            if final_price <= 0:
+                logger.critical(f"[PortfolioManager] 🛑 [가격 검증 실패] 종목 {name}({code})의 라이브 가격을 확인할 수 없습니다 (current_price <= 0). 메일 발송을 차단합니다.")
+                raise RuntimeError(f"종목 {name}({code}) 가격 검증 실패 (라이브 가격 확인 불가)")
+
+            # 가격 감사 로깅 (평단가를 잔고 평가가로 칭하지 않고 명확히 분리)
+            raw_bal_str = f"{raw_bal_p:,}원" if raw_bal_p > 0 else "0원(미제공)"
+            mkt_close_str = f"{int(market_close_p):,}원" if market_close_p > 0 else "미확인"
             logger.info(
                 f"[Price Source Audit] {name}({code}) | "
                 f"잔고API 원본가(cur_prc): {raw_bal_str} | "
                 f"시세API 정규장종가: {mkt_close_str} | "
-                f"최종적용가: {int(current_price):,}원 (원천: {cur_price_source}, Fallback: {fallback_used}) | "
+                f"최종적용가: {int(final_price):,}원 (원천: {price_source}, Fallback: {fallback_used}) | "
                 f"평단가: {int(avg_p):,}원"
             )
+
+            eval_amt = qty * final_price
+
+            confirmed_holdings.append({
+                "code": code,
+                "name": name,
+                "qty": qty,
+                "avg_p": avg_p,
+                "total_inv": total_inv,
+                "final_price": final_price,
+                "raw_balance_price": raw_bal_p,
+                "price_source": price_source,
+                "fallback_used": fallback_used,
+                "market_close_price": market_close_p,
+                "eval_amt": eval_amt,
+                "f_sc": f_sc,
+                "t_sc": t_sc,
+                "final_sc": final_sc,
+                "completeness": completeness,
+                "is_etf": is_etf,
+                "f_confirmed": f_confirmed,
+                "tech_eval": tech_eval,
+                "analysis": analysis,
+                "row": dict(r),
+                "daily_df": daily_df
+            })
+
+        # 동일한 최종 적용 가격 기준으로 계좌 총 평가금액 산출 (분모)
+        total_account_equity = sum(h["eval_amt"] for h in confirmed_holdings)
+        if total_account_equity <= 0:
+            total_account_equity = 1.0
+
+        # ----------------------------------------------------
+        # Pass 2: 종목별 평가손익, 계좌비중, 포지션 사이징 및 정밀 평가 산출
+        # ----------------------------------------------------
+        eval_list = []
+        for h in confirmed_holdings:
+            code = h["code"]
+            name = h["name"]
+            qty = h["qty"]
+            avg_p = h["avg_p"]
+            total_inv = h["total_inv"]
+            current_price = h["final_price"]
+            raw_balance_price = h["raw_balance_price"]
+            cur_price_source = h["price_source"]
+            fallback_used = h["fallback_used"]
+            market_close_price = h["market_close_price"]
+            eval_amount = h["eval_amt"]
+            f_sc = h["f_sc"]
+            t_sc = h["t_sc"]
+            final_sc = h["final_sc"]
+            completeness = h["completeness"]
+            is_etf = h["is_etf"]
+            f_confirmed = h["f_confirmed"]
+            tech_eval = h["tech_eval"]
+            analysis = h["analysis"]
+            p_row = h["row"]
+            daily_df = h["daily_df"]
+
+            pnl_amount = eval_amount - total_inv
+            pnl_pct = round((pnl_amount / total_inv) * 100.0, 2) if total_inv > 0 else 0.0
+            eval_weight_pct = round((eval_amount / total_account_equity) * 100.0, 1) if total_account_equity > 0 else 0.0
 
             # 🔥 0. KRX 시장 거래 상태 가드레일 (주권매매거래정지 / 상장적격성 실질심사 / 정리매매 등)
             is_suspended = False
@@ -709,9 +752,19 @@ class PortfolioManager:
                 "reason": analysis.get("reason", "분석 데이터 정상") if analysis else "데이터 부족"
             })
 
-        # 계좌 비중(%) 산출
+        # 계좌 비중(%) 산출 및 무결성 검증 (99.9% ~ 100.1%)
         for item in eval_list:
             item["eval_weight_pct"] = round((item["eval_amount"] / total_account_equity) * 100.0, 1)
+
+        if eval_list:
+            total_weight_sum = round(sum(item["eval_weight_pct"] for item in eval_list), 2)
+            logger.info(f"[PortfolioManager] 전체 보유종목 계좌 비중 합계 검증: {total_weight_sum}% (기준: 99.9% ~ 100.1%)")
+            if not (99.9 <= total_weight_sum <= 100.1):
+                logger.critical(
+                    f"[PortfolioManager] 🛑 [계좌비중 무결성 오류] 보유종목 비중 합계({total_weight_sum}%)가 정상 허용 범위(99.9% ~ 100.1%)를 벗어났습니다. "
+                    f"분자와 분모 가격 불일치 또는 비중 산식 왜곡으로 판단하여 메일 발송을 차단합니다."
+                )
+                raise RuntimeError(f"계좌 비중 합계({total_weight_sum}%) 무결성 검증 실패 (99.9% ~ 100.1% 범위 이탈)")
 
         # 순위 4원화 (확정 순위 / 잠정 순위 / ETF 순위 / 거래정지 제외)
         suspended_stocks = [x for x in eval_list if x.get("trade_mode") == "SUSPENDED_HOLD" or x.get("stock_code") == "234920"]

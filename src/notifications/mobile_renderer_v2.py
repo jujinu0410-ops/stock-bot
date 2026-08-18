@@ -432,7 +432,7 @@ def generate_mobile_html_report_v2(
 
         <div class="content-body">
             <!-- 계좌 요약 카드 -->
-            <div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:10px 12px; margin-bottom:14px;">
+            <div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:10px 12px; margin-bottom:12px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                     <span style="font-size:12px; color:#475569; font-weight:bold;">💼 보유 포트폴리오 요약</span>
                     <span style="font-size:12px; font-weight:bold; color:{pnl_color_total};">총 손익: {pnl_sign_total}{total_pnl_pct:.2f}% ({total_pnl_amt_str})</span>
@@ -442,6 +442,13 @@ def generate_mobile_html_report_v2(
                     <div>수익: <b style="color:#10B981;">{profit_count}개</b></div>
                     <div>손실: <b style="color:#EF4444;">{loss_count}개</b></div>
                 </div>
+            </div>
+
+            <!-- V4-PILOT-C 주요 대응 지침 -->
+            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-left:4px solid #475569; border-radius:6px; padding:8px 10px; margin-bottom:12px; font-size:10.5px; color:#334155; line-height:1.45;">
+                <div style="font-weight:bold; color:#0F172A; margin-bottom:3px;">📋 V4-PILOT-C 주요 대응 지침</div>
+                <div>• <b>손절선/익절선</b>: 키움 호가 단위 적용 실시간 감시 (래칫 손절 상향 보존)</div>
+                <div>• <b>비중 20% 초과</b>: 20% 초과 수량 우선 분할 축소 권고 집행</div>
             </div>
 
             <!-- 보유 종목 카드 리스트 -->

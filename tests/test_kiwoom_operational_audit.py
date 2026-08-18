@@ -9,7 +9,7 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from src.api.kiwoom_api import KiwoomAPIClient
+from src.api.kiwoom_api import KiwoomAPIClient, parse_kiwoom_price
 from src.database.db_manager import DatabaseManager
 from src.engine.portfolio_manager import PortfolioManager
 from main import verify_pipeline_stock_code_consistency
@@ -297,7 +297,128 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         )
         self.assertIn("data-stock-code=\"000490\"", html)
         self.assertIn("보유 포트폴리오 요약", html)
+        self.assertIn("V4-PILOT-C 주요 대응 지침", html)
         self.assertIn("DART 주요 공시 & 브리핑", html)
+        self.assertNotIn("undefined", html)
+        self.assertNotIn("NaN", html)
+
+    def test_12_weight_sum_consistency_across_sources(self):
+        """12. [계좌비중 100% 검증] 키움 가격과 엔진 가격이 상이한 11종목에서 비중 합계 99.9%~100.1% 검증"""
+        # 11개 보유종목 DB 등록
+        for idx, c in enumerate(self.all_11_codes, 1):
+            self.pm.add_holding(c, f"종목_{c}", 100 * idx, 10000.0)
+            # 일봉 시세 등록
+            self.db.execute_non_query("""
+                INSERT OR REPLACE INTO kiwoom_daily (stock_code, stk_date, open_price, high_price, low_price, close_price, volume)
+                VALUES (?, '20260819', 10000, 10500, 9500, 10000, 100000)
+            """, (c,))
+
+        # 키움 잔고 메타데이터 (키움 가격은 9,000원)
+        live_meta_11 = [{
+            "stock_code": c, "stock_name": f"종목_{c}", "quantity": 100 * idx,
+            "avg_buy_price": 10000.0, "current_price": 9000, "raw_balance_price": 9000,
+            "current_price_source": "KIWOOM_CUR_PRC", "fallback_used": False
+        } for idx, c in enumerate(self.all_11_codes, 1)]
+
+        # Mock 엔진 (엔진 분석 가격은 12,000원 -> 엔진 가격이 1순위 적용됨)
+        mock_engine = MagicMock()
+        mock_engine.analyze_stock.side_effect = lambda code, name: {
+            "stock_code": code, "stock_name": name, "current_price": 12000.0,
+            "f_score": 60.0, "t_score": 60.0, "final_score": 60.0, "data_completeness": 100.0,
+            "is_etf": False, "f_score_confirmed": True
+        }
+
+        held_status = self.pm.get_held_portfolio_status(engine=mock_engine, live_positions=live_meta_11)
+        self.assertEqual(len(held_status), 11)
+
+        # 모든 종목이 1순위 엔진 가격(12,000원)으로 평가되었는지 확인
+        for pos in held_status:
+            self.assertEqual(pos["current_price"], 12000.0)
+
+        # 계좌 비중의 합이 반올림 오차 범위(99.9% ~ 100.1%) 내에 정확히 안착하는지 단언
+        total_weight = sum(p["eval_weight_pct"] for p in held_status)
+        self.assertGreaterEqual(total_weight, 99.9)
+        self.assertLessEqual(total_weight, 100.1)
+
+    def test_13_kiwoom_price_parser(self):
+        """13. [키움 가격 파서 검증] +, -, 쉼표, 원, 공백 포함 문자열의 절댓값 파싱 및 안전 변환 검증"""
+        self.assertEqual(parse_kiwoom_price("+8,100"), 8100)
+        self.assertEqual(parse_kiwoom_price("-8,100"), 8100)
+        self.assertEqual(parse_kiwoom_price("8,100원"), 8100)
+        self.assertEqual(parse_kiwoom_price("  +8,100원  "), 8100)
+        self.assertEqual(parse_kiwoom_price(8100), 8100)
+        self.assertEqual(parse_kiwoom_price(8100.4), 8100)
+        self.assertEqual(parse_kiwoom_price(None), 0)
+        self.assertEqual(parse_kiwoom_price(""), 0)
+        self.assertEqual(parse_kiwoom_price("N/A"), 0)
+
+    def test_14_applied_price_matches_pnl_and_weight_eval(self):
+        """14. [분자/분모 가격 일치성 검증] 최종 적용가격과 평가손익·비중 산출에 사용된 가격의 100% 일치 검증"""
+        code = "000490"
+        self.pm.add_holding(code, "대동", 2475, 8116.0)
+        self.db.execute_non_query("""
+            INSERT OR REPLACE INTO kiwoom_daily (stock_code, stk_date, open_price, high_price, low_price, close_price, volume)
+            VALUES (?, '20260819', 8050, 8150, 8000, 8050, 50000)
+        """, (code,))
+
+        live_meta = [{
+            "stock_code": code, "stock_name": "대동", "quantity": 2475,
+            "avg_buy_price": 8116.0, "current_price": 8050, "raw_balance_price": 8050,
+            "current_price_source": "KIWOOM_CUR_PRC", "fallback_used": False
+        }]
+
+        eval_list = self.pm.get_held_portfolio_status(engine=None, live_positions=live_meta)
+        self.assertEqual(len(eval_list), 1)
+        item = eval_list[0]
+
+        expected_eval = 2475 * 8050
+        expected_inv = 2475 * 8116.0
+        expected_pnl = expected_eval - expected_inv
+
+        self.assertEqual(item["current_price"], 8050)
+        self.assertEqual(item["eval_amount"], expected_eval)
+        self.assertEqual(item["pnl_amount"], int(expected_pnl))
+        self.assertEqual(item["eval_weight_pct"], 100.0)
+
+    def test_15_email_v2_excludes_redundant_sections(self):
+        """15. [이메일 V2 불필요 섹션 배제 검증] 필수 5개 항목만 포함되고 관심종목/신규매수 등 제외 대상 부재 검증"""
+        from src.notifications.mobile_renderer_v2 import generate_mobile_html_report_v2
+        sample_held = [{
+            "stock_code": "000490", "stock_name": "대동", "current_price": 8050,
+            "daily_change_pct": -0.81, "pnl_pct": -0.81, "pnl_amount": -163350,
+            "trade_mode": "NORMAL", "action_status": "보유",
+            "kiwoom_stop_tick_price": 7600, "kiwoom_target_tick_price": 9200,
+            "profit_trail_delta": 0, "recommended_order_qty": 0, "order_direction": "보유",
+            "quantity": 2475, "f_score": 60.0, "t_score": 55.0, "final_score": 57.5,
+            "atr_14": 280, "atr_pct": 3.4
+        }]
+        sample_disc = [{
+            "stock_name": "대동", "stock_code": "000490", "report_nm": "주요사항보고서",
+            "link": "http://dart.fss.or.kr", "summary": "자금조달 공시",
+            "impact": "중립", "guide": "관망"
+        }]
+
+        html = generate_mobile_html_report_v2(
+            date_str="2026-08-19 15:35",
+            total_count=10,
+            caught_signals=[{"stock_code": "005930", "signal_type": "1차 신규매수"}], # V2에서는 제외 대상
+            all_results=[{"stock_code": "005930", "signal_type": "1차 신규매수"}],
+            held_portfolio=sample_held,
+            disclosures=sample_disc
+        )
+
+        # 필수 포함 항목 검증
+        self.assertIn("💼 보유 포트폴리오 요약", html)
+        self.assertIn("📋 V4-PILOT-C 주요 대응 지침", html)
+        self.assertIn("data-stock-code=\"000490\"", html)
+        self.assertIn("📢 DART 주요 공시 & 브리핑", html)
+        self.assertIn("※ 본 리포트는 V4-PILOT-C 위험관리 엔진 기준값이며", html)
+
+        # 제외 대상 섹션 부재 검증
+        self.assertNotIn("관심종목 전체 분석", html)
+        self.assertNotIn("신규 매수 신호 포착", html)
+        self.assertNotIn("전체 시장 동향", html)
+        self.assertNotIn("신규매수", html)
         self.assertNotIn("undefined", html)
         self.assertNotIn("NaN", html)
 

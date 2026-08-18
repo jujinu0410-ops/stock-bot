@@ -3,6 +3,25 @@ from typing import Dict, Any, List, Optional
 from config.settings import KIWOOM_APP_KEY, KIWOOM_APP_SECRET, KIWOOM_ACCOUNT_NO, KIWOOM_USE_MOCK
 from src.utils.logger import logger
 
+def parse_kiwoom_price(val: Any) -> int:
+    """
+    키움 API의 가격 문자열(쉼표, 공백, +, -, 원 등 포함)을 안전하게 파싱하여 양의 정수(절댓값)로 변환.
+    파싱 불가 시 0 반환.
+    예: "+8,100" -> 8100, "-8,100" -> 8100, " 8,100원 " -> 8100, 8100 -> 8100, None -> 0
+    """
+    if val is None:
+        return 0
+    if isinstance(val, (int, float)):
+        return abs(int(round(val)))
+    val_str = str(val).strip().replace(",", "").replace("원", "").replace(" ", "")
+    if not val_str:
+        return 0
+    try:
+        num = float(val_str)
+        return abs(int(round(num)))
+    except (ValueError, TypeError):
+        return 0
+
 class KiwoomAPIClient:
     """
     키움 REST API (Test/Real) 클라이언트입니다.
@@ -124,16 +143,18 @@ class KiwoomAPIClient:
             for item in items:
                 raw_code = item.get("stk_cd", "").replace("A", "").strip().zfill(6)
                 name = item.get("stk_nm", "").strip()
-                qty = int(item.get("rmnd_qty", 0))
+                qty = parse_kiwoom_price(item.get("rmnd_qty", 0))
                 if qty <= 0:
                     continue
-                avg_p = float(item.get("pur_pric", 0.0))
+                avg_p = float(parse_kiwoom_price(item.get("pur_pric", 0.0)))
                 
-                # 4. 가격 원본(raw_balance_price)과 대체값 분리
-                raw_cur_prc_val = int(item.get("cur_prc", 0)) if str(item.get("cur_prc", "")).replace("-", "").isdigit() else 0
-                raw_pred_close_val = int(item.get("pred_close_pric", 0)) if str(item.get("pred_close_pric", "")).replace("-", "").isdigit() else 0
+                # 3. 키움 가격 파서 공통 적용 및 원본 문자열 보존
+                raw_cur_prc_str = str(item.get("cur_prc", "")).strip()
+                raw_pred_close_str = str(item.get("pred_close_pric", "")).strip()
+                raw_cur_prc_val = parse_kiwoom_price(item.get("cur_prc"))
+                raw_pred_close_val = parse_kiwoom_price(item.get("pred_close_pric"))
                 
-                # raw_balance_price: 키움 cur_prc 원문 숫자 (0이면 0 그대로 보존)
+                # raw_balance_price: 키움 cur_prc 원문 파싱 숫자 (0이면 0 그대로 보존)
                 raw_balance_price = raw_cur_prc_val
 
                 if raw_cur_prc_val > 0:
@@ -149,8 +170,11 @@ class KiwoomAPIClient:
                     fallback_used = True
                     cur_price_source = "UNAVAILABLE"
 
-                inv_amt = float(item.get("pur_amt", 0.0))
-                pnl_rt = float(item.get("prft_rt", 0.0))
+                inv_amt = float(parse_kiwoom_price(item.get("pur_amt", 0.0)))
+                try:
+                    pnl_rt = float(str(item.get("prft_rt", "0.0")).replace(",", "").replace("%", "").strip())
+                except Exception:
+                    pnl_rt = 0.0
 
                 page_positions.append({
                     "stock_code": raw_code,
@@ -159,6 +183,8 @@ class KiwoomAPIClient:
                     "avg_buy_price": avg_p,
                     "current_price": cur_p,
                     "raw_balance_price": raw_balance_price,
+                    "raw_cur_prc_str": raw_cur_prc_str,
+                    "raw_pred_close_str": raw_pred_close_str,
                     "fallback_used": fallback_used,
                     "current_price_source": cur_price_source,
                     "total_invested": inv_amt,
