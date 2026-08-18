@@ -566,6 +566,34 @@ TABLE_SCHEMAS = {
             FOREIGN KEY (journal_id) REFERENCES scan_journal(journal_id),
             UNIQUE(journal_id, outcome_type)
         );
+    """,
+    "scheduler_runs": """
+        CREATE TABLE IF NOT EXISTS scheduler_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT UNIQUE NOT NULL,
+            scheduled_time TEXT NOT NULL,
+            actual_start_time TEXT NOT NULL,
+            actual_end_time TEXT,
+            trading_date TEXT NOT NULL,
+            task_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            stocks_scanned INTEGER DEFAULT 0,
+            journals_created INTEGER DEFAULT 0,
+            signal_changes INTEGER DEFAULT 0,
+            last_completed_45m_bar TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """,
+    "scheduler_locks": """
+        CREATE TABLE IF NOT EXISTS scheduler_locks (
+            lock_name TEXT PRIMARY KEY,
+            task_name TEXT NOT NULL,
+            pid INTEGER NOT NULL,
+            lock_created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        );
     """
 }
 
@@ -584,5 +612,8 @@ INDEX_SCHEMAS = [
     "CREATE INDEX IF NOT EXISTS idx_industry_company_map_code ON industry_company_map(stock_code);",
     "CREATE INDEX IF NOT EXISTS idx_scan_journal_code_date ON scan_journal(stock_code, trading_date);",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_journal_id ON scan_journal(journal_id);",
-    "CREATE INDEX IF NOT EXISTS idx_signal_outcomes_journal ON signal_outcomes(journal_id);"
+    "CREATE INDEX IF NOT EXISTS idx_signal_outcomes_journal ON signal_outcomes(journal_id);",
+    "CREATE INDEX IF NOT EXISTS idx_scheduler_runs_date_task ON scheduler_runs(trading_date, task_type);",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduler_runs_id ON scheduler_runs(run_id);"
 ]
+

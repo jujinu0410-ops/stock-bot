@@ -1129,6 +1129,30 @@ class DatabaseManager:
             results.append(r)
         return results
 
+    def get_all_scan_journals(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        """모든 scan journal 이력 조회 (시간 오름차순)"""
+        query = "SELECT * FROM scan_journal ORDER BY id ASC LIMIT ?"
+        rows = self.execute_query(query, (limit,))
+        results = []
+        for row in (rows or []):
+            r = dict(row)
+            if r.get("all_blockers"):
+                try:
+                    r["all_blockers"] = json.loads(r["all_blockers"])
+                except Exception:
+                    pass
+            results.append(r)
+        return results
+
+    def get_recent_daily_candles(self, stock_code: str, limit: int = 60) -> List[Dict[str, Any]]:
+        """종목별 최근 일봉 캔들 조회 (최신일자 내림차순)"""
+        code = str(stock_code).zfill(6)
+        query = "SELECT * FROM kiwoom_daily WHERE stock_code = ? ORDER BY stk_date DESC LIMIT ?"
+        rows = self.execute_query(query, (code, limit))
+        return [dict(r) for r in (rows or [])]
+
+
+
     def upsert_signal_outcome(self, outcome: Dict[str, Any]) -> bool:
         """
         Phase 7 Signal Outcome 성과 기록/갱신
@@ -1244,4 +1268,126 @@ class DatabaseManager:
                     pass
             results.append(d)
         return results
+
+    # ==========================================
+    # Phase 8: Runtime Scheduler Operations
+    # ==========================================
+
+    def insert_scheduler_run(self, run: Dict[str, Any]) -> bool:
+        """스케줄러 실행 기록 생성"""
+        query = """
+            INSERT INTO scheduler_runs (
+                run_id, scheduled_time, actual_start_time, actual_end_time,
+                trading_date, task_type, status,
+                stocks_scanned, journals_created, signal_changes,
+                last_completed_45m_bar, error_code, error_message
+            ) VALUES (
+                :run_id, :scheduled_time, :actual_start_time, :actual_end_time,
+                :trading_date, :task_type, :status,
+                :stocks_scanned, :journals_created, :signal_changes,
+                :last_completed_45m_bar, :error_code, :error_message
+            )
+        """
+        params = {
+            "run_id": run["run_id"],
+            "scheduled_time": run.get("scheduled_time", ""),
+            "actual_start_time": run.get("actual_start_time", ""),
+            "actual_end_time": run.get("actual_end_time"),
+            "trading_date": run.get("trading_date", ""),
+            "task_type": run.get("task_type", "INTRADAY_SHADOW_SCAN"),
+            "status": run.get("status", "STARTED"),
+            "stocks_scanned": int(run.get("stocks_scanned", 0)),
+            "journals_created": int(run.get("journals_created", 0)),
+            "signal_changes": int(run.get("signal_changes", 0)),
+            "last_completed_45m_bar": run.get("last_completed_45m_bar"),
+            "error_code": run.get("error_code"),
+            "error_message": run.get("error_message")
+        }
+        res = self.execute_non_query(query, params)
+        return (res is not None and res > 0)
+
+    def update_scheduler_run(self, run_id: str, updates: Dict[str, Any]) -> bool:
+        """스케줄러 실행 완료/종료 상태 갱신"""
+        set_clauses = []
+        params = {"run_id": run_id}
+        for k, v in updates.items():
+            set_clauses.append(f"{k} = :{k}")
+            params[k] = v
+
+        if not set_clauses:
+            return True
+
+        query = f"UPDATE scheduler_runs SET {', '.join(set_clauses)} WHERE run_id = :run_id"
+        res = self.execute_non_query(query, params)
+        return (res is not None and res > 0)
+
+    def get_latest_scheduler_run(self, task_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """가장 최근 스케줄러 실행 기록 조회"""
+        if task_type:
+            query = "SELECT * FROM scheduler_runs WHERE task_type = ? ORDER BY id DESC LIMIT 1"
+            rows = self.execute_query(query, (task_type,))
+        else:
+            query = "SELECT * FROM scheduler_runs ORDER BY id DESC LIMIT 1"
+            rows = self.execute_query(query)
+        return dict(rows[0]) if rows else None
+
+    def get_today_scheduler_runs(self, trading_date: str) -> List[Dict[str, Any]]:
+        """당일 스케줄러 실행 기록 목록 조회"""
+        query = "SELECT * FROM scheduler_runs WHERE trading_date = ? ORDER BY id ASC"
+        rows = self.execute_query(query, (trading_date,))
+        return [dict(r) for r in rows] if rows else []
+
+    def acquire_scheduler_lock(self, lock_name: str, task_name: str, pid: int, ttl_seconds: int = 600) -> bool:
+        """
+        스케줄러 프로세스 Lock 획득 (Stale lock 자동 청소 포함)
+        """
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        expires_at = (now + timedelta(seconds=ttl_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+
+        # 1. 만료된 stale lock 삭제
+        clean_query = "DELETE FROM scheduler_locks WHERE lock_name = ? AND expires_at < ?"
+        self.execute_non_query(clean_query, (lock_name, now_str))
+
+        # 2. Lock 등록 시도
+        insert_query = """
+            INSERT INTO scheduler_locks (lock_name, task_name, pid, lock_created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        res = self.execute_non_query(insert_query, (lock_name, task_name, pid, now_str, expires_at))
+        return (res is not None and res > 0)
+
+    def release_scheduler_lock(self, lock_name: str, pid: Optional[int] = None) -> bool:
+        """스케줄러 Lock 해제"""
+        if pid is not None:
+            query = "DELETE FROM scheduler_locks WHERE lock_name = ? AND pid = ?"
+            res = self.execute_non_query(query, (lock_name, pid))
+        else:
+            query = "DELETE FROM scheduler_locks WHERE lock_name = ?"
+            res = self.execute_non_query(query, (lock_name,))
+        return (res is not None and res > 0)
+
+    def cleanup_stale_scheduler_locks(self, ttl_seconds: int = 600) -> int:
+        """만료된 Lock 일괄 청소"""
+        from datetime import datetime
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        query = "DELETE FROM scheduler_locks WHERE expires_at < ?"
+        res = self.execute_non_query(query, (now_str,))
+        return res or 0
+
+    def get_latest_scan_journal_for_stock(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """특정 종목의 가장 최근 Scan Journal 스냅샷 조회 (상태 변경 감지용)"""
+        query = "SELECT * FROM scan_journal WHERE stock_code = ? ORDER BY id DESC LIMIT 1"
+        rows = self.execute_query(query, (stock_code,))
+        if not rows:
+            return None
+        d = dict(rows[0])
+        if d.get("all_blockers"):
+            try:
+                d["all_blockers"] = json.loads(d["all_blockers"])
+            except Exception:
+                pass
+        return d
+
 

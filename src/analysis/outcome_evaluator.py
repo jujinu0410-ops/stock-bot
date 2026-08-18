@@ -1,6 +1,7 @@
 import math
 from typing import Dict, Any, List, Optional
 from src.database.db_manager import DatabaseManager
+from src.runtime.krx_calendar import KRXCalendar
 from src.utils.logger import logger
 
 class OutcomeEvaluator:
@@ -10,6 +11,7 @@ class OutcomeEvaluator:
       이후 실제 거래일(Trading Days) 5d, 10d, 20d, 40d 동안의 성과, MFE/MAE, ATR 레벨 터치 여부를 계산합니다.
     - 달력일(Calendar Days) 및 비영업일/주말을 엄격히 배제하고 실제 개장된 거래일만 집계합니다.
     - 과거 스냅샷 기준선을 변경하거나 미래 데이터를 소급하지 않습니다 (Look-Ahead Bias 차단).
+    - 동일한 Canonical KRX Calendar (src.runtime.krx_calendar.KRXCalendar)를 공용 호출합니다.
     """
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
@@ -27,12 +29,35 @@ class OutcomeEvaluator:
             logger.warning(f"Journal not found: {journal_id}")
             return None
 
+        # Stale/Legacy Manual Verification 배치 성과 표본 제외 (Append-only 보존)
+        snap_reason = str(journal.get("snapshot_reason", ""))
+        if snap_reason == "MANUAL_RUNTIME_VERIFICATION" or snap_reason.startswith("INVALID_"):
+            logger.info(f"[OutcomeEvaluator] Excluding {journal_id} from outcome attribution (reason: LIVE_PRICE_LINEAGE_FAILURE)")
+            outcome_entry = {
+                "journal_id": journal_id,
+                "outcome_type": outcome_type,
+                "entry_reference_price": float(journal["market_price"]),
+                "entry_atr14": float(journal["atr14"]) if journal["atr14"] else 0.0,
+                "trading_days_evaluated": 0,
+                "return_5d": None, "return_10d": None, "return_20d": None, "return_40d": None,
+                "mfe_5d": None, "mae_5d": None, "mfe_10d": None, "mae_10d": None,
+                "mfe_20d": None, "mae_20d": None, "mfe_40d": None, "mae_40d": None,
+                "mfe_20d_atr": None, "mae_20d_atr": None,
+                "max_price_40d": float(journal["market_price"]), "min_price_40d": float(journal["market_price"]),
+                "hit_plus_1atr": False, "hit_plus_2atr": False, "hit_plus_3atr": False,
+                "hit_minus_1atr": False, "hit_minus_1_5atr": False, "stop_hit": False, "trailing_activation_hit": False,
+                "outcome_status": "INVALID_FOR_OUTCOME (reason: LIVE_PRICE_LINEAGE_FAILURE)"
+            }
+            self.db.upsert_signal_outcome(outcome_entry)
+            return outcome_entry
+
         stock_code = journal["stock_code"]
         trading_date = journal["trading_date"] # 'YYYY-MM-DD' or 'YYYYMMDD'
         clean_date = trading_date.replace("-", "")
 
         entry_price = float(journal["market_price"])
         entry_atr = float(journal["atr14"]) if journal["atr14"] and float(journal["atr14"]) > 0 else (entry_price * 0.03)
+
 
         # kiwoom_daily에서 스캔 당일 이후의 거래일 40봉 조회 (오름차순)
         query = """
