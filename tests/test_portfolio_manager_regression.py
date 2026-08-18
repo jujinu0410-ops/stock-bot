@@ -55,7 +55,7 @@ class TestPortfolioManagerRegression(unittest.TestCase):
             l_p = c_p - 1000.0
             o_p = c_p
             self.db.execute_non_query("""
-                INSERT OR REPLACE INTO kiwoom_daily (stock_code, date, open_price, high_price, low_price, close_price, volume)
+                INSERT OR REPLACE INTO kiwoom_daily (stock_code, stk_date, open_price, high_price, low_price, close_price, volume)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (code, d_str, o_p, h_p, l_p, c_p, 100000))
 

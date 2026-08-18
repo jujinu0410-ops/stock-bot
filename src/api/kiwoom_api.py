@@ -128,13 +128,26 @@ class KiwoomAPIClient:
                 if qty <= 0:
                     continue
                 avg_p = float(item.get("pur_pric", 0.0))
-                cur_p = int(item.get("cur_prc", 0)) if item.get("cur_prc") else int(item.get("pred_close_pric", 0))
                 
-                # 0원 방지: cur_p가 0 이하인 경우 pred_close_pric -> avg_p 순으로 안전 대체
-                if cur_p <= 0:
-                    cur_p = int(item.get("pred_close_pric", 0)) if item.get("pred_close_pric") else int(avg_p)
-                if cur_p <= 0:
-                    cur_p = int(avg_p)
+                # 4. 가격 원본(raw_balance_price)과 대체값 분리
+                raw_cur_prc_val = int(item.get("cur_prc", 0)) if str(item.get("cur_prc", "")).replace("-", "").isdigit() else 0
+                raw_pred_close_val = int(item.get("pred_close_pric", 0)) if str(item.get("pred_close_pric", "")).replace("-", "").isdigit() else 0
+                
+                # raw_balance_price: 키움 cur_prc 원문 숫자 (0이면 0 그대로 보존)
+                raw_balance_price = raw_cur_prc_val
+
+                if raw_cur_prc_val > 0:
+                    cur_p = raw_cur_prc_val
+                    fallback_used = False
+                    cur_price_source = "KIWOOM_CUR_PRC"
+                elif raw_pred_close_val > 0:
+                    cur_p = raw_pred_close_val
+                    fallback_used = True
+                    cur_price_source = "KIWOOM_PRED_CLOSE"
+                else:
+                    cur_p = 0
+                    fallback_used = True
+                    cur_price_source = "UNAVAILABLE"
 
                 inv_amt = float(item.get("pur_amt", 0.0))
                 pnl_rt = float(item.get("prft_rt", 0.0))
@@ -145,7 +158,9 @@ class KiwoomAPIClient:
                     "quantity": qty,
                     "avg_buy_price": avg_p,
                     "current_price": cur_p,
-                    "raw_balance_price": cur_p,
+                    "raw_balance_price": raw_balance_price,
+                    "fallback_used": fallback_used,
+                    "current_price_source": cur_price_source,
                     "total_invested": inv_amt,
                     "eval_pnl_pct": pnl_rt
                 })
@@ -166,7 +181,7 @@ class KiwoomAPIClient:
                 f"CumulativeItems: {len(all_collected_positions)}개 {cum_codes}"
             )
 
-            # 10개 만실 절단 의심 감지 및 교차검증 (Section 2 & 3)
+            # 1. 10개 만실 페이지 절단 감지 (운영환경 무조건 안전 실패)
             tot_item_cnt = 0
             if isinstance(data, dict):
                 for k in ["tot_item_cnt", "tot_cnt", "tot_stk_cnt", "item_cnt"]:
@@ -178,16 +193,13 @@ class KiwoomAPIClient:
                 logger.critical(f"[Kiwoom API] 🛑 [절단 감지] 키움 응답 총 종목수({tot_item_cnt}개) 대비 수집 종목수({len(all_collected_positions)}개) 부족")
                 raise RuntimeError(f"키움 계좌 총 종목 수({tot_item_cnt}개) 대비 수집 종목 수({len(all_collected_positions)}개) 부족 - 비정상 절단 감지")
 
-            # 독립 잔고 원천(config 파일)과 교차검증: 10개 꽉 찬 첫 페이지인데 cont-yn이 없으면 절단 의심 실패
+            # GitHub Actions/CI 운영환경: 1페이지가 정확히 10개 만실인데 cont-yn='Y'가 아니면 config 파일 개수와 무관하게 무조건 안전 실패
             if page == 1 and len(page_positions) == 10 and cont_yn != "Y":
-                cfg_holdings = self._get_mock_account_positions()
-                known_count = len(cfg_holdings) if cfg_holdings else 0
-                if known_count > 10:
-                    logger.critical(
-                        f"[Kiwoom API] 🛑 [절단 의심 감지] 1페이지가 10개로 꽉 찬 상태에서 연속조회(cont-yn='Y')가 수신되지 않았습니다. "
-                        f"(독립 잔고 원천 기준 {known_count}개 보유 중이나 10개만 수신됨). 비정상 절단 의심으로 안전 중단합니다."
-                    )
-                    raise RuntimeError(f"10개 만실 페이지에서 연속조회 미수신 및 독립 잔고 원천({known_count}개) 대비 비정상 절단 감지")
+                logger.critical(
+                    f"[Kiwoom API] 🛑 [절단 의심 감지] 1페이지가 10개로 꽉 찬 상태에서 연속조회(cont-yn='Y')가 수신되지 않았습니다. "
+                    f"(운영 환경에서는 config 파일 개수와 관계없이 비정상 절단 의심으로 안전 실패 처리합니다)."
+                )
+                raise RuntimeError("10개 만실 페이지에서 연속조회(cont-yn='Y') 미수신 - 비정상 절단 의심으로 운영 환경 안전 실패 처리")
 
             if cont_yn == "Y":
                 if not res_next_key:

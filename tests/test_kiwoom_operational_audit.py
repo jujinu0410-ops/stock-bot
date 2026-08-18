@@ -97,22 +97,22 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         existing_codes = {r["stock_code"] for r in db_rows}
         self.assertEqual(existing_codes, {"005930", "000660"})
 
-    def test_03_kiwoom_10_vs_local_json_11_no_json_supplement(self):
-        """3. 키움 실계좌 10개 수신 시 JSON 보충 금지 및 원본 유지 검증 (총 종목수 10개 정상 일치)"""
-        # 키움 실계좌는 10개만 반환 (전체 종목수도 10개로 일치하는 정상 상황)
-        page1_items = [{"stk_cd": f"A{c}", "stk_nm": f"종목_{c}", "rmnd_qty": "100", "pur_pric": "10000", "cur_prc": "10500", "pur_amt": "1000000", "prft_rt": "5.0"} for c in self.all_11_codes[1:]]
+    def test_03_full_10_items_without_cont_yn_fails_even_if_config_is_10(self):
+        """3. [10개 만실 절단 의심 감지] config 파일에 10개만 존재하더라도 키움 1페이지가 10개 만실이고 cont-yn이 없으면 무조건 실패 검증"""
+        # 키움 실계좌 1페이지 10개 수신 (대동 000490 누락된 10개)
+        page1_10_items = [{"stk_cd": f"A{c}", "stk_nm": f"종목_{c}", "rmnd_qty": "100", "pur_pric": "10000", "cur_prc": "10500", "pur_amt": "1000000", "prft_rt": "5.0"} for c in self.all_11_codes[1:]]
         resp1 = MagicMock()
         resp1.status_code = 200
-        resp1.json.return_value = {"acnt_evlt_remn_indv_tot": page1_items, "tot_item_cnt": "10"}
+        resp1.json.return_value = {"acnt_evlt_remn_indv_tot": page1_10_items} # tot_item_cnt 미제공
         resp1.headers = {"cont-yn": "N", "next-key": ""}
 
+        # 실제 origin/main의 config/portfolio_holdings.json처럼 10개만 등록되어 있는 상태 모킹
         mock_cfg_10 = [{"stock_code": c} for c in self.all_11_codes[1:]]
         with patch.object(self.client, "_get_mock_account_positions", return_value=mock_cfg_10):
             with patch("requests.post", return_value=resp1):
-                positions = self.client.get_account_positions()
-                # JSON 11개를 임의로 섞지 않고 키움 원본 10개만 정확히 유지
-                self.assertEqual(len(positions), 10)
-                self.assertNotIn("000490", [p["stock_code"] for p in positions])
+                with self.assertRaises(RuntimeError) as cm:
+                    self.client.get_account_positions()
+                self.assertIn("10개 만실 페이지에서 연속조회(cont-yn='Y') 미수신", str(cm.exception))
 
     def test_04_raw_11_db_11_eval_10_fails_gate(self):
         """4. 원본 11개, DB 11개, 평가 10개 -> 실패 검증"""
@@ -218,47 +218,88 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         self.assertEqual(row["entry_stage"], 2)         # 진입 단계 보존!
         self.assertEqual(row["lifecycle_status"], 'PROFIT_TRAIL') # 상태 보존!
 
-    def test_09_full_10_items_without_cont_yn_fails_truncation_check(self):
-        """9. [10개 만실 절단 의심 감지] 1페이지 10개 꽉 찼으나 연속조회 미수신 및 독립 잔고 대비 절단 시 실패 검증"""
-        page1_10_items = [{"stk_cd": f"A{c}", "stk_nm": f"종목_{c}", "rmnd_qty": "100", "pur_pric": "10000", "cur_prc": "10500", "pur_amt": "1000000", "prft_rt": "5.0"} for c in self.all_11_codes[:10]]
-        
+    def test_09_raw_balance_price_and_fallback_separation(self):
+        """9. [가격 원본 및 대체값 분리] cur_prc 0원 시 raw_balance_price=0 보존 및 pred_close 대체/출처 분리 검증"""
+        page_items = [
+            {
+                "stk_cd": "A000490", "stk_nm": "대동", "rmnd_qty": "2475", "pur_pric": "8116",
+                "cur_prc": "0", "pred_close_pric": "8100", "pur_amt": "20088100", "prft_rt": "0.0"
+            },
+            {
+                "stk_cd": "A004960", "stk_nm": "한신공영", "rmnd_qty": "100", "pur_pric": "9000",
+                "cur_prc": "9200", "pred_close_pric": "9100", "pur_amt": "900000", "prft_rt": "2.2"
+            }
+        ]
         resp = MagicMock()
         resp.status_code = 200
-        resp.json.return_value = {"acnt_evlt_remn_indv_tot": page1_10_items}
-        resp.headers = {"cont-yn": "N", "next-key": ""}
-
-        # 독립 잔고 원천에는 11개가 등록되어 있는 상황 모킹
-        mock_cfg_11 = [{"stock_code": c} for c in self.all_11_codes]
-        with patch.object(self.client, "_get_mock_account_positions", return_value=mock_cfg_11):
-            with patch("requests.post", return_value=resp):
-                with self.assertRaises(RuntimeError) as cm:
-                    self.client.get_account_positions()
-                self.assertIn("비정상 절단 감지", str(cm.exception))
-
-    def test_10_zero_price_protection(self):
-        """10. [0원 방지 회귀] cur_prc 및 pred_close_pric 0원 수신 시 평단가로 안전 보호 검증"""
-        page1_items = [{
-            "stk_cd": "A000490",
-            "stk_nm": "대동",
-            "rmnd_qty": "2475",
-            "pur_pric": "8116",
-            "cur_prc": "0",
-            "pred_close_pric": "0",
-            "pur_amt": "20088100",
-            "prft_rt": "0.0"
-        }]
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.return_value = {"acnt_evlt_remn_indv_tot": page1_items}
+        resp.json.return_value = {"acnt_evlt_remn_indv_tot": page_items}
         resp.headers = {"cont-yn": "N", "next-key": ""}
 
         with patch("requests.post", return_value=resp):
             positions = self.client.get_account_positions()
-            self.assertEqual(len(positions), 1)
-            pos = positions[0]
-            self.assertGreater(pos["current_price"], 0)
-            self.assertEqual(pos["current_price"], 8116)
-            self.assertEqual(pos["raw_balance_price"], 8116)
+            self.assertEqual(len(positions), 2)
+            
+            p_daedong = [p for p in positions if p["stock_code"] == "000490"][0]
+            self.assertEqual(p_daedong["raw_balance_price"], 0) # 0원 원본 보존!
+            self.assertEqual(p_daedong["current_price"], 8100)  # pred_close 대체값
+            self.assertTrue(p_daedong["fallback_used"])
+            self.assertEqual(p_daedong["current_price_source"], "KIWOOM_PRED_CLOSE")
+
+            p_hanshin = [p for p in positions if p["stock_code"] == "004960"][0]
+            self.assertEqual(p_hanshin["raw_balance_price"], 9200) # cur_prc 원본
+            self.assertEqual(p_hanshin["current_price"], 9200)
+            self.assertFalse(p_hanshin["fallback_used"])
+            self.assertEqual(p_hanshin["current_price_source"], "KIWOOM_CUR_PRC")
+
+    def test_10_unavailable_price_fails_validation(self):
+        """10. [가격 검증 실패 차단] 라이브 가격 확인 불가(0원) 시 평가 중단 및 RuntimeError 차단 검증"""
+        self.pm.add_holding("000490", "대동", 100, 8116.0)
+        # raw_balance_price=0, current_price=0, 시세DB 없음
+        live_meta = [{
+            "stock_code": "000490",
+            "stock_name": "대동",
+            "quantity": 100,
+            "avg_buy_price": 8116.0,
+            "current_price": 0,
+            "raw_balance_price": 0,
+            "current_price_source": "UNAVAILABLE",
+            "fallback_used": True
+        }]
+        with self.assertRaises(RuntimeError) as cm:
+            self.pm.get_held_portfolio_status(engine=None, live_positions=live_meta)
+        self.assertIn("가격 검증 실패", str(cm.exception))
+
+    def test_11_email_v2_conciseness_snapshot(self):
+        """11. [이메일 간결성 검증] V2 리포트 상단 요약, 종목 카드, DART 공시 포함 및 불필요 중복 배제 검증"""
+        from src.notifications.mobile_renderer_v2 import generate_mobile_html_report_v2
+        sample_held = [{
+            "stock_code": "000490", "stock_name": "대동", "current_price": 8050,
+            "daily_change_pct": -0.81, "pnl_pct": -0.81, "pnl_amount": -163350,
+            "trade_mode": "NORMAL", "action_status": "보유",
+            "kiwoom_stop_tick_price": 7600, "kiwoom_target_tick_price": 9200,
+            "profit_trail_delta": 0, "recommended_order_qty": 0, "order_direction": "보유",
+            "quantity": 2475, "f_score": 60.0, "t_score": 55.0, "final_score": 57.5,
+            "atr_14": 280, "atr_pct": 3.4
+        }]
+        sample_disc = [{
+            "stock_name": "대동", "stock_code": "000490", "report_nm": "단일판매·공급계약체결",
+            "link": "http://dart.fss.or.kr", "summary": "1,000억원 공급계약",
+            "impact": "매출 증대 긍정적", "guide": "기존 비중 유지"
+        }]
+
+        html = generate_mobile_html_report_v2(
+            date_str="2026-08-19 11:20",
+            total_count=1,
+            caught_signals=[],
+            all_results=[],
+            held_portfolio=sample_held,
+            disclosures=sample_disc
+        )
+        self.assertIn("data-stock-code=\"000490\"", html)
+        self.assertIn("보유 포트폴리오 요약", html)
+        self.assertIn("DART 주요 공시 & 브리핑", html)
+        self.assertNotIn("undefined", html)
+        self.assertNotIn("NaN", html)
 
 if __name__ == "__main__":
     unittest.main()

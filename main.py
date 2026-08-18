@@ -252,7 +252,7 @@ def run_post_market_analysis(
     # 4. 🔥 [핵심] 내 계좌 보유 종목 정밀 평가
     held_status = []
     try:
-        held_status = portfolio_mgr.get_held_portfolio_status(engine)
+        held_status = portfolio_mgr.get_held_portfolio_status(engine, live_positions=raw_kiwoom_positions)
         held_codes = [str(h.get("stock_code")).zfill(6) for h in held_status]
         logger.info(f"[Portfolio Metadata] 키움 전체 보유종목 수: {len(held_status)}개 | 종목코드 목록: {held_codes}")
         if held_status:
