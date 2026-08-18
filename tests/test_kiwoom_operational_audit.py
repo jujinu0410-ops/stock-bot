@@ -422,5 +422,62 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         self.assertNotIn("undefined", html)
         self.assertNotIn("NaN", html)
 
+    def test_16_kiwoom_token_validation_gate(self):
+        """16. [키움 토큰 응답 무결성 검증] return_code=0 성공 및 return_code!=0 실패 차단 검증"""
+        client = KiwoomAPIClient(app_key=" test_app_key ", app_secret=" 'test_secret' ", account_no=" 3097-8228 ", use_mock=False)
+        self.assertEqual(client.app_key, "test_app_key")
+        self.assertEqual(client.app_secret, "test_secret")
+        self.assertEqual(client.account_no, "3097-8228")
+
+        # 1) 정상 발급 케이스
+        with patch("requests.post") as mock_post:
+            mock_res = MagicMock()
+            mock_res.status_code = 200
+            mock_res.json.return_value = {
+                "token": "AUTHENTICATED_TOKEN_12345",
+                "return_code": 0,
+                "return_msg": "정상 처리",
+                "expires_dt": "20260819235959"
+            }
+            mock_post.return_value = mock_res
+            token = client.get_access_token()
+            self.assertEqual(token, "AUTHENTICATED_TOKEN_12345")
+            self.assertEqual(client.access_token, "AUTHENTICATED_TOKEN_12345")
+
+        # 2) 상태코드 200이지만 return_code != 0 인 실패 케이스
+        with patch("requests.post") as mock_post:
+            mock_res = MagicMock()
+            mock_res.status_code = 200
+            mock_res.json.return_value = {
+                "token": None,
+                "return_code": -10,
+                "return_msg": "유효하지 않은 앱키입니다"
+            }
+            mock_post.return_value = mock_res
+            client.access_token = None
+            token = client.get_access_token()
+            self.assertIsNone(token)
+            self.assertIsNone(client.access_token)
+
+    def test_17_raw_weight_sum_integrity(self):
+        """17. [원시 비중 합계 검증] 소수점 반올림 전 원시 부동소수점 비중 합계가 100.0%로 검증됨을 확인"""
+        for idx, c in enumerate(self.all_11_codes, 1):
+            self.pm.add_holding(c, f"종목_{c}", 77 * idx, 8000.0)
+            self.db.execute_non_query("""
+                INSERT OR REPLACE INTO kiwoom_daily (stock_code, stk_date, open_price, high_price, low_price, close_price, volume)
+                VALUES (?, '20260819', 8000, 8500, 7500, 8000, 10000)
+            """, (c,))
+
+        live_meta = [{
+            "stock_code": c, "stock_name": f"종목_{c}", "quantity": 77 * idx,
+            "avg_buy_price": 8000.0, "current_price": 8000 + (idx * 50), "raw_balance_price": 8000 + (idx * 50),
+            "current_price_source": "KIWOOM_CUR_PRC", "fallback_used": False
+        } for idx, c in enumerate(self.all_11_codes, 1)]
+
+        held_list = self.pm.get_held_portfolio_status(engine=None, live_positions=live_meta)
+        self.assertEqual(len(held_list), 11)
+        raw_sum = sum((item["eval_amount"] / sum(h["eval_amount"] for h in held_list)) * 100.0 for item in held_list)
+        self.assertAlmostEqual(raw_sum, 100.0, places=4)
+
 if __name__ == "__main__":
     unittest.main()

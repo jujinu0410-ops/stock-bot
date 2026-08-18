@@ -34,9 +34,9 @@ class KiwoomAPIClient:
                  app_secret: str = KIWOOM_APP_SECRET,
                  account_no: str = KIWOOM_ACCOUNT_NO,
                  use_mock: bool = KIWOOM_USE_MOCK):
-        self.app_key = app_key
-        self.app_secret = app_secret
-        self.account_no = account_no
+        self.app_key = str(app_key or "").strip().strip('"').strip("'")
+        self.app_secret = str(app_secret or "").strip().strip('"').strip("'")
+        self.account_no = str(account_no or "").strip().strip('"').strip("'")
         self.use_mock = use_mock
         self.access_token = None
 
@@ -58,15 +58,26 @@ class KiwoomAPIClient:
         try:
             res = requests.post(url, headers=headers, json=body, timeout=10)
             if res.status_code == 200:
-                res_data = res.json()
-                self.access_token = res_data.get("token") or res_data.get("access_token")
-                logger.info("[Kiwoom API] OAuth 2.0 실시간 접근 토큰 발급 성공")
-                return self.access_token
+                res_data = res.json() if isinstance(res.json(), dict) else {}
+                token = res_data.get("token") or res_data.get("access_token")
+                return_code = res_data.get("return_code")
+                return_msg = res_data.get("return_msg")
+
+                if token and (return_code == 0 or return_code is None or str(return_code) == "0"):
+                    self.access_token = str(token).strip()
+                    logger.info(f"[Kiwoom API] OAuth 2.0 실시간 접근 토큰 발급 성공 (만료일시: {res_data.get('expires_dt', 'N/A')})")
+                    return self.access_token
+                else:
+                    logger.critical(f"[Kiwoom API] 🛑 OAuth 토큰 응답 실패 (return_code={return_code}, return_msg={return_msg}): {res_data}")
+                    self.access_token = None
+                    return None
             else:
                 logger.error(f"[Kiwoom API] 토큰 발급 실패 (상태코드 {res.status_code}): {res.text}")
+                self.access_token = None
                 return None
         except Exception as e:
             logger.error(f"[Kiwoom API] 토큰 요청 중 예외 발생: {e}", exc_info=True)
+            self.access_token = None
             return None
 
     def get_account_positions(self) -> List[Dict[str, Any]]:

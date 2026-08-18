@@ -752,19 +752,23 @@ class PortfolioManager:
                 "reason": analysis.get("reason", "분석 데이터 정상") if analysis else "데이터 부족"
             })
 
-        # 계좌 비중(%) 산출 및 무결성 검증 (99.9% ~ 100.1%)
-        for item in eval_list:
-            item["eval_weight_pct"] = round((item["eval_amount"] / total_account_equity) * 100.0, 1)
-
+        # 계좌 비중(%) 산출 및 원시 비중 무결성 검증 (99.9% ~ 100.1%)
         if eval_list:
-            total_weight_sum = round(sum(item["eval_weight_pct"] for item in eval_list), 2)
-            logger.info(f"[PortfolioManager] 전체 보유종목 계좌 비중 합계 검증: {total_weight_sum}% (기준: 99.9% ~ 100.1%)")
-            if not (99.9 <= total_weight_sum <= 100.1):
+            raw_weights = [(item["eval_amount"] / total_account_equity) * 100.0 for item in eval_list]
+            raw_weight_sum = sum(raw_weights)
+
+            for item, raw_w in zip(eval_list, raw_weights):
+                item["eval_weight_pct"] = round(raw_w, 1)
+
+            display_weight_sum = round(sum(item["eval_weight_pct"] for item in eval_list), 1)
+            logger.info(f"[PortfolioManager] 전체 보유종목 계좌 원시 비중 합계 검증: {raw_weight_sum:.4f}% (표시 합계: {display_weight_sum}%, 기준: 99.9% ~ 100.1%)")
+
+            if not (99.9 <= raw_weight_sum <= 100.1):
                 logger.critical(
-                    f"[PortfolioManager] 🛑 [계좌비중 무결성 오류] 보유종목 비중 합계({total_weight_sum}%)가 정상 허용 범위(99.9% ~ 100.1%)를 벗어났습니다. "
+                    f"[PortfolioManager] 🛑 [계좌비중 무결성 오류] 보유종목 원시 비중 합계({raw_weight_sum:.4f}%)가 정상 허용 범위(99.9% ~ 100.1%)를 벗어났습니다. "
                     f"분자와 분모 가격 불일치 또는 비중 산식 왜곡으로 판단하여 메일 발송을 차단합니다."
                 )
-                raise RuntimeError(f"계좌 비중 합계({total_weight_sum}%) 무결성 검증 실패 (99.9% ~ 100.1% 범위 이탈)")
+                raise RuntimeError(f"계좌 비중 합계({raw_weight_sum:.4f}%) 무결성 검증 실패 (99.9% ~ 100.1% 범위 이탈)")
 
         # 순위 4원화 (확정 순위 / 잠정 순위 / ETF 순위 / 거래정지 제외)
         suspended_stocks = [x for x in eval_list if x.get("trade_mode") == "SUSPENDED_HOLD" or x.get("stock_code") == "234920"]

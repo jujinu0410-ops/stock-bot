@@ -47,9 +47,9 @@ else:
 DART_API_KEY = os.getenv("DART_API_KEY") or os.getenv("OPENDART_API_KEY") or _env_vars.get("DART_API_KEY") or _env_vars.get("OPENDART_API_KEY") or "YOUR_DART_API_KEY_HERE"
 
 # KIWOOM REST TEST API CONFIG
-KIWOOM_APP_KEY = os.getenv("KIWOOM_APP_KEY") or _env_vars.get("KIWOOM_APP_KEY") or "YOUR_KIWOOM_APP_KEY_HERE"
-KIWOOM_APP_SECRET = os.getenv("KIWOOM_APP_SECRET") or _env_vars.get("KIWOOM_APP_SECRET") or "YOUR_KIWOOM_APP_SECRET_HERE"
-KIWOOM_ACCOUNT_NO = os.getenv("KIWOOM_ACCOUNT_NO") or _env_vars.get("KIWOOM_ACCOUNT_NO") or "3097-8228"
+KIWOOM_APP_KEY = str(os.getenv("KIWOOM_APP_KEY") or _env_vars.get("KIWOOM_APP_KEY") or "YOUR_KIWOOM_APP_KEY_HERE").strip().strip('"').strip("'")
+KIWOOM_APP_SECRET = str(os.getenv("KIWOOM_APP_SECRET") or _env_vars.get("KIWOOM_APP_SECRET") or "YOUR_KIWOOM_APP_SECRET_HERE").strip().strip('"').strip("'")
+KIWOOM_ACCOUNT_NO = str(os.getenv("KIWOOM_ACCOUNT_NO") or _env_vars.get("KIWOOM_ACCOUNT_NO") or "3097-8228").strip().strip('"').strip("'")
 
 # 실제 키움 API 키가 존재하면 Mock 모드를 자동 해제
 _has_kiwoom_key = bool(KIWOOM_APP_KEY and KIWOOM_APP_KEY != "YOUR_KIWOOM_APP_KEY_HERE")
