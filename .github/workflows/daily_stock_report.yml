@@ -41,7 +41,13 @@ jobs:
           TZ: Asia/Seoul
         run: |
           mkdir -p data logs
-          python main.py
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "⚡ [Event: workflow_dispatch] 수동 실행 감지 -> --force 옵션으로 강제 재발송 실행"
+            python main.py --force
+          else
+            echo "⏰ [Event: schedule] 정기 스케줄 실행 -> 중복 방지 검사 적용 실행"
+            python main.py
+          fi
 
       - name: Upload Excel & HTML Logs Artifacts
         if: always()

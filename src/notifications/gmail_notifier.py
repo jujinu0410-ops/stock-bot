@@ -137,6 +137,7 @@ class GmailNotifier:
 
         if render_ver == "V2":
             try:
+                self.fallback_occurred = False
                 return generate_mobile_html_report_v2(
                     date_str=date_str,
                     total_count=total_count,
@@ -146,6 +147,7 @@ class GmailNotifier:
                     disclosures=disclosures
                 )
             except Exception as e:
+                self.fallback_occurred = True
                 logger.error(f"[GmailNotifier] V2 모바일 렌더러 실행 중 예외 발생, V1 렌더러로 안전 복구(Fallback): {e}", exc_info=True)
                 return self.generate_html_report_v1(
                     date_str=date_str,

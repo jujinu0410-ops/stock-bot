@@ -11,6 +11,7 @@ from typing import Optional, List, Dict, Any, Tuple
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
+from config.settings import EMAIL_RENDER_VERSION
 from src.database.db_manager import DatabaseManager
 from src.api.kiwoom_api import KiwoomAPIClient
 from src.api.dart_api import DartAPIClient
@@ -78,6 +79,14 @@ def update_market_data_stub(db: DatabaseManager, dart_client: DartAPIClient, wat
 
     logger.info("실시간 실제 시세 및 DART 재무 데이터 최신화 완료")
 
+def _get_git_commit_sha() -> str:
+    try:
+        import subprocess
+        out = subprocess.check_output(["git", "rev-parse", "HEAD"], timeout=3).decode().strip()
+        return out[:8] if out else "UNKNOWN"
+    except Exception:
+        return "UNKNOWN"
+
 def run_post_market_analysis(
     add_code: Optional[str] = None,
     add_name: Optional[str] = None,
@@ -91,8 +100,13 @@ def run_post_market_analysis(
     today_str = now.strftime("%Y-%m-%d %H:%M:%S")
     date_str = now.strftime("%Y%m%d")
 
+    commit_sha = os.getenv("GITHUB_SHA") or _get_git_commit_sha()
+    event_name = os.getenv("GITHUB_EVENT_NAME", "local_cli")
+    render_version = os.getenv("EMAIL_RENDER_VERSION", EMAIL_RENDER_VERSION)
+
     logger.info("=" * 50)
     logger.info(f" [내 계좌 보유 종목 중심 실시간 정밀 평가 & 리포트 발송] - {today_str}")
+    logger.info(f" [Run Metadata] Commit SHA: {commit_sha} | Event Name: {event_name} | Force: {force} | EMAIL_RENDER_VERSION: {render_version}")
     logger.info("=" * 50)
 
     # 1. 초기화
@@ -116,6 +130,7 @@ def run_post_market_analysis(
         portfolio_mgr.sync_portfolio_from_kiwoom()
     except Exception as e_sync:
         logger.error(f"보유 계좌 동기화 중 오류 발생: {e_sync}", exc_info=True)
+        raise
 
     # 3. 시세 및 재무 데이터 최신화
     try:
@@ -127,6 +142,8 @@ def run_post_market_analysis(
     held_status = []
     try:
         held_status = portfolio_mgr.get_held_portfolio_status(engine)
+        held_codes = [str(h.get("stock_code")).zfill(6) for h in held_status]
+        logger.info(f"[Portfolio Metadata] 키움 전체 보유종목 수: {len(held_status)}개 | 종목코드 목록: {held_codes}")
         if held_status:
             logger.info(f"=== [내 계좌 보유 종목 정밀 평가 결과] (F+T 종합점수 순위순 / 총 {len(held_status)}개) ===")
             for item in held_status:
@@ -229,6 +246,10 @@ def run_post_market_analysis(
             held_portfolio=held_status,
             disclosures=disclosures
         )
+
+        if getattr(notifier, "fallback_occurred", False) and os.getenv("EMAIL_RENDER_VERSION") == "V2":
+            logger.critical("🛑 [V2 렌더러 실패] EMAIL_RENDER_VERSION=V2 설정 상태에서 V2 렌더러 예외로 V1 fallback이 발생했습니다. 운영 무결성을 위해 작업을 실패 처리합니다.")
+            raise RuntimeError("EMAIL_RENDER_VERSION=V2 설정 상태에서 V2 렌더러 예외로 V1 fallback 발생")
         
         import hashlib
         balance_signature = "_".join(sorted([f"{h['stock_code']}:{h.get('quantity',0)}:{h.get('current_price',0)}" for h in held_status]))
@@ -237,7 +258,7 @@ def run_post_market_analysis(
 
         # 🔥 중복 발송 방지 검사 (동일 날짜/회차 or 동일 잔고 해시 메일 이미 발송 시 건너뛰기)
         if not force and (db.is_dispatch_already_sent(dispatch_id) or db.is_dispatch_already_sent(fingerprint_id)):
-            logger.info(f"🛑 [중복 발송 방지] {dispatch_id} (Fingerprint: {dispatch_fingerprint}) 리포트가 오늘 이미 성공적으로 발송되었습니다. 메일 발송을 안전하게 건너뜁니다. (강제 재발송 필요 시 --force 옵션 사용)")
+            logger.info(f"🛑 [메일 발송 결과: 중복 건너뜀] {dispatch_id} (Fingerprint: {dispatch_fingerprint}) 리포트가 오늘 이미 성공적으로 발송되었습니다. (강제 재발송 필요 시 --force 옵션 사용)")
         else:
             sent_success = notifier.send_email(
                 subject=subject,
@@ -247,9 +268,9 @@ def run_post_market_analysis(
             if sent_success:
                 db.record_dispatch_success(dispatch_id, dispatch_tag, notifier.recipient_email, subject)
                 db.record_dispatch_success(fingerprint_id, dispatch_tag, notifier.recipient_email, subject)
-                logger.info(f"내 종목 정밀 평가 지메일 리포트 성공 발송 및 발송 기록 완료! [식별자: {dispatch_id}, FP: {dispatch_fingerprint}]")
+                logger.info(f"✅ [메일 발송 결과: 발송 성공] 내 종목 정밀 평가 지메일 리포트 성공 발송 및 발송 기록 완료! [식별자: {dispatch_id}, FP: {dispatch_fingerprint}, 수신인: {notifier.recipient_email}, 보유종목수: {len(held_status)}개, 버전: {render_version}]")
             else:
-                logger.critical(f"지메일 발송에 실패했습니다. (수신인: {notifier.recipient_email})")
+                logger.critical(f"❌ [메일 발송 결과: 발송 실패] 지메일 발송에 실패했습니다. (수신인: {notifier.recipient_email})")
                 raise RuntimeError(f"지메일 발송 실패: recipient={notifier.recipient_email}, subject={subject}")
 
     except Exception as e:
