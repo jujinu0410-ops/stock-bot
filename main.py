@@ -146,6 +146,7 @@ def run_post_market_analysis(
                 )
     except Exception as e_port:
         logger.error(f"보유 종목 평가 중 예외 발생: {e_port}", exc_info=True)
+        raise
 
     # 5. 관심 종목 스캔 및 신규 매매 신호 추출
     caught_signals = []
@@ -186,11 +187,11 @@ def run_post_market_analysis(
         logger.info(f" [통합 평가 완료] 내 보유종목: {len(held_status)}개 | 매매 신호 포착: {len(caught_signals)}개")
         logger.info("==================================================")
 
-        # 🔥 [안전장치] 보유종목 평가 유효성 검증: DB에 보유종목이 있는데 평가 결과가 0개인 경우 메일 발송 차단
+        # 🔥 [안전장치] 보유종목 평가 유효성 검증: DB에 보유종목이 있는데 평가 결과가 0개인 경우 메일 발송 차단 및 에러 종료
         if not held_status or len(held_status) == 0:
             if held_db_rows and len(held_db_rows) > 0:
-                logger.critical(f"🛑 [발송 차단] 보유종목 평가 실패(0개 검출, DB상 {len(held_db_rows)}개 존재). 불완전 데이터 발송을 방지하기 위해 메일 발송을 취소합니다.")
-                return [], []
+                logger.critical(f"🛑 [발송 차단] 보유종목 평가 실패(0개 검출, DB상 {len(held_db_rows)}개 존재). 불완전 데이터 발송 방지를 위해 작업을 중단합니다.")
+                raise RuntimeError(f"보유종목 평가 실패: DB상 {len(held_db_rows)}개 존재하나 평가 결과 0개 검출")
 
         # 6. 📊 실제 분석 데이터 종합 엑셀파일(.xlsx) 생성 및 지메일 첨부 발송
         date_str_file = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -248,10 +249,12 @@ def run_post_market_analysis(
                 db.record_dispatch_success(fingerprint_id, dispatch_tag, notifier.recipient_email, subject)
                 logger.info(f"내 종목 정밀 평가 지메일 리포트 성공 발송 및 발송 기록 완료! [식별자: {dispatch_id}, FP: {dispatch_fingerprint}]")
             else:
-                logger.warning("지메일 발송에 실패했거나 설정이 미비합니다. 로컬 로그 파일을 확인하세요.")
+                logger.critical(f"지메일 발송에 실패했습니다. (수신인: {notifier.recipient_email})")
+                raise RuntimeError(f"지메일 발송 실패: recipient={notifier.recipient_email}, subject={subject}")
 
     except Exception as e:
         logger.critical(f"시스템 실행 중 예외 발생: {e}", exc_info=True)
+        raise
 
     return held_status, caught_signals
 

@@ -361,6 +361,7 @@ class PortfolioManager:
             kiwoom_exit_tick = pos_risk["kiwoom_exit_tick"]
             slippage_buffer = pos_risk["slippage_buffer"]
             risk_per_share = pos_risk["risk_per_share"]
+            account_risk_pct = pos_risk["account_risk_pct"]
             risk_budget_amount = pos_risk["risk_budget_amount"]
             risk_target_qty = pos_risk["risk_target_qty"]
             weight_cap_qty = pos_risk["weight_cap_qty"]
@@ -369,6 +370,7 @@ class PortfolioManager:
             weight_excess_qty = pos_risk["weight_excess_qty"]
             entry_stage = pos_risk["entry_stage"]
             lifecycle_status = pos_risk["lifecycle_status"]
+            profit_progress_1atr_reached = bool(highest_close >= (p0 + a0))
 
             # 손절 갱신 상태 판정
             if prev_confirmed_stop == 0:
@@ -486,7 +488,7 @@ class PortfolioManager:
                 cycle_id, ATR_ENGINE_VERSION, trade_mode, mode_override,
                 entry_stage, lifecycle_status,
                 p0, a0, anchor_created_at, self.config["atr_method"], self.config["atr_timeframe"],
-                at, natr_pct, raw_initial_stop, 0,
+                at, natr_pct, raw_initial_stop, (1 if profit_progress_1atr_reached else 0),
                 highest_close, highest_intraday, db_stop_tick, db_ratchet_stop,
                 db_act_raw, db_act_eff, profit_act_status,
                 highest_intraday, prev_profit_trail_val, db_trail_price, db_exit_line,
