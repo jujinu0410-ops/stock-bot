@@ -2,8 +2,8 @@ name: Twice Daily Stock Analysis Report (11:20 AM & 15:35 PM KST)
 
 on:
   schedule:
-    # 1차 장중 리포트: 한국시간(KST) 오전 11:20 (UTC 02:20) - 45분봉 3개 캔들 생성 완료 직후
-    - cron: '20 2 * * 1-5'
+    # 1차 장중 리포트: 한국시간(KST) 오전 10:20 (UTC 01:20) - GitHub 스케줄 큐 지연을 감안하여 1시간 일찍 트리거 (11:20경 실도착 목표)
+    - cron: '20 1 * * 1-5'
     # 2차 장마감 리포트: 한국시간(KST) 오후 15:35 (UTC 06:35) - 장마감 정밀 최종 리포트
     - cron: '35 6 * * 1-5'
   workflow_dispatch: # GitHub 웹 UI에서 수동 즉시 실행 가능 버튼 추가
