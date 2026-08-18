@@ -52,8 +52,12 @@ class PortfolioManager:
         status = "CLOSED" if quantity <= 0 else lifecycle_status
         
         self.db.execute_non_query("""
-            INSERT OR REPLACE INTO stock_info (stock_code, stock_name, market_type, updated_at)
+            INSERT INTO stock_info (stock_code, stock_name, market_type, updated_at)
             VALUES (?, ?, 'KRX', CURRENT_TIMESTAMP)
+            ON CONFLICT(stock_code) DO UPDATE SET
+                stock_name = excluded.stock_name,
+                market_type = excluded.market_type,
+                updated_at = CURRENT_TIMESTAMP
         """, (code, stock_name))
 
         # 기존 앵커 정보 조회
@@ -88,23 +92,38 @@ class PortfolioManager:
     def _update_portfolio_in_single_transaction(self, positions: List[Dict[str, Any]]) -> None:
         """
         보유 종목 전체를 단일 트랜잭션으로 DB에 원자적(Atomic) 반영.
+        INSERT ... ON CONFLICT DO UPDATE 구문을 사용하여 ATR 손절 래칫, 최고종가,
+        앵커(P0/A0), 감시상태 등 비대상 열을 100% 보존하고 수량/평단가/평가가격만 갱신.
         중간 오류 발생 시 자동 롤백되어 기존 DB를 완벽히 보존.
         """
         active_codes = [str(pos["stock_code"]).strip().zfill(6) for pos in positions]
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
-            # 1. 활성 종목 추가/업데이트
+            # 1. 활성 종목 추가/업데이트 (ON CONFLICT DO UPDATE로 ATR 손절 래칫 및 상태 열 완벽 보존)
             for pos in positions:
                 code = str(pos["stock_code"]).strip().zfill(6)
                 name = pos["stock_name"]
                 qty = int(pos["quantity"])
                 avg_p = float(pos["avg_buy_price"])
-                cursor.execute("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)", (code, name))
+                cur_p = int(pos.get("current_price", 0))
+                
                 cursor.execute("""
-                    INSERT OR REPLACE INTO portfolio_positions (
+                    INSERT INTO stock_info (stock_code, stock_name, market_type, updated_at)
+                    VALUES (?, ?, 'KRX', datetime('now', 'localtime'))
+                    ON CONFLICT(stock_code) DO UPDATE SET
+                        stock_name = excluded.stock_name,
+                        updated_at = excluded.updated_at
+                """, (code, name))
+                
+                cursor.execute("""
+                    INSERT INTO portfolio_positions (
                         stock_code, quantity, avg_buy_price, updated_at
                     ) VALUES (?, ?, ?, datetime('now', 'localtime'))
+                    ON CONFLICT(stock_code) DO UPDATE SET
+                        quantity = excluded.quantity,
+                        avg_buy_price = excluded.avg_buy_price,
+                        updated_at = excluded.updated_at
                 """, (code, qty, avg_p))
             
             # 2. 이번 수집 목록에 없는 기존 종목 안전 삭제
@@ -248,13 +267,24 @@ class PortfolioManager:
             pnl_pct = round((pnl_amount / total_inv) * 100.0, 2) if total_inv > 0 else 0.0
             eval_weight_pct = round((eval_amount / total_account_equity) * 100.0, 1) if total_account_equity > 0 else 0.0
 
-            # 가격 원천 및 괴리 검증 로그 (Section 7)
-            market_close_price = float(daily_df.iloc[-1]["close_price"]) if not daily_df.empty else current_price
+            # 가격 원천 및 괴리 검증 로그 (Section 4 & 7)
+            raw_balance_price = float(p_row.get("current_price") or p_row.get("raw_balance_price") or h.get("cur_p") or avg_p)
+            if raw_balance_price <= 0:
+                raw_balance_price = avg_p if avg_p > 0 else current_price
+            
+            market_close_price = float(daily_df.iloc[-1]["close_price"]) if not daily_df.empty else raw_balance_price
+            if market_close_price <= 0:
+                market_close_price = raw_balance_price
+
+            # 0원 방지
+            if current_price <= 0:
+                current_price = market_close_price if market_close_price > 0 else (raw_balance_price if raw_balance_price > 0 else avg_p)
+
             price_discrepancy = abs(current_price - market_close_price)
             discrepancy_str = f"괴리발생({price_discrepancy:,.0f}원 차이)" if price_discrepancy >= 1.0 else "일치"
             logger.info(
                 f"[Price Source Audit] {name}({code}) | "
-                f"잔고API 평가가: {int(h.get('cur_p', 0)):,}원 | "
+                f"잔고API 실제원본평가가: {int(raw_balance_price):,}원 | "
                 f"시세API 정규장종가: {int(market_close_price):,}원 | "
                 f"최종적용가: {int(current_price):,}원 (원천: KIWOOM_REGULAR_CLOSE) | "
                 f"원천상태: {discrepancy_str}"

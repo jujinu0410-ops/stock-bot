@@ -153,13 +153,14 @@ class TestRuntimeScheduler(unittest.TestCase):
 
     def test_08_intraday_shadow_scan_duplicate_bar_skip(self):
         """8. 동일한 45분봉 타임스탬프의 중복 실행 시 SKIPPED_NO_NEW_45M_BAR 스킵 검증"""
-        completed_ts = "2026-08-18 09:45:00"
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        completed_ts = f"{today_str} 09:45:00"
         self.db.insert_scheduler_run({
             "run_id": "RUN_PREV_SUCCESS",
             "scheduled_time": "09:50",
-            "actual_start_time": "2026-08-18 09:50:00",
-            "actual_end_time": "2026-08-18 09:50:05",
-            "trading_date": "2026-08-18",
+            "actual_start_time": f"{today_str} 09:50:00",
+            "actual_end_time": f"{today_str} 09:50:05",
+            "trading_date": today_str,
             "task_type": "INTRADAY_SHADOW_SCAN",
             "status": "SUCCESS",
             "last_completed_45m_bar": completed_ts
