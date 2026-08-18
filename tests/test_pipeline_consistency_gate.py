@@ -84,7 +84,7 @@ class TestPipelineConsistencyGate(unittest.TestCase):
                 excel_path=self.temp_excel,
                 html_report=html
             )
-        self.assertIn("키움 API 원본 vs DB 불일치", str(cm.exception))
+        self.assertIn("missing_in_db", str(cm.exception))
 
     def test_03_held_status_vs_xlsx_mismatch_raises(self):
         """테스트 03: held_status(11개) vs XLSX(10개) 불일치 시 RuntimeError 검증"""
@@ -102,7 +102,7 @@ class TestPipelineConsistencyGate(unittest.TestCase):
                 excel_path=self.temp_excel,
                 html_report=self.html_cards
             )
-        self.assertIn("held_status vs XLSX 불일치", str(cm.exception))
+        self.assertIn("missing_in_xlsx", str(cm.exception))
 
     def test_04_held_status_vs_email_card_mismatch_raises(self):
         """테스트 04: held_status(11개) vs 이메일 카드(10개) 불일치 시 RuntimeError 검증"""
@@ -119,7 +119,7 @@ class TestPipelineConsistencyGate(unittest.TestCase):
                 excel_path=self.temp_excel,
                 html_report=html_missing
             )
-        self.assertIn("held_status vs 이메일 카드 불일치", str(cm.exception))
+        self.assertIn("missing_in_email", str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()

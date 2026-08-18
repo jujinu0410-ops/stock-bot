@@ -169,19 +169,29 @@ def verify_pipeline_stock_code_consistency(
     logger.info(f"5. 이메일 카드 ({len(email_card_codes)}개): {sorted(list(email_card_codes))}")
     logger.info("=" * 50)
 
-    # 일치성 검증
-    mismatches = []
-    if raw_kiwoom_positions is not None and raw_kiwoom_codes != db_active_codes:
-        mismatches.append(f"키움 API 원본 vs DB 불일치 (키움: {len(raw_kiwoom_codes)}개, DB: {len(db_active_codes)}개, 차이: {raw_kiwoom_codes ^ db_active_codes})")
-    if db_active_codes != held_status_codes:
-        mismatches.append(f"DB vs held_status 불일치 (DB: {len(db_active_codes)}개, held_status: {len(held_status_codes)}개, 차이: {db_active_codes ^ held_status_codes})")
-    if held_status_codes != xlsx_codes:
-        mismatches.append(f"held_status vs XLSX 불일치 (held_status: {len(held_status_codes)}개, XLSX: {len(xlsx_codes)}개, 차이: {held_status_codes ^ xlsx_codes})")
-    if held_status_codes != email_card_codes:
-        mismatches.append(f"held_status vs 이메일 카드 불일치 (held_status: {len(held_status_codes)}개, 이메일카드: {len(email_card_codes)}개, 차이: {held_status_codes ^ email_card_codes})")
+    # 일치성 검증 (Section 5 표준 형식)
+    missing_in_db = sorted(list(raw_kiwoom_codes - db_active_codes))
+    missing_in_evaluation = sorted(list(raw_kiwoom_codes - held_status_codes))
+    missing_in_xlsx = sorted(list(raw_kiwoom_codes - xlsx_codes))
+    missing_in_email = sorted(list(raw_kiwoom_codes - email_card_codes))
+    unexpected_extra_codes = sorted(list((db_active_codes | held_status_codes | xlsx_codes | email_card_codes) - raw_kiwoom_codes))
 
-    if mismatches:
-        err_msg = f"🛑 [종목코드 불일치 감지 - 발송 차단] 전 계층 종목코드 집합이 일치하지 않습니다:\n" + "\n".join(mismatches)
+    has_mismatch = bool(missing_in_db or missing_in_evaluation or missing_in_xlsx or missing_in_email or unexpected_extra_codes)
+    if has_mismatch:
+        err_report = [
+            "🛑 [종목코드 불일치 감지 - 발송 차단]",
+            f"  • missing_in_db: {missing_in_db}",
+            f"  • missing_in_evaluation: {missing_in_evaluation}",
+            f"  • missing_in_xlsx: {missing_in_xlsx}",
+            f"  • missing_in_email: {missing_in_email}",
+            f"  • unexpected_extra_codes: {unexpected_extra_codes}",
+            f"  • raw_kiwoom_codes ({len(raw_kiwoom_codes)}개): {sorted(list(raw_kiwoom_codes))}",
+            f"  • db_active_codes ({len(db_active_codes)}개): {sorted(list(db_active_codes))}",
+            f"  • held_status_codes ({len(held_status_codes)}개): {sorted(list(held_status_codes))}",
+            f"  • xlsx_codes ({len(xlsx_codes)}개): {sorted(list(xlsx_codes))}",
+            f"  • email_card_codes ({len(email_card_codes)}개): {sorted(list(email_card_codes))}"
+        ]
+        err_msg = "\n".join(err_report)
         logger.critical(err_msg)
         raise RuntimeError(err_msg)
 

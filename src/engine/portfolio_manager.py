@@ -85,24 +85,65 @@ class PortfolioManager:
 
         logger.info(f"[PortfolioManager] 보유 종목 동기화: {stock_name}({code}) {quantity}주 @ {avg_buy_price:,}원 (Stage {entry_stage}, {status})")
 
+    def _update_portfolio_in_single_transaction(self, positions: List[Dict[str, Any]]) -> None:
+        """
+        보유 종목 전체를 단일 트랜잭션으로 DB에 원자적(Atomic) 반영.
+        중간 오류 발생 시 자동 롤백되어 기존 DB를 완벽히 보존.
+        """
+        active_codes = [str(pos["stock_code"]).strip().zfill(6) for pos in positions]
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            # 1. 활성 종목 추가/업데이트
+            for pos in positions:
+                code = str(pos["stock_code"]).strip().zfill(6)
+                name = pos["stock_name"]
+                qty = int(pos["quantity"])
+                avg_p = float(pos["avg_buy_price"])
+                cursor.execute("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)", (code, name))
+                cursor.execute("""
+                    INSERT OR REPLACE INTO portfolio_positions (
+                        stock_code, quantity, avg_buy_price, updated_at
+                    ) VALUES (?, ?, ?, datetime('now', 'localtime'))
+                """, (code, qty, avg_p))
+            
+            # 2. 이번 수집 목록에 없는 기존 종목 안전 삭제
+            if active_codes:
+                placeholders = ",".join(["?"] * len(active_codes))
+                cursor.execute(f"DELETE FROM portfolio_positions WHERE stock_code NOT IN ({placeholders})", tuple(active_codes))
+            
+            conn.commit()
+            logger.info(f"[PortfolioManager] DB 보유종목 단일 트랜잭션 원자적 갱신 완료 ({len(active_codes)}개 종목: {active_codes})")
+        except Exception as e:
+            conn.rollback()
+            logger.critical(f"[PortfolioManager] 🛑 DB 보유종목 갱신 트랜잭션 실패 (롤백 수행, 기존 DB 보존): {e}", exc_info=True)
+            raise RuntimeError(f"DB 보유종목 갱신 실패 (기존 DB 보존): {e}")
+        finally:
+            conn.close()
+
     def sync_portfolio_from_kiwoom(self) -> List[Dict[str, Any]]:
         """
         키움 REST API (kt00018) 실시간 계좌평가 잔고 조회를 1순위로 실행하여
-        실제 보유 종목만 DB에 최신화하고 매도된 종목은 안전하게 제거합니다.
+        실제 보유 종목만 DB에 최신화하고 매도된 종목은 안전하게 단일 트랜잭션으로 교체합니다.
         """
-        logger.info("[PortfolioManager] 키움 API 실시간 계좌 보유 종목 동기화 시작...")
+        import os
+        is_ci = os.getenv("GITHUB_ACTIONS") == "true" or os.getenv("CI") == "true"
+        logger.info(f"[PortfolioManager] 키움 API 실시간 계좌 보유 종목 동기화 시작... (운영/CI 환경 여부: {is_ci})")
+        
         positions = self.kiwoom.get_account_positions()
         
-        if positions and len(positions) > 0 and self.kiwoom.is_valid_key():
+        # 운영/CI 환경 또는 유효한 키 설정 상태에서는 잔고 0개이거나 수집 실패 시 절대로 Fallback하지 않음
+        if self.kiwoom.is_valid_key() or is_ci:
+            if not positions or len(positions) == 0:
+                logger.critical("[PortfolioManager] 🛑 [운영 Fallback 금지] 실계좌 응답이 비정상적으로 빈 목록이거나 수집에 실패했습니다. DB 수정 및 발송을 중단합니다.")
+                raise RuntimeError("실계좌 응답이 비정상적으로 빈 목록이거나 키움 API 연동 실패 (운영 Fallback 금지)")
+            
             logger.info(f"[PortfolioManager] 🔥 키움 REST API 실계좌 연동 성공! (실제 보유: {len(positions)}개 종목)")
-            active_codes = [pos["stock_code"] for pos in positions]
-            for pos in positions:
-                self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
             
-            if active_codes:
-                placeholders = ",".join(["?"] * len(active_codes))
-                self.db.execute_non_query(f"DELETE FROM portfolio_positions WHERE stock_code NOT IN ({placeholders})", tuple(active_codes))
+            # DB 단일 트랜잭션 갱신 (실패 시 롤백 및 기존 DB 보존)
+            self._update_portfolio_in_single_transaction(positions)
             
+            # 로컬 JSON 파일 백업 갱신
             cfg_path = pathlib.Path("config/portfolio_holdings.json")
             try:
                 cfg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,34 +151,17 @@ class PortfolioManager:
                     json.dump(positions, f, ensure_ascii=False, indent=2)
             except Exception as e_cfg:
                 logger.warning(f"[PortfolioManager] json 파일 저장 중 경고: {e_cfg}")
-
+            
             return positions
         else:
-            logger.warning("[PortfolioManager] 키움 API 연동 불가 또는 잔고 0개 - 기존 JSON 백업 파일 로드 시도")
-            cfg_path = pathlib.Path("config/portfolio_holdings.json")
-            if cfg_path.exists():
-                try:
-                    with open(cfg_path, "r", encoding="utf-8") as f:
-                        positions = json.load(f)
-                    if positions:
-                        active_codes = [pos["stock_code"] for pos in positions]
-                        for pos in positions:
-                            self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
-                        if active_codes:
-                            placeholders = ",".join(["?"] * len(active_codes))
-                            self.db.execute_non_query(f"DELETE FROM portfolio_positions WHERE stock_code NOT IN ({placeholders})", tuple(active_codes))
-                        return positions
-                except Exception as e:
-                    logger.error(f"[PortfolioManager] JSON 백업 로드 실패: {e}")
-
-        mock_positions = self.kiwoom._get_mock_account_positions()
-        active_codes = [pos["stock_code"] for pos in mock_positions]
-        for pos in mock_positions:
-            self.add_holding(pos["stock_code"], pos["stock_name"], pos["quantity"], pos["avg_buy_price"])
-        if active_codes:
-            placeholders = ",".join(["?"] * len(active_codes))
-            self.db.execute_non_query(f"DELETE FROM portfolio_positions WHERE stock_code NOT IN ({placeholders})", tuple(active_codes))
-        return mock_positions
+            # 로컬 테스트/Mock 모드 (CI가 아니고 API키 미설정)
+            logger.info("[PortfolioManager] 로컬 테스트 환경: mock/json 잔고 데이터 사용")
+            if positions and len(positions) > 0:
+                self._update_portfolio_in_single_transaction(positions)
+                return positions
+            mock_positions = self.kiwoom._get_mock_account_positions()
+            self._update_portfolio_in_single_transaction(mock_positions)
+            return mock_positions
 
     def get_held_portfolio_status(self, engine=None) -> List[Dict[str, Any]]:
         """
@@ -223,6 +247,18 @@ class PortfolioManager:
             pnl_amount = eval_amount - total_inv
             pnl_pct = round((pnl_amount / total_inv) * 100.0, 2) if total_inv > 0 else 0.0
             eval_weight_pct = round((eval_amount / total_account_equity) * 100.0, 1) if total_account_equity > 0 else 0.0
+
+            # 가격 원천 및 괴리 검증 로그 (Section 7)
+            market_close_price = float(daily_df.iloc[-1]["close_price"]) if not daily_df.empty else current_price
+            price_discrepancy = abs(current_price - market_close_price)
+            discrepancy_str = f"괴리발생({price_discrepancy:,.0f}원 차이)" if price_discrepancy >= 1.0 else "일치"
+            logger.info(
+                f"[Price Source Audit] {name}({code}) | "
+                f"잔고API 평가가: {int(h.get('cur_p', 0)):,}원 | "
+                f"시세API 정규장종가: {int(market_close_price):,}원 | "
+                f"최종적용가: {int(current_price):,}원 (원천: KIWOOM_REGULAR_CLOSE) | "
+                f"원천상태: {discrepancy_str}"
+            )
 
             # 🔥 0. KRX 시장 거래 상태 가드레일 (주권매매거래정지 / 상장적격성 실질심사 / 정리매매 등)
             is_suspended = False
