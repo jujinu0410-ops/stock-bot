@@ -114,6 +114,7 @@ class KiwoomAPIClient:
         next_key = ""
         page = 1
         MAX_PAGES = 20
+        reported_total_cnt = 0
 
         while True:
             headers = {
@@ -149,6 +150,15 @@ class KiwoomAPIClient:
 
             top_keys = list(data.keys()) if isinstance(data, dict) else []
             items = data.get("acnt_evlt_remn_indv_tot", []) if isinstance(data, dict) else []
+
+            # 응답 본문에 총종목 수 필드가 양의 정수로 제공되는 경우(선택적 필드)에만 보조 교차검증용으로 기록
+            if isinstance(data, dict):
+                for k in ["tot_item_cnt", "tot_cnt", "tot_stk_cnt", "item_cnt"]:
+                    if k in data and str(data[k]).strip().isdigit():
+                        cnt_val = int(str(data[k]).strip())
+                        if cnt_val > 0:
+                            reported_total_cnt = max(reported_total_cnt, cnt_val)
+                            break
 
             page_positions = []
             for item in items:
@@ -218,25 +228,12 @@ class KiwoomAPIClient:
                 f"CumulativeItems: {len(all_collected_positions)}개 {cum_codes}"
             )
 
-            # 1. 10개 만실 페이지 절단 감지 (운영환경 무조건 안전 실패)
-            tot_item_cnt = 0
-            if isinstance(data, dict):
-                for k in ["tot_item_cnt", "tot_cnt", "tot_stk_cnt", "item_cnt"]:
-                    if k in data and str(data[k]).isdigit():
-                        tot_item_cnt = int(data[k])
-                        break
-            
-            if tot_item_cnt > 0 and tot_item_cnt > len(all_collected_positions) and cont_yn != "Y":
-                logger.critical(f"[Kiwoom API] 🛑 [절단 감지] 키움 응답 총 종목수({tot_item_cnt}개) 대비 수집 종목수({len(all_collected_positions)}개) 부족")
-                raise RuntimeError(f"키움 계좌 총 종목 수({tot_item_cnt}개) 대비 수집 종목 수({len(all_collected_positions)}개) 부족 - 비정상 절단 감지")
-
-            # GitHub Actions/CI 운영환경: 1페이지가 정확히 10개 만실인데 cont-yn='Y'가 아니면 config 파일 개수와 무관하게 무조건 안전 실패
-            if page == 1 and len(page_positions) == 10 and cont_yn != "Y":
-                logger.critical(
-                    f"[Kiwoom API] 🛑 [절단 의심 감지] 1페이지가 10개로 꽉 찬 상태에서 연속조회(cont-yn='Y')가 수신되지 않았습니다. "
-                    f"(운영 환경에서는 config 파일 개수와 관계없이 비정상 절단 의심으로 안전 실패 처리합니다)."
+            # 10개 경계 응답 로깅 (공식 연속조회 헤더 우선)
+            if len(page_positions) == 10 and cont_yn != "Y":
+                logger.info(
+                    f"[Kiwoom API] ℹ️ 수신된 종목수가 10개이며 연속조회 헤더(cont-yn='{cont_yn}')가 종료되었습니다. "
+                    f"(공식 연속조회 헤더 기준으로 마지막 페이지로 처리합니다)."
                 )
-                raise RuntimeError("10개 만실 페이지에서 연속조회(cont-yn='Y') 미수신 - 비정상 절단 의심으로 운영 환경 안전 실패 처리")
 
             if cont_yn == "Y":
                 if not res_next_key:
@@ -264,6 +261,16 @@ class KiwoomAPIClient:
             code = p["stock_code"]
             unique_positions[code] = p
         positions = list(unique_positions.values())
+
+        # 총종목 수 교차검증 (신뢰 가능한 총종목 수 필드가 제공된 경우)
+        if reported_total_cnt > 0 and reported_total_cnt > len(positions):
+            logger.critical(
+                f"[Kiwoom API] 🛑 [절단 감지] 키움 응답 총 종목수({reported_total_cnt}개) 대비 "
+                f"수집된 고유 종목수({len(positions)}개)가 부족합니다."
+            )
+            raise RuntimeError(
+                f"키움 계좌 총 종목 수({reported_total_cnt}개) 대비 수집 종목 수({len(positions)}개) 부족 - 비정상 절단 감지"
+            )
 
         if (is_ci or self.is_valid_key()) and len(positions) == 0:
             logger.critical(f"[Kiwoom API] 🛑 [운영 Fallback 금지] 실계좌에서 수집된 종목이 0개입니다. (Acnt: {masked_acnt})")

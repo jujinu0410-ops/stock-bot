@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, mock_open
 from pathlib import Path
 import os
 import sys
@@ -38,6 +38,14 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
                 pass
 
     def setUp(self):
+        self.patcher_pm_open = patch("src.engine.portfolio_manager.open", mock_open())
+        self.mock_pm_open = self.patcher_pm_open.start()
+        self.addCleanup(self.patcher_pm_open.stop)
+
+        self.patcher_json_dump = patch("json.dump")
+        self.mock_json_dump = self.patcher_json_dump.start()
+        self.addCleanup(self.patcher_json_dump.stop)
+
         self.db.execute_non_query("DELETE FROM portfolio_positions")
         self.db.execute_non_query("DELETE FROM stock_info")
         self.client = KiwoomAPIClient(
@@ -97,22 +105,205 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         existing_codes = {r["stock_code"] for r in db_rows}
         self.assertEqual(existing_codes, {"005930", "000660"})
 
-    def test_03_full_10_items_without_cont_yn_fails_even_if_config_is_10(self):
-        """3. [10개 만실 절단 의심 감지] config 파일에 10개만 존재하더라도 키움 1페이지가 10개 만실이고 cont-yn이 없으면 무조건 실패 검증"""
-        # 키움 실계좌 1페이지 10개 수신 (대동 000490 누락된 10개)
-        page1_10_items = [{"stk_cd": f"A{c}", "stk_nm": f"종목_{c}", "rmnd_qty": "100", "pur_pric": "10000", "cur_prc": "10500", "pur_amt": "1000000", "prft_rt": "5.0"} for c in self.all_11_codes[1:]]
+    def test_03_exactly_10_positions_without_continuation_succeeds(self):
+        """테스트 1 — 정상 10종목 성공 (API 수신 10종목, cont-yn=N, next-key 없음 -> 10종목 정상 반환)"""
+        gen_10_codes = [f"{910000 + i:06d}" for i in range(10)]
+        page1_10_items = [{"stk_cd": f"A{c}", "stk_nm": f"테스트종목_{c}", "rmnd_qty": "100", "pur_pric": "10000", "cur_prc": "10500", "pur_amt": "1000000", "prft_rt": "5.0"} for c in gen_10_codes]
         resp1 = MagicMock()
         resp1.status_code = 200
-        resp1.json.return_value = {"acnt_evlt_remn_indv_tot": page1_10_items} # tot_item_cnt 미제공
+        resp1.json.return_value = {"acnt_evlt_remn_indv_tot": page1_10_items}
         resp1.headers = {"cont-yn": "N", "next-key": ""}
 
-        # 실제 origin/main의 config/portfolio_holdings.json처럼 10개만 등록되어 있는 상태 모킹
-        mock_cfg_10 = [{"stock_code": c} for c in self.all_11_codes[1:]]
-        with patch.object(self.client, "_get_mock_account_positions", return_value=mock_cfg_10):
-            with patch("requests.post", return_value=resp1):
-                with self.assertRaises(RuntimeError) as cm:
-                    self.client.get_account_positions()
-                self.assertIn("10개 만실 페이지에서 연속조회(cont-yn='Y') 미수신", str(cm.exception))
+        with patch("requests.post", return_value=resp1):
+            positions = self.client.get_account_positions()
+            self.assertEqual(len(positions), 10)
+            codes = [p["stock_code"] for p in positions]
+            self.assertEqual(set(codes), set(gen_10_codes))
+
+    def test_total_item_count_mismatch_fails(self):
+        """테스트 2 — 총종목 수 불일치 실패 (API 수신 10종목, cont-yn=N, 응답의 tot_item_cnt=11 -> RuntimeError)"""
+        gen_10_codes = [f"{920000 + i:06d}" for i in range(10)]
+        page1_10_items = [{"stk_cd": f"A{c}", "stk_nm": f"테스트종목_{c}", "rmnd_qty": "100", "pur_pric": "10000", "cur_prc": "10500", "pur_amt": "1000000", "prft_rt": "5.0"} for c in gen_10_codes]
+        resp1 = MagicMock()
+        resp1.status_code = 200
+        resp1.json.return_value = {
+            "tot_item_cnt": "11",
+            "acnt_evlt_remn_indv_tot": page1_10_items
+        }
+        resp1.headers = {"cont-yn": "N", "next-key": ""}
+
+        with patch("requests.post", return_value=resp1):
+            with self.assertRaises(RuntimeError) as cm:
+                self.client.get_account_positions()
+            self.assertIn("11", str(cm.exception))
+            self.assertIn("10", str(cm.exception))
+            self.assertIn("절단", str(cm.exception))
+
+    def test_pagination_10_plus_1_success(self):
+        """테스트 3 — 10+1 연속조회 성공 (1페이지: 10종목 cont-yn=Y next-key 존재, 2페이지: 1종목 cont-yn=N -> 총 11개 반환)"""
+        sample_codes = [f"{930000 + i:06d}" for i in range(11)]
+        page1_items = [{"stk_cd": f"A{c}", "stk_nm": f"일반종목_{c}", "rmnd_qty": "100", "pur_pric": "10000", "cur_prc": "10500", "pur_amt": "1000000", "prft_rt": "5.0"} for c in sample_codes[:10]]
+        page2_items = [{"stk_cd": f"A{c}", "stk_nm": f"일반종목_{c}", "rmnd_qty": "200", "pur_pric": "20000", "cur_prc": "21000", "pur_amt": "4000000", "prft_rt": "5.0"} for c in sample_codes[10:]]
+
+        resp1 = MagicMock()
+        resp1.status_code = 200
+        resp1.json.return_value = {"acnt_evlt_remn_indv_tot": page1_items}
+        resp1.headers = {"cont-yn": "Y", "next-key": "PAGE2_KEY"}
+
+        resp2 = MagicMock()
+        resp2.status_code = 200
+        resp2.json.return_value = {"acnt_evlt_remn_indv_tot": page2_items}
+        resp2.headers = {"cont-yn": "N", "next-key": ""}
+
+        with patch("requests.post", side_effect=[resp1, resp2]) as mock_post:
+            positions = self.client.get_account_positions()
+            self.assertEqual(len(positions), 11)
+            codes = [p["stock_code"] for p in positions]
+            self.assertEqual(codes, sample_codes)
+            self.assertEqual(mock_post.call_count, 2)
+
+    def test_selloff_11_to_10_sync(self):
+        """테스트 4 — 11->10 전량매도 동기화 (기존 DB 11종목, 신규 잔고 10종목 -> 매도된 1종목만 제거되고 10종목 유지)"""
+        sample_11_codes = [f"{940000 + i:06d}" for i in range(11)]
+        sold_out_code = sample_11_codes[0]
+        survivor_codes = sample_11_codes[1:]
+
+        # 기존 DB 11종목 등록
+        for c in sample_11_codes:
+            self.pm.add_holding(c, f"종목_{c}", 100, 10000.0)
+
+        # 신규 키움 정상 잔고 10종목 (sold_out_code 제외)
+        page1_10_items = [{"stk_cd": f"A{c}", "stk_nm": f"종목_{c}", "rmnd_qty": "100", "pur_pric": "10000", "cur_prc": "10500", "pur_amt": "1000000", "prft_rt": "5.0"} for c in survivor_codes]
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"acnt_evlt_remn_indv_tot": page1_10_items}
+        resp.headers = {"cont-yn": "N", "next-key": ""}
+
+        with patch("requests.post", return_value=resp):
+            self.pm.sync_portfolio_from_kiwoom()
+
+        # DB 활성 종목 검증
+        db_rows = self.db.execute_query("SELECT stock_code, quantity FROM portfolio_positions WHERE quantity > 0")
+        active_codes = {r["stock_code"] for r in db_rows}
+        self.assertEqual(len(active_codes), 10)
+        self.assertEqual(active_codes, set(survivor_codes))
+        self.assertNotIn(sold_out_code, active_codes)
+
+        # 전량매도 종목 DB 행 완전 삭제 직접 단언
+        sold_rows = self.db.execute_query(
+            "SELECT * FROM portfolio_positions WHERE stock_code = ?",
+            (sold_out_code,)
+        )
+        self.assertEqual(sold_rows, [])
+
+    def test_monitoring_state_preservation_after_11_to_10_sync(self):
+        """테스트 5 — 11->10 동기화 후 기존 감시 상태 및 비대상 열(P0, A0, 버전, 상태, 손절 래칫, 최고종가, 트레일링 등) 전체 보존 검증"""
+        sample_11_codes = [f"{950000 + i:06d}" for i in range(11)]
+        sold_out_code = sample_11_codes[0]
+        survivor_code = sample_11_codes[1]
+
+        # 1. 잔존할 특정 종목(survivor_code)에 전체 감시 및 손절 래칫/최고종가/트레일링 필드 설정
+        self.db.execute_non_query("""
+            INSERT INTO portfolio_positions (
+                stock_code, quantity, avg_buy_price,
+                anchor_price_p0, anchor_atr_a0, parameter_version, entry_stage, lifecycle_status,
+                highest_close, highest_close_price, highest_intraday,
+                confirmed_stop_price, previous_confirmed_stop, ratchet_stop,
+                profit_trail, previous_profit_trail, profit_activation_status,
+                highest_after_activation, effective_exit_line
+            ) VALUES (
+                ?, 1000, 8000.0,
+                8500.0, 420.0, 'V4-PILOT-C', 2, 'PROFIT_TRAIL',
+                9200.0, 9200.0, 9350.0,
+                8400.0, 8200.0, 8400.0,
+                8600.0, 8300.0, 'ACTIVE',
+                9350.0, 8600.0
+            )
+            ON CONFLICT(stock_code) DO UPDATE SET
+                anchor_price_p0 = 8500.0, anchor_atr_a0 = 420.0,
+                parameter_version = 'V4-PILOT-C', entry_stage = 2, lifecycle_status = 'PROFIT_TRAIL',
+                highest_close = 9200.0, highest_close_price = 9200.0, highest_intraday = 9350.0,
+                confirmed_stop_price = 8400.0, previous_confirmed_stop = 8200.0, ratchet_stop = 8400.0,
+                profit_trail = 8600.0, previous_profit_trail = 8300.0, profit_activation_status = 'ACTIVE',
+                highest_after_activation = 9350.0, effective_exit_line = 8600.0
+        """, (survivor_code,))
+
+        # 2. 나머지 10종목도 기본 보유로 DB 등록
+        for c in sample_11_codes:
+            if c != survivor_code:
+                self.pm.add_holding(c, f"종목_{c}", 100, 10000.0)
+
+        # 3. 신규 키움 정상 잔고 10종목 (sold_out_code 매도 제외, survivor_code 수량 2500 / 평단 8150.0 변경)
+        new_10_items = []
+        for c in sample_11_codes:
+            if c == sold_out_code:
+                continue
+            elif c == survivor_code:
+                new_10_items.append({"stk_cd": f"A{c}", "stk_nm": f"종목_{c}", "rmnd_qty": "2500", "pur_pric": "8150", "cur_prc": "8200", "pur_amt": "20375000", "prft_rt": "0.61"})
+            else:
+                new_10_items.append({"stk_cd": f"A{c}", "stk_nm": f"종목_{c}", "rmnd_qty": "100", "pur_pric": "10000", "cur_prc": "10500", "pur_amt": "1000000", "prft_rt": "5.0"})
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"acnt_evlt_remn_indv_tot": new_10_items}
+        resp.headers = {"cont-yn": "N", "next-key": ""}
+
+        with patch("requests.post", return_value=resp):
+            self.pm.sync_portfolio_from_kiwoom()
+
+        # 4. 잔존 종목(survivor_code)의 갱신 열과 보존 열 전체 단언
+        row = self.db.execute_query("SELECT * FROM portfolio_positions WHERE stock_code = ?", (survivor_code,))[0]
+        # 키움 동기화 갱신 열 확인
+        self.assertEqual(row["quantity"], 2500)
+        self.assertEqual(row["avg_buy_price"], 8150.0)
+        # 감시 상태 및 비대상 열 전체 100% 보존 단언
+        self.assertEqual(row["anchor_price_p0"], 8500.0)
+        self.assertEqual(row["anchor_atr_a0"], 420.0)
+        self.assertEqual(row["parameter_version"], 'V4-PILOT-C')
+        self.assertEqual(row["entry_stage"], 2)
+        self.assertEqual(row["lifecycle_status"], 'PROFIT_TRAIL')
+        self.assertEqual(row["highest_close"], 9200.0)
+        self.assertEqual(row["highest_close_price"], 9200.0)
+        self.assertEqual(row["highest_intraday"], 9350.0)
+        self.assertEqual(row["confirmed_stop_price"], 8400.0)
+        self.assertEqual(row["previous_confirmed_stop"], 8200.0)
+        self.assertEqual(row["ratchet_stop"], 8400.0)
+        self.assertEqual(row["profit_trail"], 8600.0)
+        self.assertEqual(row["previous_profit_trail"], 8300.0)
+        self.assertEqual(row["profit_activation_status"], 'ACTIVE')
+        self.assertEqual(row["highest_after_activation"], 9350.0)
+        self.assertEqual(row["effective_exit_line"], 8600.0)
+
+    def test_pagination_invalid_cases_remain_blocked(self):
+        """테스트 6 — 비정상 연속조회 차단 유지 (next-key 누락, 무한루프, 최대 20페이지 초과)"""
+        # 1) cont-yn=Y이나 next-key 누락
+        resp_missing = MagicMock(status_code=200, headers={"cont-yn": "Y", "next-key": ""})
+        resp_missing.json.return_value = {"acnt_evlt_remn_indv_tot": []}
+        with patch("requests.post", return_value=resp_missing):
+            with self.assertRaises(RuntimeError) as cm:
+                self.client.get_account_positions()
+            self.assertIn("next-key가 누락", str(cm.exception))
+
+        # 2) 동일 next-key 반복 (무한루프)
+        resp_loop = MagicMock(status_code=200, headers={"cont-yn": "Y", "next-key": "LOOP_KEY"})
+        resp_loop.json.return_value = {"acnt_evlt_remn_indv_tot": []}
+        with patch("requests.post", return_value=resp_loop):
+            with self.assertRaises(RuntimeError) as cm:
+                self.client.get_account_positions()
+            self.assertIn("무한루프", str(cm.exception))
+
+        # 3) 최대 허용 페이지 수(MAX_PAGES = 20) 초과
+        many_resps = []
+        for p in range(1, 23):
+            r = MagicMock(status_code=200, headers={"cont-yn": "Y", "next-key": f"UNIQUE_KEY_{p}"})
+            r.json.return_value = {"acnt_evlt_remn_indv_tot": [{"stk_cd": f"A96000{p % 10}", "stk_nm": f"종목_{p}", "rmnd_qty": "10", "pur_pric": "1000", "cur_prc": "1000", "pur_amt": "10000", "prft_rt": "0.0"}]}
+            many_resps.append(r)
+
+        with patch("requests.post", side_effect=many_resps):
+            with self.assertRaises(RuntimeError) as cm:
+                self.client.get_account_positions()
+            self.assertIn("최대 허용 페이지 수", str(cm.exception))
 
     def test_04_raw_11_db_11_eval_10_fails_gate(self):
         """4. 원본 11개, DB 11개, 평가 10개 -> 실패 검증"""
