@@ -365,7 +365,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
                 VALUES (?, 100, 10000)
                 ON CONFLICT(stock_code) DO UPDATE SET quantity = 100, avg_buy_price = 10000
             """, (c,))
-        held_status_11 = [{"stock_code": c, "stock_name": f"종목_{c}"} for c in self.all_11_codes]
+        held_status_11 = [{"stock_code": c, "stock_name": f"종목_{c}", "action_status": "매도"} for c in self.all_11_codes]
 
         temp_excel = BASE_DIR / "data" / "test_all_11.xlsx"
         df = pd.DataFrame([{"종목코드": c} for c in self.all_11_codes])
@@ -474,6 +474,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         }]
         sample_disc = [{
             "stock_name": "대동", "stock_code": "000490", "report_nm": "단일판매·공급계약체결",
+            "rcept_no": "20260819000490_01",
             "link": "http://dart.fss.or.kr", "summary": "1,000억원 공급계약",
             "impact": "매출 증대 긍정적", "guide": "기존 비중 유지"
         }]
@@ -486,8 +487,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
             held_portfolio=sample_held,
             disclosures=sample_disc
         )
-        self.assertIn("data-stock-code=\"000490\"", html)
-        self.assertIn("보유 포트폴리오 요약", html)
+        self.assertIn('data-held-stock-codes="000490"', html)
         self.assertIn("V4-PILOT-C 주요 대응 지침", html)
         self.assertIn("DART 주요 공시 & 브리핑", html)
         self.assertNotIn("undefined", html)
@@ -572,7 +572,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         self.assertEqual(item["eval_weight_pct"], 100.0)
 
     def test_15_email_v2_excludes_redundant_sections(self):
-        """15. [이메일 V2 불필요 섹션 배제 검증] 필수 5개 항목만 포함되고 관심종목/신규매수 등 제외 대상 부재 검증"""
+        """15. [이메일 V2 불필요 섹션 배제 검증] 필수 항목만 포함되고 관심종목/신규매수/대시보드 등 제외 대상 부재 검증"""
         from src.notifications.mobile_renderer_v2 import generate_mobile_html_report_v2
         sample_held = [{
             "stock_code": "000490", "stock_name": "대동", "current_price": 8050,
@@ -585,6 +585,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         }]
         sample_disc = [{
             "stock_name": "대동", "stock_code": "000490", "report_nm": "주요사항보고서",
+            "rcept_no": "20260819000490_02",
             "link": "http://dart.fss.or.kr", "summary": "자금조달 공시",
             "impact": "중립", "guide": "관망"
         }]
@@ -599,17 +600,22 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         )
 
         # 필수 포함 항목 검증
-        self.assertIn("💼 보유 포트폴리오 요약", html)
+        self.assertIn('data-render-version="V2"', html)
+        self.assertIn('data-held-stock-codes="000490"', html)
         self.assertIn("📋 V4-PILOT-C 주요 대응 지침", html)
-        self.assertIn("data-stock-code=\"000490\"", html)
         self.assertIn("📢 DART 주요 공시 & 브리핑", html)
         self.assertIn("※ 본 리포트는 V4-PILOT-C 위험관리 엔진 기준값이며", html)
 
         # 제외 대상 섹션 부재 검증
+        self.assertNotIn("5단계 매매 대응전략 매트릭스", html)
+        self.assertNotIn("일봉/45분봉 수급 원자값 연동 표", html)
+        self.assertNotIn("내 계좌 보유 종목 정밀 평가", html)
         self.assertNotIn("관심종목 전체 분석", html)
         self.assertNotIn("신규 매수 신호 포착", html)
         self.assertNotIn("전체 시장 동향", html)
         self.assertNotIn("신규매수", html)
+        self.assertNotIn("보유 포트폴리오 요약", html)
+        self.assertNotIn('data-render-version="V1"', html)
         self.assertNotIn("undefined", html)
         self.assertNotIn("NaN", html)
 

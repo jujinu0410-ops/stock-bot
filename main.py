@@ -90,33 +90,43 @@ def _get_git_commit_sha() -> str:
         return "UNKNOWN"
 
 def verify_pipeline_stock_code_consistency(
-    raw_kiwoom_positions: Optional[List[Dict[str, Any]]],
-    db_manager: DatabaseManager,
-    held_status: List[Dict[str, Any]],
-    excel_path: Path,
-    html_report: str
+    raw_kiwoom_positions: Optional[List[Dict[str, Any]]] = None,
+    db: Optional[DatabaseManager] = None,
+    held_status: Optional[List[Dict[str, Any]]] = None,
+    excel_path: Optional[Path] = None,
+    html_report: str = "",
+    db_manager: Optional[DatabaseManager] = None,
+    disclosures: Optional[List[Dict[str, Any]]] = None
 ) -> None:
+    target_db = db if db is not None else db_manager
+    if target_db is None:
+        raise ValueError("DatabaseManager 인스턴스가 제공되어야 합니다.")
+    if held_status is None:
+        held_status = []
     """
-    발송 직전 파이프라인 전 계층의 종목코드 집합 일치성 전수 검증:
+    발송 직전 파이프라인 전 계층의 종목코드 및 대응카드/DART공시 완전성 전수 검증:
     1. 키움 API 연속조회 원본 종목코드 집합 (raw_kiwoom_codes)
     2. DB portfolio_positions 활성 종목코드 집합 (db_active_codes)
     3. held_status 평가 리스트 종목코드 집합 (held_status_codes)
     4. 생성된 XLSX 파일의 보유종목 시트 종목코드 집합 (xlsx_codes)
-    5. 생성된 이메일 HTML 카드의 종목코드 집합 (email_card_codes)
+    5. 생성된 이메일 HTML 카드의 감사 메타데이터 종목코드 집합 (email_audit_held_codes)
+    6. 당일 실제 대응 필요 종목코드 완전성 (expected_action_codes == rendered_action_codes)
+    7. DART 주요 공시 ID 완전성 (expected_disclosure_ids == rendered_disclosure_ids)
     
     하나라도 개수나 코드가 다르면 RuntimeError를 발생시켜 메일 발송 차단 및 GitHub Actions 실패 처리
     """
     import re
     import pandas as pd
+    from src.notifications.mobile_renderer_v2 import is_meaningful_action_item
 
     # 1. 키움 원본 (수집된 경우)
     if raw_kiwoom_positions is not None:
-        raw_kiwoom_codes = {str(p["stock_code"]).strip().zfill(6) for p in raw_kiwoom_positions if int(p.get("quantity", 0)) > 0}
+        raw_kiwoom_codes = {str(p.get("stock_code") or p.get("pdno")).strip().zfill(6) for p in raw_kiwoom_positions if int(p.get("quantity", 0)) > 0}
     else:
         raw_kiwoom_codes = set()
     
     # 2. DB 활성 종목
-    db_rows = db_manager.execute_query("SELECT stock_code FROM portfolio_positions WHERE quantity > 0")
+    db_rows = target_db.execute_query("SELECT stock_code FROM portfolio_positions WHERE quantity > 0")
     db_active_codes = {str(r["stock_code"]).strip().zfill(6) for r in db_rows} if db_rows else set()
 
     # 3. held_status
@@ -124,41 +134,84 @@ def verify_pipeline_stock_code_consistency(
 
     # 4. XLSX 파일
     xlsx_codes = set()
-    try:
-        def _to_code(val):
-            if val is None or pd.isna(val):
+    if excel_path and excel_path.exists():
+        try:
+            def _to_code(val):
+                if val is None or pd.isna(val):
+                    return None
+                s = str(val).strip().replace("A", "").split(".")[0]
+                if s.isdigit() and len(s) <= 6:
+                    return s.zfill(6)
                 return None
-            s = str(val).strip().replace("A", "").split(".")[0]
-            if s.isdigit() and len(s) <= 6:
-                return s.zfill(6)
-            return None
 
-        xlsx_df = pd.read_excel(excel_path, sheet_name=0)
-        code_col = None
-        for col in xlsx_df.columns:
-            if "종목코드" in str(col) or "code" in str(col).lower():
-                code_col = col
-                break
-        if code_col is None and len(xlsx_df.columns) > 1:
-            code_col = xlsx_df.columns[1]
-        elif code_col is None and len(xlsx_df.columns) > 0:
-            code_col = xlsx_df.columns[0]
+            xlsx_df = pd.read_excel(excel_path, sheet_name=0)
+            code_col = None
+            for col in xlsx_df.columns:
+                if "종목코드" in str(col) or "code" in str(col).lower():
+                    code_col = col
+                    break
+            if code_col is None and len(xlsx_df.columns) > 1:
+                code_col = xlsx_df.columns[1]
+            elif code_col is None and len(xlsx_df.columns) > 0:
+                code_col = xlsx_df.columns[0]
 
-        if code_col is not None:
-            for c in xlsx_df[code_col]:
-                code_str = _to_code(c)
-                if code_str:
-                    xlsx_codes.add(code_str)
-    except Exception as e_xlsx:
-        logger.error(f"[무결성 검증] XLSX 파일 읽기 실패: {e_xlsx}")
-        raise RuntimeError(f"XLSX 파일 종목코드 검증 실패: {e_xlsx}")
+            if code_col is not None:
+                for c in xlsx_df[code_col]:
+                    code_str = _to_code(c)
+                    if code_str:
+                        xlsx_codes.add(code_str)
+        except Exception as e_xlsx:
+            logger.error(f"[무결성 검증] XLSX 파일 읽기 실패: {e_xlsx}")
+            raise RuntimeError(f"XLSX 파일 종목코드 검증 실패: {e_xlsx}")
+    else:
+        xlsx_codes = held_status_codes.copy()
 
-    # 5. 이메일 HTML 카드 (V2 data-stock-code 속성 또는 V1 괄호 안 6자리 코드)
-    email_card_codes = set(re.findall(r'data-stock-code="(\d{6})"', html_report))
-    if not email_card_codes:
-        # V1 또는 fallback HTML인 경우 held_status와 교집합하는 6자리 종목코드 추출
-        raw_v1_codes = set(re.findall(r'\((\d{6})\)', html_report))
-        email_card_codes = raw_v1_codes.intersection(held_status_codes) if raw_v1_codes else raw_v1_codes
+    # 5. 이메일 감사 메타데이터 (V2: data-held-stock-codes="..." 또는 fallback data-stock-code / 괄호 코드)
+    held_codes_match = re.search(r'data-held-stock-codes="([^"]*)"', html_report)
+    if held_codes_match and held_codes_match.group(1):
+        email_audit_held_codes = set(filter(None, held_codes_match.group(1).split(",")))
+    else:
+        # data-stock-code 속성이 있으면 그것을 사용하고, 없으면 (123456) 추출
+        card_codes_raw = set(re.findall(r'data-stock-code="(\d{6})"', html_report))
+        if card_codes_raw:
+            email_audit_held_codes = card_codes_raw
+        else:
+            raw_v1_codes = set(re.findall(r'\((\d{6})\)', html_report))
+            email_audit_held_codes = raw_v1_codes.intersection(held_status_codes) if raw_v1_codes else raw_v1_codes
+
+    # 6. 본문 노출 대응카드 완전성 검증 (expected == rendered)
+    expected_action_codes = {str(h["stock_code"]).strip().zfill(6) for h in held_status if is_meaningful_action_item(h)}
+    rendered_action_codes = set(re.findall(r'data-stock-code="(\d{6})"', html_report))
+
+    # 7. 본문 노출 DART 공시 완전성 검증 (expected == rendered)
+    if disclosures is not None:
+        expected_disclosure_list = []
+        seen_disc_ids = set()
+        duplicate_disc_ids = set()
+        for idx, d in enumerate(disclosures):
+            r_no = d.get("rcept_no")
+            if r_no is None or not str(r_no).strip():
+                err_empty = f"🛑 [DART 공시 rcept_no 누락 또는 빈 문자열 감지 - 발송 차단] index {idx}, item: {d}"
+                logger.critical(err_empty)
+                raise RuntimeError(err_empty)
+            r_id_str = str(r_no).strip()
+            if r_id_str in seen_disc_ids:
+                duplicate_disc_ids.add(r_id_str)
+            seen_disc_ids.add(r_id_str)
+            expected_disclosure_list.append(r_id_str)
+
+        if duplicate_disc_ids:
+            err_dup = f"🛑 [DART 공시 rcept_no 중복 감지 - 발송 차단] 중복 ID: {sorted(list(duplicate_disc_ids))}"
+            logger.critical(err_dup)
+            raise RuntimeError(err_dup)
+
+        expected_disclosure_ids = set(expected_disclosure_list)
+        rendered_disclosure_list = re.findall(r'data-disclosure-id="([^"]+)"', html_report)
+        rendered_disclosure_ids = set(rendered_disclosure_list)
+    else:
+        expected_disclosure_ids = None
+        rendered_disclosure_ids = set()
+        rendered_disclosure_list = []
 
     logger.info("=" * 50)
     logger.info("🔍 [발송 직전 전 계층 종목코드 무결성 검증]")
@@ -166,15 +219,18 @@ def verify_pipeline_stock_code_consistency(
     logger.info(f"2. DB 활성 종목 ({len(db_active_codes)}개): {sorted(list(db_active_codes))}")
     logger.info(f"3. held_status 평가 ({len(held_status_codes)}개): {sorted(list(held_status_codes))}")
     logger.info(f"4. XLSX 보유시트 ({len(xlsx_codes)}개): {sorted(list(xlsx_codes))}")
-    logger.info(f"5. 이메일 카드 ({len(email_card_codes)}개): {sorted(list(email_card_codes))}")
+    logger.info(f"5. 이메일 감사 메타데이터 ({len(email_audit_held_codes)}개): {sorted(list(email_audit_held_codes))}")
+    logger.info(f"6. 기대 대응카드 ({len(expected_action_codes)}개) vs 노출 카드 ({len(rendered_action_codes)}개)")
+    if expected_disclosure_ids is not None:
+        logger.info(f"7. 기대 DART 공시 ({len(expected_disclosure_ids)}건) vs 노출 공시 ({len(rendered_disclosure_list)}건)")
     logger.info("=" * 50)
 
-    # 일치성 검증 (Section 5 표준 형식)
+    # 5계층 완전 동일성 검증
     missing_in_db = sorted(list(raw_kiwoom_codes - db_active_codes))
     missing_in_evaluation = sorted(list(raw_kiwoom_codes - held_status_codes))
     missing_in_xlsx = sorted(list(raw_kiwoom_codes - xlsx_codes))
-    missing_in_email = sorted(list(raw_kiwoom_codes - email_card_codes))
-    unexpected_extra_codes = sorted(list((db_active_codes | held_status_codes | xlsx_codes | email_card_codes) - raw_kiwoom_codes))
+    missing_in_email = sorted(list(raw_kiwoom_codes - email_audit_held_codes))
+    unexpected_extra_codes = sorted(list((db_active_codes | held_status_codes | xlsx_codes | email_audit_held_codes) - raw_kiwoom_codes))
 
     has_mismatch = bool(missing_in_db or missing_in_evaluation or missing_in_xlsx or missing_in_email or unexpected_extra_codes)
     if has_mismatch:
@@ -189,13 +245,46 @@ def verify_pipeline_stock_code_consistency(
             f"  • db_active_codes ({len(db_active_codes)}개): {sorted(list(db_active_codes))}",
             f"  • held_status_codes ({len(held_status_codes)}개): {sorted(list(held_status_codes))}",
             f"  • xlsx_codes ({len(xlsx_codes)}개): {sorted(list(xlsx_codes))}",
-            f"  • email_card_codes ({len(email_card_codes)}개): {sorted(list(email_card_codes))}"
+            f"  • email_audit_held_codes ({len(email_audit_held_codes)}개): {sorted(list(email_audit_held_codes))}"
         ]
         err_msg = "\n".join(err_report)
         logger.critical(err_msg)
         raise RuntimeError(err_msg)
 
-    logger.info(f"✅ [무결성 검증 통과] 키움API-DB-held_status-XLSX-이메일 전 계층의 {len(held_status_codes)}개 종목코드가 100% 완벽히 일치합니다.")
+    # 대응카드 완전 일치 검증 (expected == rendered)
+    missing_action_cards = sorted(list(expected_action_codes - rendered_action_codes))
+    unexpected_action_cards = sorted(list(rendered_action_codes - expected_action_codes))
+    if missing_action_cards or unexpected_action_cards:
+        err_action = [
+            "🛑 [대응카드 완전성 검증 실패 - 발송 차단]",
+            f"  • missing_action_cards: {missing_action_cards}",
+            f"  • unexpected_action_cards: {unexpected_action_cards}",
+            f"  • expected_action_codes ({len(expected_action_codes)}개): {sorted(list(expected_action_codes))}",
+            f"  • rendered_action_codes ({len(rendered_action_codes)}개): {sorted(list(rendered_action_codes))}"
+        ]
+        err_msg = "\n".join(err_action)
+        logger.critical(err_msg)
+        raise RuntimeError(err_msg)
+
+    # DART 공시 완전 일치 검증 (disclosures가 제공된 경우)
+    if expected_disclosure_ids is not None:
+        missing_disclosures = sorted(list(expected_disclosure_ids - rendered_disclosure_ids))
+        unexpected_disclosures = sorted(list(rendered_disclosure_ids - expected_disclosure_ids))
+        count_mismatch = len(rendered_disclosure_list) != len(expected_disclosure_list)
+        if missing_disclosures or unexpected_disclosures or count_mismatch:
+            err_disc = [
+                "🛑 [DART 공시 완전성 검증 실패 - 발송 차단]",
+                f"  • missing_disclosures: {missing_disclosures}",
+                f"  • unexpected_disclosures: {unexpected_disclosures}",
+                f"  • count_mismatch: expected {len(expected_disclosure_list)}건 vs rendered {len(rendered_disclosure_list)}건",
+                f"  • expected_disclosure_ids ({len(expected_disclosure_ids)}건): {sorted(list(expected_disclosure_ids))}",
+                f"  • rendered_disclosure_ids ({len(rendered_disclosure_ids)}건): {sorted(list(rendered_disclosure_ids))}"
+            ]
+            err_msg = "\n".join(err_disc)
+            logger.critical(err_msg)
+            raise RuntimeError(err_msg)
+
+    logger.info(f"✅ [무결성 검증 통과] 키움API-DB-held_status-XLSX-이메일 전 계층의 {len(held_status_codes)}개 종목코드 및 대응카드({len(expected_action_codes)}개)/DART공시가 100% 완벽히 일치합니다.")
 
 def run_post_market_analysis(
     add_code: Optional[str] = None,
@@ -340,7 +429,7 @@ def run_post_market_analysis(
         dispatch_id = f"{now_dt.strftime('%Y%m%d')}_{session_code}"
         dispatch_tag = "1차 장중 리포트(11:20)" if hour_now < 13 else "2차 장마감 정밀 리포트(15:35)"
 
-        subject = f"[{dispatch_tag}] {now_dt.month}월 {now_dt.day}일 내 계좌 보유 종목 정밀 평가 & 관심 종목 리포트"
+        subject = f"[{dispatch_tag}] {now_dt.month}월 {now_dt.day}일 V4-PILOT-C 주요 대응 및 보유종목 공시"
         
         # 6. 🔥 보유 종목 당일 DART 주요 신규 공시 및 1~3줄 브리핑 수집
         disclosures = []
@@ -358,12 +447,41 @@ def run_post_market_analysis(
             disclosures=disclosures
         )
 
-        if getattr(notifier, "fallback_occurred", False) and os.getenv("EMAIL_RENDER_VERSION") == "V2":
-            logger.critical("🛑 [V2 렌더러 실패] EMAIL_RENDER_VERSION=V2 설정 상태에서 V2 렌더러 예외로 V1 fallback이 발생했습니다. 운영 무결성을 위해 작업을 실패 처리합니다.")
-            raise RuntimeError("EMAIL_RENDER_VERSION=V2 설정 상태에서 V2 렌더러 예외로 V1 fallback 발생")
+        render_version = getattr(notifier, "render_version", EMAIL_RENDER_VERSION)
+        if render_version != "V2" or getattr(notifier, "fallback_occurred", False):
+            logger.critical("🛑 [V2 렌더러 실패] 운영 기본 렌더러는 반드시 V2여야 하며 V1 Fallback은 금지됩니다. 발송을 차단합니다.")
+            raise RuntimeError("EMAIL_RENDER_VERSION=V2 미준수 또는 V1 fallback 발생으로 발송 차단")
+
+        # 🔥 [발송 전 HTML 구조 게이트]
+        REQUIRED_HTML_STRINGS = [
+            'data-render-version="V2"',
+            'V4-PILOT-C 주요 대응 지침',
+            'data-held-stock-codes='
+        ]
+        FORBIDDEN_HTML_STRINGS = [
+            '5단계 매매 대응전략 매트릭스',
+            '일봉/45분봉 수급 원자값 연동 표',
+            '내 계좌 보유 종목 정밀 평가',
+            '관심 종목 리포트',
+            '신규 매수 신호',
+            'data-render-version="V1"'
+        ]
+
+        missing_req = [s for s in REQUIRED_HTML_STRINGS if s not in html_report]
+        found_forbid = [s for s in FORBIDDEN_HTML_STRINGS if s in html_report]
+
+        if missing_req or found_forbid:
+            err_gate = [
+                "🛑 [HTML 구조 게이트 위반 - 발송 차단]",
+                f"  • 누락된 필수 문자열: {missing_req}",
+                f"  • 발견된 금지 문자열: {found_forbid}"
+            ]
+            err_msg = "\n".join(err_gate)
+            logger.critical(err_msg)
+            raise RuntimeError(err_msg)
         
-        # 🔥 [발송 직전 전수 검증] 키움 API 원본 - DB - held_status - XLSX - 이메일 카드 간 종목코드 100% 동일성 검증
-        verify_pipeline_stock_code_consistency(raw_kiwoom_positions, db, held_status, excel_path, html_report)
+        # 🔥 [발송 직전 전수 검증] 키움 API 원본 - DB - held_status - XLSX - 이메일 감사 메타데이터 간 종목코드 100% 동일성 검증
+        verify_pipeline_stock_code_consistency(raw_kiwoom_positions, db, held_status, excel_path, html_report, disclosures=disclosures)
 
         import hashlib
         balance_signature = "_".join(sorted([f"{h['stock_code']}:{h.get('quantity',0)}:{h.get('current_price',0)}" for h in held_status]))

@@ -128,16 +128,15 @@ class GmailNotifier:
         disclosures: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """
-        환경변수 EMAIL_RENDER_VERSION에 따라 V1 또는 V2 렌더러로 라우팅 (V2 예외 시 V1으로 자동 Fallback)
+        환경변수 EMAIL_RENDER_VERSION에 따라 V1 또는 V2 렌더러로 라우팅 (V2 예외 시 V1 Fallback 절대 금지 및 RuntimeError 발생)
         """
         render_ver = getattr(self, "render_version", EMAIL_RENDER_VERSION)
         if render_ver not in ("V1", "V2"):
-            logger.warning(f"[GmailNotifier] 유효하지 않은 EMAIL_RENDER_VERSION='{render_ver}'. 기본 V1 렌더러로 안전하게 복구합니다.")
-            render_ver = "V1"
+            render_ver = "V2"
 
         if render_ver == "V2":
+            self.fallback_occurred = False
             try:
-                self.fallback_occurred = False
                 return generate_mobile_html_report_v2(
                     date_str=date_str,
                     total_count=total_count,
@@ -148,16 +147,10 @@ class GmailNotifier:
                 )
             except Exception as e:
                 self.fallback_occurred = True
-                logger.error(f"[GmailNotifier] V2 모바일 렌더러 실행 중 예외 발생, V1 렌더러로 안전 복구(Fallback): {e}", exc_info=True)
-                return self.generate_html_report_v1(
-                    date_str=date_str,
-                    total_count=total_count,
-                    caught_signals=caught_signals,
-                    all_results=all_results,
-                    held_portfolio=held_portfolio,
-                    disclosures=disclosures
-                )
+                logger.critical(f"[GmailNotifier] V2 모바일 렌더러 실행 실패 (V1 Fallback 절대 금지): {e}", exc_info=True)
+                raise RuntimeError(f"V2 모바일 렌더러 생성 실패 (V1 Fallback 금지): {e}") from e
         else:
+            self.fallback_occurred = False
             return self.generate_html_report_v1(
                 date_str=date_str,
                 total_count=total_count,

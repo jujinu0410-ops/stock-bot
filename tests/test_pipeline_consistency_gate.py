@@ -55,7 +55,7 @@ class TestPipelineConsistencyGate(unittest.TestCase):
     def test_01_all_layers_consistent_passes(self):
         """테스트 01: 키움-DB-held_status-XLSX-이메일 전 계층 11개 완전 일치 시 통과 검증"""
         raw_kiwoom = [{"stock_code": c, "quantity": 100} for c in self.sample_codes]
-        held_status = [{"stock_code": c, "stock_name": f"종목_{c}"} for c in self.sample_codes]
+        held_status = [{"stock_code": c, "stock_name": f"종목_{c}", "action_status": "매도"} for c in self.sample_codes]
 
         # 예외 없이 정상 통과해야 함
         verify_pipeline_stock_code_consistency(
@@ -71,7 +71,7 @@ class TestPipelineConsistencyGate(unittest.TestCase):
         raw_kiwoom = [{"stock_code": c, "quantity": 100} for c in self.sample_codes]
         # DB에서 대동(000490) 제거
         self.db.execute_non_query("DELETE FROM portfolio_positions WHERE stock_code = '000490'")
-        held_status = [{"stock_code": c, "stock_name": f"종목_{c}"} for c in self.sample_codes if c != "000490"]
+        held_status = [{"stock_code": c, "stock_name": f"종목_{c}", "action_status": "매도"} for c in self.sample_codes if c != "000490"]
         df = pd.DataFrame([{"종목코드": c} for c in self.sample_codes if c != "000490"])
         df.to_excel(self.temp_excel, index=False)
         html = "".join([f'<div data-stock-code="{c}"></div>' for c in self.sample_codes if c != "000490"])
@@ -89,7 +89,7 @@ class TestPipelineConsistencyGate(unittest.TestCase):
     def test_03_held_status_vs_xlsx_mismatch_raises(self):
         """테스트 03: held_status(11개) vs XLSX(10개) 불일치 시 RuntimeError 검증"""
         raw_kiwoom = [{"stock_code": c, "quantity": 100} for c in self.sample_codes]
-        held_status = [{"stock_code": c, "stock_name": f"종목_{c}"} for c in self.sample_codes]
+        held_status = [{"stock_code": c, "stock_name": f"종목_{c}", "action_status": "매도"} for c in self.sample_codes]
         # XLSX에서 1개 누락
         df = pd.DataFrame([{"종목코드": c} for c in self.sample_codes if c != "000490"])
         df.to_excel(self.temp_excel, index=False)
@@ -107,7 +107,7 @@ class TestPipelineConsistencyGate(unittest.TestCase):
     def test_04_held_status_vs_email_card_mismatch_raises(self):
         """테스트 04: held_status(11개) vs 이메일 카드(10개) 불일치 시 RuntimeError 검증"""
         raw_kiwoom = [{"stock_code": c, "quantity": 100} for c in self.sample_codes]
-        held_status = [{"stock_code": c, "stock_name": f"종목_{c}"} for c in self.sample_codes]
+        held_status = [{"stock_code": c, "stock_name": f"종목_{c}", "action_status": "매도"} for c in self.sample_codes]
         # 이메일 카드에서 1개 누락
         html_missing = "".join([f'<div data-stock-code="{c}"></div>' for c in self.sample_codes if c != "000490"])
 

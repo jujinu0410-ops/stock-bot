@@ -7,6 +7,7 @@
 - 필수 원천 키 누락 시 명확한 예외 발생으로 V1 안전 복구(Fallback) 유도
 """
 
+import html
 from typing import Dict, Any, List, Optional
 import re
 from src.utils.logger import logger
@@ -27,6 +28,66 @@ MANDATORY_STOCK_KEYS = [
     "order_direction",
     "quantity"
 ]
+
+def sanitize_url(url: Optional[str]) -> str:
+    """공시 링크 URL 검증: http:// 또는 https:// 로 시작하는 경우만 허용하고 그 외는 '#' 반환"""
+    if not url:
+        return "#"
+    url_str = str(url).strip()
+    if url_str.startswith("http://") or url_str.startswith("https://"):
+        return html.escape(url_str, quote=True)
+    return "#"
+
+def is_meaningful_action_item(item: Dict[str, Any]) -> bool:
+    """
+    [Section 5 V4-PILOT-C 단일 공통 대응 필요 여부 판정 함수]
+    보유 종목(held_status) 중 당일 실제 대응 또는 유의미한 변동이 발생한 종목을 선정:
+    1. 매매 상태: '매도', '손절', '축소', '보류', '미확정', '이상 급등', 'USER_OVERRIDE', '수동'
+    2. 특별 위험 모드: 'RECOVERY', 'EMERGENCY', 'HOLD', 'CONCENTRATION_RISK', 'USER_OVERRIDE', 'SUSPENDED_HOLD'
+    3. 거래정지 / 감시 플래그: 종목코드 234920(자이글), is_suspended=True, user_override_flag=True
+    4. 권고 주문 수량 발생: recommended_order_qty > 0
+    5. 일일 유의미한 변동: abs(daily_change_pct) >= max(2.5, atr_pct * 0.8)
+    """
+    if not item or not isinstance(item, dict):
+        return False
+
+    action_st = str(item.get("action_status", ""))
+    trade_mode = str(item.get("trade_mode", "NORMAL")).upper()
+    code = str(item.get("stock_code", "")).strip().zfill(6)
+
+    # 1. 매매 상태 키워드
+    if any(k in action_st for k in ("매도", "손절", "축소", "보류", "미확정", "이상 급등", "USER_OVERRIDE", "수동")):
+        return True
+
+    # 2. 특별 위험 모드
+    if trade_mode in ("RECOVERY", "EMERGENCY", "HOLD", "CONCENTRATION_RISK", "USER_OVERRIDE", "SUSPENDED_HOLD"):
+        return True
+
+    # 3. 거래정지 / 감시 플래그
+    if code == "234920" or bool(item.get("is_suspended")) or bool(item.get("user_override_flag")):
+        return True
+
+    # 4. 권고 주문 수량
+    rec_qty = item.get("recommended_order_qty", 0)
+    if isinstance(rec_qty, (int, float)) and rec_qty > 0:
+        return True
+
+    # 5. 동적 변동성 임계치: abs(daily_change_pct) >= max(2.5, atr_pct * 0.8)
+    daily_chg = item.get("daily_change_pct", 0.0)
+    atr_pct = item.get("atr_pct", 0.0)
+    try:
+        daily_chg_val = abs(float(daily_chg))
+        atr_pct_val = float(atr_pct) if atr_pct is not None else 0.0
+        threshold = max(2.5, atr_pct_val * 0.8)
+        if daily_chg_val >= threshold:
+            return True
+    except (ValueError, TypeError):
+        pass
+
+    return False
+
+# 호환성을 위한 별칭
+is_action_needed_stock = is_meaningful_action_item
 
 def format_cho_chip_v2(arr: List[Any]) -> str:
     """Chaikin Oscillator 수치를 모바일 칩 스타일로 포맷팅"""
@@ -125,7 +186,8 @@ def generate_mobile_html_report_v2(
     """
     모바일 반응형 이메일 리포트 V2 HTML 생성 함수
     - 360px ~ 430px 모바일 뷰포트에서 가로 스크롤 없이 최적 가독성 제공
-    - 필수 원천 키 검증 (누락 시 KeyError 발생으로 V1 Fallback 유도)
+    - 당일 실제 대응이 필요한 종목만 모바일 카드로 표시 (계속 보유/변화 없음 종목은 본문 카드에서 제외)
+    - 감사용 전체 보유 종목코드 집합을 data-held-stock-codes 속성에 기록
     - CSS Grid, JavaScript, 고정 min-width 테이블 배제 (이메일 클라이언트 표준 호환)
     """
     # 1. 🔥 필수 원천 키 무결성 검증 (임의 기본값 대체 금지)
@@ -135,29 +197,37 @@ def generate_mobile_html_report_v2(
                 if k not in h:
                     raise KeyError(f"[MobileRendererV2] 필수 원천 필드 누락: stock index {idx}, code: '{h.get('stock_code')}', key: '{k}'")
 
-    held_count = len(held_portfolio) if held_portfolio else 0
-    profit_count = sum(1 for h in held_portfolio if h.get("pnl_pct", 0.0) >= 0) if held_portfolio else 0
-    loss_count = sum(1 for h in held_portfolio if h.get("pnl_pct", 0.0) < 0) if held_portfolio else 0
+    all_held_codes = sorted([str(h.get("stock_code")).zfill(6) for h in held_portfolio]) if held_portfolio else []
+    all_held_codes_str = ",".join(all_held_codes)
 
     # 2. 📢 DART 주요 공시 브리핑 섹션 (모바일 카드 스타일)
-    disclosure_cards_html = ""
     if disclosures and len(disclosures) > 0:
+        seen_rcept_nos = set()
         d_items_html = ""
-        for d in disclosures:
-            s_name = d.get('stock_name', '')
-            s_code = d.get('stock_code', '')
-            r_name = d.get('report_nm', '')
-            d_link = d.get('link', '#')
-            d_sum = d.get('summary', '')
-            d_imp = d.get('impact', '')
-            d_guide = d.get('guide', '')
+        for idx, d in enumerate(disclosures):
+            r_no = d.get("rcept_no")
+            if r_no is None or not str(r_no).strip():
+                raise ValueError(f"[MobileRendererV2] DART 공시 rcept_no 누락 또는 빈 문자열: index {idx}, item {d}")
+            r_id_str = str(r_no).strip()
+            if r_id_str in seen_rcept_nos:
+                raise ValueError(f"[MobileRendererV2] DART 공시 rcept_no 중복 감지: '{r_id_str}'")
+            seen_rcept_nos.add(r_id_str)
+
+            s_name = html.escape(str(d.get('stock_name', '')))
+            s_code = html.escape(str(d.get('stock_code', '')).zfill(6))
+            r_name = html.escape(str(d.get('report_nm', '')))
+            r_id = html.escape(r_id_str)
+            d_link = sanitize_url(d.get('link'))
+            d_sum = html.escape(str(d.get('summary', '')))
+            d_imp = html.escape(str(d.get('impact', '')))
+            d_guide = html.escape(str(d.get('guide', '')))
 
             d_items_html += f"""
-            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:6px; padding:10px; margin-bottom:8px;">
-                <div style="font-size:12px; font-weight:bold; color:#0F172A; margin-bottom:4px; word-break:break-word;">
-                    📌 <span style="color:#1E3A8A;">{s_name} ({s_code})</span> - <a href="{d_link}" target="_blank" style="color:#2563EB; text-decoration:underline;">{r_name}</a>
+            <div data-disclosure-id="{r_id}" data-disclosure-code="{s_code}" style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:6px; padding:10px; margin-bottom:8px; box-sizing:border-box; width:100%; min-width:0; word-break:break-word; overflow-wrap:anywhere;">
+                <div style="font-size:12px; font-weight:bold; color:#0F172A; margin-bottom:4px; word-break:break-word; overflow-wrap:anywhere;">
+                    📌 <span style="color:#1E3A8A;">{s_name} ({s_code})</span> - <a href="{d_link}" target="_blank" style="color:#2563EB; text-decoration:underline; word-break:break-word; overflow-wrap:anywhere;">{r_name}</a>
                 </div>
-                <div style="font-size:11px; color:#334155; line-height:1.5;">
+                <div style="font-size:11px; color:#334155; line-height:1.5; word-break:break-word; overflow-wrap:anywhere;">
                     <div style="margin-bottom:2px;">• <b>공시요약</b>: {d_sum}</div>
                     <div style="margin-bottom:2px;">• <b>시장의미</b>: {d_imp}</div>
                     <div>• <b>대응가이드</b>: {d_guide}</div>
@@ -165,50 +235,30 @@ def generate_mobile_html_report_v2(
             </div>
             """
 
-        disclosure_cards_html = f"""
-        <div style="background:#F8FAFC; border:1px solid #CBD5E1; border-left:4px solid #2563EB; border-radius:8px; padding:12px 10px; margin-bottom:16px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid #E2E8F0; padding-bottom:4px;">
-                <span style="font-size:13px; color:#1E3A8A; font-weight:bold;">📢 DART 주요 공시 & 브리핑 ({len(disclosures)}건)</span>
-                <span style="font-size:10px; color:#64748B;">원문 이동 링크 포함</span>
+        disclosure_section_html = f"""
+        <div style="background:#F8FAFC; border:1px solid #CBD5E1; border-left:4px solid #2563EB; border-radius:8px; padding:12px 10px; margin-bottom:16px; box-sizing:border-box; width:100%;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid #E2E8F0; padding-bottom:4px; min-width:0; box-sizing:border-box;">
+                <span style="font-size:13px; color:#1E3A8A; font-weight:bold; overflow-wrap:anywhere;">📢 DART 주요 공시 & 브리핑 ({len(disclosures)}건)</span>
+                <span style="font-size:10px; color:#64748B; flex-shrink:0;">원문 링크 포함</span>
             </div>
             {d_items_html}
         </div>
         """
+    else:
+        disclosure_section_html = """
+        <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:10px 12px; margin-bottom:16px; font-size:11px; color:#475569;">
+            📢 <b>보유종목 DART 공시</b>: 오늘 확인된 주요 신규 공시 없음
+        </div>
+        """
 
-    # 3. 💼 내 계좌 보유 종목 모바일 카드 리스트 생성
-    stock_cards_html = ""
-    total_eval_inv = 0
-    total_eval_val = 0
-    total_pnl_amt = 0
-    total_pnl_pct = 0.0
-    pnl_color_total = "#10B981"
-    pnl_sign_total = ""
+    # 3. 💼 대응 필요 종목 모바일 카드 리스트 생성 (계속 보유/변화 없음 종목 제외)
+    actionable_cards_html = ""
+    actionable_held = [h for h in held_portfolio if is_meaningful_action_item(h)] if held_portfolio else []
 
-    if held_portfolio:
-        def _get_sort_priority(item):
-            action_st = item.get("action_status", "")
-            trade_mode = item.get("trade_mode", "NORMAL")
-            needs_action = (
-                trade_mode in ("RECOVERY", "EMERGENCY", "HOLD") or
-                "매도" in action_st or "손절" in action_st or "축소" in action_st or 
-                "보류" in action_st or "미확정" in action_st or "이상 급등" in action_st
-            )
-            return (0 if needs_action else 1, item.get("final_score", 0.0))
-
-        held_sorted = sorted(held_portfolio, key=_get_sort_priority)
-
-        total_eval_inv = sum(h.get("total_invested", 0) for h in held_portfolio)
-        total_eval_val = sum(h.get("eval_amount", 0) for h in held_portfolio)
-        total_pnl_amt = total_eval_val - total_eval_inv
-        total_pnl_pct = round((total_pnl_amt / total_eval_inv) * 100.0, 2) if total_eval_inv > 0 else 0.0
-        pnl_color_total = "#10B981" if total_pnl_amt >= 0 else "#EF4444"
-        pnl_sign_total = "+" if total_pnl_amt >= 0 else ""
-        total_pnl_amt_disp = format_krw(total_pnl_amt)
-        total_pnl_amt_str = f"+{total_pnl_amt_disp}" if (isinstance(total_pnl_amt, (int, float)) and total_pnl_amt > 0) else total_pnl_amt_disp
-
-        for h in held_sorted:
-            code = str(h.get("stock_code")).zfill(6)
-            name = str(h.get("stock_name"))
+    if actionable_held:
+        for h in actionable_held:
+            code = html.escape(str(h.get("stock_code")).zfill(6))
+            name = html.escape(str(h.get("stock_name")))
             cur_price = h.get("current_price")
             daily_chg = h.get("daily_change_pct", 0.0)
             pnl_pct = h.get("pnl_pct", 0.0)
@@ -220,7 +270,6 @@ def generate_mobile_html_report_v2(
             trade_mode = h.get("trade_mode", "NORMAL")
             is_etf = h.get("is_etf", False)
             f_confirmed = h.get("f_score_confirmed", True)
-            data_comp = h.get("data_completeness", 100.0)
 
             # 가격/수량 원천 필드 로딩
             k_stop = h.get("kiwoom_stop_tick_price")
@@ -314,19 +363,19 @@ def generate_mobile_html_report_v2(
             pnl_amt_disp = format_krw(pnl_amt)
             pnl_amt_str = f"+{pnl_amt_disp}" if (isinstance(pnl_amt, (int, float)) and pnl_amt > 0) else pnl_amt_disp
 
-            stock_cards_html += f"""
-            <div data-stock-code="{code}" data-trade-mode="{trade_mode}" style="background:#FFFFFF; border:1px solid #E2E8F0; border-left:4px solid {left_border}; border-radius:8px; padding:12px; margin-bottom:12px; box-shadow:0 1px 4px rgba(0,0,0,0.03);">
+            actionable_cards_html += f"""
+            <div data-stock-code="{code}" data-trade-mode="{trade_mode}" style="background:#FFFFFF; border:1px solid #E2E8F0; border-left:4px solid {left_border}; border-radius:8px; padding:12px; margin-bottom:12px; box-shadow:0 1px 4px rgba(0,0,0,0.03); box-sizing:border-box; width:100%; min-width:0; word-break:break-word; overflow-wrap:anywhere;">
                 <!-- 1. 카드 헤더 (종목명/코드 + 전략배지 + 현재가/등락률) -->
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; border-bottom:1px solid #F1F5F9; padding-bottom:6px;">
-                    <div style="max-width:65%;">
-                        <div style="font-size:14px; font-weight:bold; color:#0F172A; word-break:break-word; line-height:1.25;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; border-bottom:1px solid #F1F5F9; padding-bottom:6px; box-sizing:border-box; width:100%; min-width:0;">
+                    <div style="max-width:62%; min-width:0; word-break:break-word; overflow-wrap:anywhere;">
+                        <div style="font-size:14px; font-weight:bold; color:#0F172A; word-break:break-word; overflow-wrap:anywhere; line-height:1.25;">
                             {name} <span style="font-size:11px; color:#64748B; font-weight:normal;">({code})</span>
                         </div>
-                        <div style="margin-top:3px;">
+                        <div style="margin-top:3px; overflow-wrap:anywhere; word-break:break-word;">
                             {strategy_badge}
                         </div>
                     </div>
-                    <div style="text-align:right;">
+                    <div style="text-align:right; min-width:0; flex-shrink:0;">
                         <div style="font-size:14px; font-weight:bold; color:{price_color};">
                             {cur_price_disp}
                         </div>
@@ -337,47 +386,53 @@ def generate_mobile_html_report_v2(
                 </div>
 
                 <!-- 2. 평가손익 & 종합점수 바 -->
-                <div style="background:#F8FAFC; border:1px solid #EEF2F6; border-radius:6px; padding:6px 8px; margin-bottom:8px; font-size:11px; display:flex; justify-content:space-between; align-items:center;">
-                    <div>
+                <div style="background:#F8FAFC; border:1px solid #EEF2F6; border-radius:6px; padding:6px 8px; margin-bottom:8px; font-size:11px; display:flex; justify-content:space-between; align-items:center; box-sizing:border-box; width:100%; min-width:0;">
+                    <div style="min-width:0; overflow-wrap:anywhere;">
                         <span style="color:#64748B;">종합:</span> {score_display}
                     </div>
-                    <div>
+                    <div style="min-width:0; flex-shrink:0; text-align:right;">
                         <span style="color:#64748B;">손익:</span> <b style="color:{pnl_color};">{pnl_sign}{pnl_pct:.2f}%</b> <span style="font-size:10px; color:{pnl_color};">({pnl_amt_str})</span>
                     </div>
                 </div>
 
                 <!-- 3. 핵심 가격/수량 2x2 그리드 테이블 (표 가로스크롤 없는 100% 폭) -->
-                <table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:8px; background:#FAFAFA; border-radius:6px; border:1px solid #F1F5F9;">
+                <table style="width:100%; table-layout:fixed; border-collapse:collapse; font-size:11px; margin-bottom:8px; background:#FAFAFA; border-radius:6px; border:1px solid #F1F5F9; box-sizing:border-box;">
                     <tr>
-                        <td style="padding:5px 6px; width:50%; border-right:1px solid #F1F5F9; border-bottom:1px solid #F1F5F9;">
+                        <td style="padding:5px 6px; width:50%; border-right:1px solid #F1F5F9; border-bottom:1px solid #F1F5F9; overflow-wrap:anywhere; word-break:break-word; box-sizing:border-box;">
                             <span style="color:#64748B; font-size:10px;">목표가:</span> <b style="color:#059669;">{target_disp}</b>
                         </td>
-                        <td style="padding:5px 6px; width:50%; border-bottom:1px solid #F1F5F9;">
+                        <td style="padding:5px 6px; width:50%; border-bottom:1px solid #F1F5F9; overflow-wrap:anywhere; word-break:break-word; box-sizing:border-box;">
                             <span style="color:#64748B; font-size:10px;">손절선:</span> <b style="color:#DC2626;">{stop_disp}</b>
                         </td>
                     </tr>
                     <tr>
-                        <td style="padding:5px 6px; border-right:1px solid #F1F5F9;">
+                        <td style="padding:5px 6px; border-right:1px solid #F1F5F9; overflow-wrap:anywhere; word-break:break-word; box-sizing:border-box;">
                             <span style="color:#64748B; font-size:10px;">트레일링:</span> <span style="color:#334155; font-size:10.5px;">{trail_disp}</span>
                         </td>
-                        <td style="padding:5px 6px;">
+                        <td style="padding:5px 6px; overflow-wrap:anywhere; word-break:break-word; box-sizing:border-box;">
                             <span style="color:#64748B; font-size:10px;">14일 ATR:</span> <span style="color:#D97706; font-weight:bold; font-size:10.5px;">{atr_disp}</span>
                         </td>
                     </tr>
                 </table>
 
                 <!-- 4. 포지션 사이징 및 권고 주문 수량 -->
-                <div style="background:#F0FDF4; border:1px solid #DCFCE7; border-radius:5px; padding:6px 8px; margin-bottom:8px; font-size:11px; color:#166534; line-height:1.4;">
+                <div style="background:#F0FDF4; border:1px solid #DCFCE7; border-radius:5px; padding:6px 8px; margin-bottom:8px; font-size:11px; color:#166534; line-height:1.4; box-sizing:border-box; width:100%; word-break:break-word; overflow-wrap:anywhere;">
                     {sizing_disp}
                 </div>
 
                 <!-- 5. 45분봉 및 일봉 수급 지표 칩 바 -->
-                <div style="font-size:10.5px; color:#475569; line-height:1.45; background:#F8FAFC; padding:5px 8px; border-radius:5px;">
-                    <div style="margin-bottom:2px;">• 수급: {obv_chip} | {adx_chip}</div>
-                    <div>• CHO: {cho_chip}</div>
+                <div style="font-size:10.5px; color:#475569; line-height:1.45; background:#F8FAFC; padding:5px 8px; border-radius:5px; box-sizing:border-box; width:100%; word-break:break-word; overflow-wrap:anywhere;">
+                    <div style="margin-bottom:2px; word-break:break-word; overflow-wrap:anywhere;">• 수급: {obv_chip} | {adx_chip}</div>
+                    <div style="word-break:break-word; overflow-wrap:anywhere;">• CHO: {cho_chip}</div>
                 </div>
             </div>
             """
+    else:
+        actionable_cards_html = """
+        <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px; padding:14px; text-align:center; font-size:12px; color:#64748B; margin-bottom:12px; box-sizing:border-box; width:100%;">
+            오늘 특별 대응이 필요한 보유종목 없음 (전 종목 정상 감시 유지)
+        </div>
+        """
 
     # 4. 📱 전체 모바일 반응형 HTML 컨테이너 래퍼 조립
     mobile_html_template = f"""<!DOCTYPE html>
@@ -385,15 +440,20 @@ def generate_mobile_html_report_v2(
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>내 계좌 보유종목 정밀평가 모바일 리포트</title>
+    <title>V4-PILOT-C 주요 대응 및 공시 리포트</title>
     <style>
-        body {{
+        *, *:before, *:after {{
+            box-sizing: border-box;
+            -webkit-box-sizing: border-box;
+        }}
+        html, body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
             background-color: #F1F5F9;
             margin: 0;
             padding: 0;
             color: #0F172A;
             -webkit-text-size-adjust: 100%;
+            width: 100%;
         }}
         .mobile-wrapper {{
             width: 100%;
@@ -407,9 +467,23 @@ def generate_mobile_html_report_v2(
             color: #FFFFFF;
             padding: 16px 12px;
             text-align: left;
+            box-sizing: border-box;
+            width: 100%;
         }}
         .content-body {{
             padding: 10px 8px;
+            box-sizing: border-box;
+            width: 100%;
+        }}
+        table {{
+            table-layout: fixed;
+            width: 100%;
+            box-sizing: border-box;
+        }}
+        td, th {{
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            box-sizing: border-box;
         }}
         @media only screen and (max-width: 480px) {{
             .content-body {{
@@ -422,41 +496,30 @@ def generate_mobile_html_report_v2(
     </style>
 </head>
 <body>
-    <div class="mobile-wrapper" data-render-version="V2">
+    <div class="mobile-wrapper" data-render-version="V2" data-held-stock-codes="{all_held_codes_str}">
         <!-- 상단 헤더 -->
         <div class="header-bar">
             <div style="font-size:10px; letter-spacing:1px; color:#93C5FD; font-weight:bold; margin-bottom:2px;">KIWOOM REST & DART INTEGRATED V4</div>
-            <div style="font-size:16px; font-weight:bold; color:#FFFFFF; margin-bottom:2px;">📱 내 종목 모바일 정밀평가 리포트</div>
+            <div style="font-size:16px; font-weight:bold; color:#FFFFFF; margin-bottom:2px;">📋 V4-PILOT-C 주요 대응 및 보유종목 공시</div>
             <div style="font-size:11px; color:#94A3B8;">기준일시: {date_str}</div>
         </div>
 
         <div class="content-body">
-            <!-- 계좌 요약 카드 -->
-            <div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:10px 12px; margin-bottom:12px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <span style="font-size:12px; color:#475569; font-weight:bold;">💼 보유 포트폴리오 요약</span>
-                    <span style="font-size:12px; font-weight:bold; color:{pnl_color_total};">총 손익: {pnl_sign_total}{total_pnl_pct:.2f}% ({total_pnl_amt_str})</span>
-                </div>
-                <div style="display:flex; justify-content:space-around; text-align:center; font-size:11px; border-top:1px solid #E2E8F0; padding-top:6px;">
-                    <div>보유: <b>{held_count}종목</b></div>
-                    <div>수익: <b style="color:#10B981;">{profit_count}개</b></div>
-                    <div>손실: <b style="color:#EF4444;">{loss_count}개</b></div>
-                </div>
-            </div>
-
-            <!-- V4-PILOT-C 주요 대응 지침 -->
-            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-left:4px solid #475569; border-radius:6px; padding:8px 10px; margin-bottom:12px; font-size:10.5px; color:#334155; line-height:1.45;">
+            <!-- V4-PILOT-C 주요 대응 지침 안내 -->
+            <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-left:4px solid #475569; border-radius:6px; padding:8px 10px; margin-bottom:12px; font-size:10.5px; color:#334155; line-height:1.45; box-sizing:border-box; width:100%;">
                 <div style="font-weight:bold; color:#0F172A; margin-bottom:3px;">📋 V4-PILOT-C 주요 대응 지침</div>
                 <div>• <b>손절선/익절선</b>: 키움 호가 단위 적용 실시간 감시 (래칫 손절 상향 보존)</div>
                 <div>• <b>비중 20% 초과</b>: 20% 초과 수량 우선 분할 축소 권고 집행</div>
+                <div>• <b>표시 기준</b>: 당일 실제 대응·변화가 발생한 종목만 표시하며, 계속 보유/변화 없음 종목은 생략합니다.</div>
             </div>
 
-            <!-- 보유 종목 카드 리스트 -->
-            {stock_cards_html}
+            <!-- 대응 필요 종목 모바일 카드 리스트 -->
+            {actionable_cards_html}
 
             <!-- DART 주요 공시 & 브리핑 -->
-            {disclosure_cards_html}
+            {disclosure_section_html}
 
+            <!-- 짧은 고지문 -->
             <div style="text-align:center; font-size:10px; color:#94A3B8; padding:12px 0 16px 0;">
                 ※ 본 리포트는 V4-PILOT-C 위험관리 엔진 기준값이며 실제 주문은 사용자의 확인 하에 집행됩니다.
             </div>

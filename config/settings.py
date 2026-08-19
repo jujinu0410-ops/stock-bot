@@ -36,10 +36,10 @@ GMAIL_USER = os.getenv("GMAIL_USER") or os.getenv("GMAIL_SENDER_EMAIL") or _env_
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD") or _env_vars.get("GMAIL_APP_PASSWORD") or _env_vars.get("GMAIL_PASSWORD")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_GMAIL") or os.getenv("GMAIL_SENDER_EMAIL") or os.getenv("GMAIL_USER") or _env_vars.get("RECIPIENT_GMAIL") or GMAIL_USER
 
-# EMAIL RENDERER CONFIG (V1: 기본 매트릭스 표, V2: 모바일 최적화 반응형 카드 UI)
-_raw_render_ver = (os.getenv("EMAIL_RENDER_VERSION") or _env_vars.get("EMAIL_RENDER_VERSION") or "V1").strip().upper()
+# EMAIL RENDERER CONFIG (V1: 기본 매트릭스 표, V2: 모바일 최적화 반응형 카드 UI - 운영 기본값 V2)
+_raw_render_ver = (os.getenv("EMAIL_RENDER_VERSION") or _env_vars.get("EMAIL_RENDER_VERSION") or "V2").strip().upper()
 if _raw_render_ver not in ("V1", "V2"):
-    EMAIL_RENDER_VERSION = "V1"
+    EMAIL_RENDER_VERSION = "V2"
 else:
     EMAIL_RENDER_VERSION = _raw_render_ver
 

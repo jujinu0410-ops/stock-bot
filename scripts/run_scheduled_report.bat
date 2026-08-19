@@ -20,6 +20,7 @@ if not defined TIMESTAMP set TIMESTAMP=UNKNOWN
 
 set LOG_FILE=logs\scheduled_run_%TIMESTAMP%.log
 set PYTHONUNBUFFERED=1
+set EMAIL_RENDER_VERSION=V2
 
 echo ================================================== >> "%LOG_FILE%"
 echo [Windows Task Scheduler] 정기 리포트 실행 시작: %date% %time% >> "%LOG_FILE%"

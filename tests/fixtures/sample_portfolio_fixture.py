@@ -401,3 +401,46 @@ FIXTURE_RECOVERY = [SAMPLE_HELD_PORTFOLIO[2]]
 FIXTURE_ETF = [SAMPLE_HELD_PORTFOLIO[3]]
 FIXTURE_SUSPENDED_HOLD = [SAMPLE_HELD_PORTFOLIO[5]]
 FIXTURE_USER_OVERRIDE = [SAMPLE_HELD_PORTFOLIO[8]]
+
+# 2026-08-19 267260(HD현대일렉트릭) 전량매도 후 10종목 실제 보유 현황 Fixture (000490 포함, 267260 제외)
+DAEDONG_ITEM = {
+    "stock_code": "000490",
+    "stock_name": "대동",
+    "current_price": 8050,
+    "daily_change_pct": -0.81,
+    "pnl_pct": -0.81,
+    "pnl_amount": -163350,
+    "f_score": 60.0,
+    "t_score": 55.0,
+    "final_score": 57.5,
+    "f_score_confirmed": True,
+    "is_etf": False,
+    "data_completeness": 100.0,
+    "kiwoom_stop_tick_price": 7600,
+    "kiwoom_target_tick_price": 9200,
+    "profit_trail_delta": 0,
+    "current_completed_atr": 280,
+    "atr_14": 280,
+    "atr_pct": 3.4,
+    "trade_mode": "NORMAL",
+    "action_status": "🟢 계속 보유/홀딩",
+    "quantity": 2475,
+    "recommended_order_qty": 0,
+    "order_direction": "보유",
+    "risk_target_qty": 2475,
+    "weight_excess_qty": 0,
+    "obv_dead_date": "N/A",
+    "obv_dead_elapsed_days": 0,
+    "is_obv_dead": False,
+    "daily_cho_recent2": [500, 700],
+    "intraday_cho_recent2": [100, 200],
+    "adx_di_dominance": "+DI우세",
+    "adx_14_45m": 28.0,
+    "total_invested": 20087100,
+    "eval_amount": 19923750
+}
+
+# 10종목 현재 보유 포트폴리오 (대동 000490 포함, HD현대일렉트릭 267260 제외)
+SAMPLE_HELD_PORTFOLIO_10_CURRENT = [DAEDONG_ITEM] + [
+    item for item in SAMPLE_HELD_PORTFOLIO if item["stock_code"] != "267260"
+]

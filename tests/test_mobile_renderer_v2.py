@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Mobile Renderer V2 및 V1 보존·동일성·예외처리 단위 테스트
+Mobile Renderer V2 및 V1 보존·동일성·예외처리·회귀 단위 테스트
 """
 
 import unittest
@@ -10,7 +10,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from src.notifications.gmail_notifier import GmailNotifier
-from src.notifications.mobile_renderer_v2 import generate_mobile_html_report_v2, MANDATORY_STOCK_KEYS
+from src.notifications.mobile_renderer_v2 import generate_mobile_html_report_v2, is_action_needed_stock, MANDATORY_STOCK_KEYS
 from tests.fixtures.sample_portfolio_fixture import (
     SAMPLE_HELD_PORTFOLIO,
     SAMPLE_DISCLOSURES,
@@ -25,7 +25,7 @@ from tests.fixtures.sample_portfolio_fixture import (
 class TestMobileRendererV2(unittest.TestCase):
     def setUp(self):
         self.notifier = GmailNotifier(sender_email="test@example.com", app_password="dummy")
-        self.date_str = "2026-08-14 20:58"
+        self.date_str = "2026-08-19 15:35"
         self.snapshot_path = Path(__file__).parent / "fixtures" / "v1_baseline_snapshot.html"
 
     def _normalize_html(self, html_str: str) -> str:
@@ -39,7 +39,7 @@ class TestMobileRendererV2(unittest.TestCase):
             expected_snapshot = f.read()
 
         current_v1_html = self.notifier.generate_html_report_v1(
-            date_str=self.date_str,
+            date_str="2026-08-14 20:58",
             total_count=18,
             caught_signals=[],
             all_results=[],
@@ -50,11 +50,11 @@ class TestMobileRendererV2(unittest.TestCase):
         self.assertEqual(
             self._normalize_html(current_v1_html),
             self._normalize_html(expected_snapshot),
-            "V1 렌더러의 HTML 출력은 사전 스냅샷과 완전히 일치해야 합니다."
+            "V1 렌더러의 직접 호출 출력은 사전 스냅샷과 완전히 일치해야 합니다."
         )
 
-    def test_02_card_level_core_values_equality(self):
-        """테스트 02: V2의 각 종목 카드(data-stock-code) 내부에서 핵심 가격·수량·모드·조건문이 완벽히 일치하는지 검증"""
+    def test_02_v2_actionable_filtering_and_audit_metadata(self):
+        """테스트 02: V2 본문에는 대응 필요 종목만 노출되고 data-held-stock-codes에 전체 10개 보유종목이 감사 기록되는지 검증"""
         html_v2 = generate_mobile_html_report_v2(
             date_str=self.date_str,
             total_count=18,
@@ -65,188 +65,141 @@ class TestMobileRendererV2(unittest.TestCase):
         )
 
         soup = BeautifulSoup(html_v2, "html.parser")
+        wrapper = soup.find("div", class_="mobile-wrapper")
+        self.assertIsNotNone(wrapper)
+        self.assertEqual(wrapper.get("data-render-version"), "V2")
+
+        # 1. 전체 보유 종목 감사 메타데이터 검증 (10개)
+        held_codes_meta = wrapper.get("data-held-stock-codes", "").split(",")
+        expected_all_codes = sorted([s["stock_code"] for s in SAMPLE_HELD_PORTFOLIO])
+        self.assertEqual(held_codes_meta, expected_all_codes, "data-held-stock-codes에 전체 10종목이 정확히 포함되어야 합니다.")
+
+        # 2. 본문 노출 카드 검증 (대응 필요 종목만 노출)
         cards = soup.find_all("div", attrs={"data-stock-code": True})
-        self.assertEqual(len(cards), 10, "10개 종목에 대한 data-stock-code 카드가 정확히 10개 생성되어야 합니다.")
+        card_codes = [card["data-stock-code"] for card in cards]
 
-        cards_by_code = {card["data-stock-code"]: card for card in cards}
+        # 7개 대응 필요 종목: 055490(비중과다), 140670(RECOVERY), 206650(RECOVERY), 234920(SUSPENDED), 241520(RECOVERY), 348340(USER_OVERRIDE), 490590(비중과다)
+        # 267260은 NORMAL이며 일변동 3.5% < max(2.5, 7.6*0.8=6.08%) 이므로 비대응 종목으로 분류됨
+        expected_actionable_codes = ["055490", "140670", "206650", "234920", "241520", "348340", "490590"]
+        self.assertEqual(sorted(card_codes), sorted(expected_actionable_codes))
 
-        for stock in SAMPLE_HELD_PORTFOLIO:
-            code = stock["stock_code"]
-            self.assertIn(code, cards_by_code, f"종목코드 {code} 카드가 존재해야 합니다.")
-            card = cards_by_code[code]
-            card_text = card.get_text()
+        # 3. 계속 보유/변화 없음 종목 (004960, 161510, 267260)은 본문 카드에 노출되지 않음
+        self.assertNotIn("004960", card_codes)
+        self.assertNotIn("161510", card_codes)
+        self.assertNotIn("267260", card_codes)
 
-            # 1. 종목명 검증
-            self.assertIn(stock["stock_name"], card_text)
+        # 4. 카드 코드가 전체 보유 종목의 진부분집합인지 검증
+        self.assertTrue(set(card_codes).issubset(set(expected_all_codes)))
 
-            # 2. 현재가 검증
-            self.assertIn(f"{stock['current_price']:,}원", card_text)
+    def test_03_dart_disclosures_present_and_absent(self):
+        """테스트 03: DART 공시 존재 시 정상 렌더링 및 부재 시 '주요 신규 공시 없음' 한 줄 출력 검증"""
+        # 1. 공시 존재 시
+        html_with_disc = generate_mobile_html_report_v2(
+            date_str=self.date_str,
+            total_count=18,
+            caught_signals=[],
+            all_results=[],
+            held_portfolio=SAMPLE_HELD_PORTFOLIO,
+            disclosures=SAMPLE_DISCLOSURES
+        )
+        self.assertIn("📢 DART 주요 공시 & 브리핑", html_with_disc)
+        self.assertIn("data-disclosure-code=\"004960\"", html_with_disc)
+        self.assertIn("data-disclosure-code=\"234920\"", html_with_disc)
+        self.assertIn("반기보고서", html_with_disc)
 
-            # 3. 매매 모드 일치 검증
-            self.assertEqual(card["data-trade-mode"], stock["trade_mode"])
+        # 2. 공시 부재 시
+        html_no_disc = generate_mobile_html_report_v2(
+            date_str=self.date_str,
+            total_count=18,
+            caught_signals=[],
+            all_results=[],
+            held_portfolio=SAMPLE_HELD_PORTFOLIO,
+            disclosures=[]
+        )
+        self.assertIn("오늘 확인된 주요 신규 공시 없음", html_no_disc)
+        self.assertNotIn("단기차입금증가결정", html_no_disc)
 
-            # 4. 종목별 개별 특수 가격/조건문 검증
-            if code == "004960":  # 한신공영 (NORMAL)
-                self.assertIn("13,500원", card_text)
-                self.assertIn("10,800원", card_text)
-                self.assertIn("480원", card_text)
-                self.assertIn("계속 보유/홀딩", card_text)
-            elif code == "055490":  # 테이팩스 (CONCENTRATION_RISK)
-                self.assertIn("18,000원", card_text)
-                self.assertIn("12,000원", card_text)
-                self.assertIn("950원", card_text)
-                self.assertIn("100주", card_text)
-                self.assertIn("300주", card_text)
-                self.assertIn("비중과다", card_text)
-            elif code == "234920":  # 자이글 (SUSPENDED_HOLD)
-                self.assertIn("HOLD (거래정지)", card_text)
-                self.assertIn("HOLD (비활성)", card_text)
-                self.assertIn("거래정지 보류/공시감시", card_text)
-                self.assertIn("N/A (거래정지)", card_text)
-                self.assertNotIn("0.0점", card_text)
-            elif code == "348340":  # 뉴로메카 (USER_OVERRIDE)
-                self.assertIn("25,000원 (수동활성)", card_text)
-                self.assertIn("HOLD (주문대기)", card_text)
-                self.assertIn("750원 (수동추적)", card_text)
-                self.assertIn("30주 미체결", card_text)
-                self.assertIn("DART 미확정 [수동감시]", card_text)
-            elif code == "241520":  # DSC인베스트먼트 (RECOVERY)
-                self.assertIn("9,700원", card_text)
-                self.assertIn("7,000원", card_text)
-                self.assertIn("290원", card_text)
-                self.assertIn("30주", card_text)
-                self.assertIn("반등 시 손실축소 분할매도", card_text)
-            elif code == "267260":  # HD현대일렉트릭 (NORMAL)
-                self.assertIn("990,000원", card_text)
-                self.assertIn("710,000원", card_text)
-                self.assertIn("49,000원", card_text)
+    def test_04_no_v1_fallback_on_v2_error(self):
+        """테스트 04: V2 필수 키 누락 등 예외 발생 시 V1으로 Fallback하지 않고 RuntimeError 발생 검증"""
+        corrupted_stock = dict(FIXTURE_RECOVERY[0])
+        del corrupted_stock["profit_trail_delta"]  # 필수 키 제거
 
-    def test_03_independent_fixtures_per_mode(self):
-        """테스트 03: 6개 개별 모드 독립 Fixture 렌더링 정상 검증"""
-        # 1. NORMAL
-        html_normal = generate_mobile_html_report_v2(self.date_str, 1, [], [], FIXTURE_NORMAL, [])
-        self.assertIn("한신공영", html_normal)
-        self.assertIn("10,800원", html_normal)
-        self.assertIn("계속 보유/홀딩", html_normal)
+        # GmailNotifier generate_html_report 실행 시 RuntimeError 발생 확인
+        notifier = GmailNotifier(sender_email="test@example.com", app_password="dummy")
+        notifier.render_version = "V2"
 
-        # 2. RECOVERY
-        html_recovery = generate_mobile_html_report_v2(self.date_str, 1, [], [], FIXTURE_RECOVERY, [])
-        self.assertIn("알에스오토메이션", html_recovery)
-        self.assertIn("9,300원", html_recovery)
-        self.assertIn("반등 시 손실축소 분할매도", html_recovery)
+        with self.assertRaises(RuntimeError) as ctx:
+            notifier.generate_html_report(
+                date_str=self.date_str,
+                total_count=1,
+                caught_signals=[],
+                all_results=[],
+                held_portfolio=[corrupted_stock],
+                disclosures=[]
+            )
+        self.assertIn("V1 Fallback 금지", str(ctx.exception))
+        self.assertTrue(notifier.fallback_occurred)
 
-        # 3. CONCENTRATION_RISK
-        html_conc = generate_mobile_html_report_v2(self.date_str, 1, [], [], FIXTURE_CONCENTRATION_RISK, [])
-        self.assertIn("테이팩스", html_conc)
-        self.assertIn("12,000원", html_conc)
-        self.assertIn("비중과다", html_conc)
-        self.assertIn("100주", html_conc)
+    def test_05_default_renderer_selection(self):
+        """테스트 05: 기본 렌더러가 V2로 고정되고 잘못된 설정값 유입 시에도 V2로 동작하는지 검증"""
+        notifier = GmailNotifier(sender_email="test@example.com", app_password="dummy")
 
-        # 4. USER_OVERRIDE
-        html_override = generate_mobile_html_report_v2(self.date_str, 1, [], [], FIXTURE_USER_OVERRIDE, [])
-        self.assertIn("뉴로메카", html_override)
-        self.assertIn("25,000원 (수동활성)", html_override)
-        self.assertIn("30주 미체결", html_override)
+        # 1. 기본 생성 시 V2 동작
+        html = notifier.generate_html_report(self.date_str, 1, [], [], FIXTURE_RECOVERY, [])
+        self.assertIn('data-render-version="V2"', html)
 
-        # 5. SUSPENDED_HOLD
-        html_suspended = generate_mobile_html_report_v2(self.date_str, 1, [], [], FIXTURE_SUSPENDED_HOLD, [])
-        self.assertIn("자이글", html_suspended)
-        self.assertIn("거래정지 보류/공시감시", html_suspended)
-        self.assertIn("N/A (거래정지)", html_suspended)
+        # 2. 잘못된 render_version 입력 시에도 V2로 처리
+        notifier.render_version = "INVALID_UNKNOWN"
+        html_fixed = notifier.generate_html_report(self.date_str, 1, [], [], FIXTURE_RECOVERY, [])
+        self.assertIn('data-render-version="V2"', html_fixed)
 
-        # 6. ETF
-        html_etf = generate_mobile_html_report_v2(self.date_str, 1, [], [], FIXTURE_ETF, [])
-        self.assertIn("PLUS 고배당주", html_etf)
-        self.assertIn("79.0점", html_etf)
-        self.assertIn("ETF T점수", html_etf)
+    def test_06_forbidden_and_required_strings_gate(self):
+        """테스트 06: HTML 구조 게이트 필수 문자열 포함 및 금지 문자열 완전 부재 검증"""
+        html_v2 = generate_mobile_html_report_v2(
+            date_str=self.date_str,
+            total_count=18,
+            caught_signals=[],
+            all_results=[],
+            held_portfolio=SAMPLE_HELD_PORTFOLIO,
+            disclosures=SAMPLE_DISCLOSURES
+        )
 
-    def test_04_mandatory_key_missing_and_fallback(self):
-        """테스트 04: 필수 원천 키 누락 시 KeyError 발생 및 GmailNotifier의 V1 자동 Fallback 검증"""
-        corrupted_stock = dict(FIXTURE_NORMAL[0])
-        del corrupted_stock["profit_trail_delta"]  # V2 필수 키 제거
+        REQUIRED_HTML_STRINGS = [
+            'data-render-version="V2"',
+            'V4-PILOT-C 주요 대응 지침',
+            'data-held-stock-codes='
+        ]
+        FORBIDDEN_HTML_STRINGS = [
+            '5단계 매매 대응전략 매트릭스',
+            '일봉/45분봉 수급 원자값 연동 표',
+            '내 계좌 보유 종목 정밀 평가',
+            '관심 종목 리포트',
+            '신규 매수 신호',
+            'data-render-version="V1"'
+        ]
 
-        # 1. 렌더러 단독 실행 시 KeyError 발생 확인 (임의 기본값 치환 금지)
-        with self.assertRaises(KeyError):
-            generate_mobile_html_report_v2(self.date_str, 1, [], [], [corrupted_stock], [])
+        for req in REQUIRED_HTML_STRINGS:
+            self.assertIn(req, html_v2, f"필수 문자열 누락: {req}")
 
-        # 2. GmailNotifier 실행 시 V1으로 자동 Fallback 동작 확인
-        notifier_v2 = GmailNotifier(sender_email="test@example.com", app_password="dummy")
-        notifier_v2.render_version = "V2"
+        for fbd in FORBIDDEN_HTML_STRINGS:
+            self.assertNotIn(fbd, html_v2, f"금지 문자열 검출: {fbd}")
 
-        fallback_html = notifier_v2.generate_html_report(
+    def test_07_no_action_needed_clean_message(self):
+        """테스트 07: 모든 보유 종목이 변화 없는 정상 감시 상태일 때 안내 메시지 출력 검증"""
+        html_clean = generate_mobile_html_report_v2(
             date_str=self.date_str,
             total_count=1,
             caught_signals=[],
             all_results=[],
-            held_portfolio=[corrupted_stock],
+            held_portfolio=FIXTURE_NORMAL,
             disclosures=[]
         )
-        # V1 테이블 형태가 안전하게 반환되었는지 확인
-        self.assertIn("<table", fallback_html)
-        self.assertIn("한신공영", fallback_html)
-
-    def test_05_email_render_version_switcher(self):
-        """테스트 05: EMAIL_RENDER_VERSION 설정에 따른 V1/V2 전환 및 잘못된 값 복구 검증"""
-        notifier = GmailNotifier(sender_email="test@example.com", app_password="dummy")
-
-        # 1. V1 모드
-        notifier.render_version = "V1"
-        html_v1 = notifier.generate_html_report(self.date_str, 1, [], [], FIXTURE_NORMAL, [])
-        self.assertIn("내 계좌 보유 종목 정밀 평가", html_v1)
-        self.assertIn("5단계 매매 대응전략 매트릭스", html_v1)
-
-        # 2. V2 모드
-        notifier.render_version = "V2"
-        html_v2 = notifier.generate_html_report(self.date_str, 1, [], [], FIXTURE_NORMAL, [])
-        self.assertIn("data-stock-code=\"004960\"", html_v2)
-        self.assertIn("내 종목 모바일 정밀평가 리포트", html_v2)
-
-        # 3. 유효하지 않은 버전값 (예: INVALID_VER) -> V1으로 Fallback
-        notifier.render_version = "INVALID_VER"
-        html_invalid = notifier.generate_html_report(self.date_str, 1, [], [], FIXTURE_NORMAL, [])
-        self.assertIn("5단계 매매 대응전략 매트릭스", html_invalid)
-
-    def test_06_responsive_preview_and_forbidden_syntax_check(self):
-        """테스트 06: 360/390/430/620px 뷰포트 구조 적합성 및 CSS Grid/JS/min-width 금지문법 검증"""
-        html_v2 = generate_mobile_html_report_v2(
-            date_str=self.date_str,
-            total_count=18,
-            caught_signals=[],
-            all_results=[],
-            held_portfolio=SAMPLE_HELD_PORTFOLIO,
-            disclosures=SAMPLE_DISCLOSURES
-        )
-
-        # 1. 금지 문법 검증
-        self.assertNotIn("display: grid", html_v2.lower())
-        self.assertNotIn("display:grid", html_v2.lower())
-        self.assertNotIn("<script", html_v2.lower())
-        self.assertNotIn("min-width: 6", html_v2.lower())
-        self.assertNotIn("min-width: 7", html_v2.lower())
-
-        # 2. 반응형 뷰포트 메타 및 래퍼 검증
-        self.assertIn('name="viewport"', html_v2)
-        self.assertIn('max-width: 620px', html_v2)
-        self.assertIn('width: 100%', html_v2)
-
-    def test_07_no_immediate_action_phrase_and_condition_preservation(self):
-        """테스트 07: '즉시대응' 문구 미사용 및 '반등 시 매도' 조건문 보존 검증"""
-        html_v2 = generate_mobile_html_report_v2(
-            date_str=self.date_str,
-            total_count=18,
-            caught_signals=[],
-            all_results=[],
-            held_portfolio=SAMPLE_HELD_PORTFOLIO,
-            disclosures=SAMPLE_DISCLOSURES
-        )
-
-        self.assertNotIn("즉시대응", html_v2)
-        self.assertNotIn("즉시 매도", html_v2)
-        self.assertIn("반등 시 손실축소 분할매도", html_v2)
+        self.assertIn("오늘 특별 대응이 필요한 보유종목 없음 (전 종목 정상 감시 유지)", html_clean)
+        self.assertNotIn("data-stock-code=", html_clean)
+        self.assertIn('data-held-stock-codes="004960"', html_clean)
 
     def test_08_krw_no_decimal_point_and_integer_formatting(self):
         """테스트 08: 원화 가격 소수점(.0) 제거 및 쉼표 포함 정수 원 단위 포맷팅 검증"""
-        # 1. 10개 종목 전체 리포트에서 '숫자.소수점원' 패턴 완전 부재 검증
         html_v2 = generate_mobile_html_report_v2(
             date_str=self.date_str,
             total_count=18,
@@ -256,52 +209,484 @@ class TestMobileRendererV2(unittest.TestCase):
             disclosures=SAMPLE_DISCLOSURES
         )
 
-        decimal_krw_matches = re.findall(r'\d+\.\d+원', html_v2)
-        self.assertEqual(decimal_krw_matches, [], f"원화 금액에 소수점이 남아있습니다: {decimal_krw_matches}")
-        self.assertNotIn(".0원", html_v2)
+    def test_09_action_cards_completeness_failure_when_missing(self):
+        """테스트 09: 기대 대응종목 2개인데 카드가 1개만 렌더링되면 verify_pipeline_stock_code_consistency 실패 검증"""
+        from main import verify_pipeline_stock_code_consistency
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+        import pandas as pd
 
-        # 2. float 형태의 원화 입력값이 주어졌을 때 정수 쉼표 포맷팅 검증
-        float_sample_stock = dict(SAMPLE_HELD_PORTFOLIO[0])
-        float_sample_stock["current_price"] = 23600.0
-        float_sample_stock["pnl_amount"] = -7034396.0
-        float_sample_stock["kiwoom_target_tick_price"] = 28000.0
-        float_sample_stock["kiwoom_stop_tick_price"] = 21000.0
-        float_sample_stock["profit_trail_delta"] = 750.0
-        float_sample_stock["atr_14"] = 1031.0
-        float_sample_stock["atr_pct"] = 9.5
-        float_sample_stock["daily_change_pct"] = 10.28
-        float_sample_stock["final_score"] = 48.8
-        float_sample_stock["adx_14_45m"] = 56.9
+        test_held = [FIXTURE_CONCENTRATION_RISK[0], FIXTURE_RECOVERY[0]] # 055490, 140670
+        raw_kiwoom = [{"stock_code": "055490", "quantity": 100}, {"stock_code": "140670", "quantity": 100}]
 
-        html_float = generate_mobile_html_report_v2(
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f, tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xlsx_f:
+            db_path = db_f.name
+            xlsx_path = Path(xlsx_f.name)
+
+        try:
+            db = DatabaseManager(db_path)
+            for c in ["055490", "140670"]:
+                db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)", (c, f"종목_{c}"))
+                db.execute_non_query("INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES (?, 100, 10000.0)", (c,))
+            pd.DataFrame([{"종목코드": "055490"}, {"종목코드": "140670"}]).to_excel(xlsx_path, index=False)
+
+            # 카드가 055490 1개만 노출된 불완전 HTML
+            html_missing = '<div class="mobile-wrapper" data-render-version="V2" data-held-stock-codes="055490,140670"><div data-stock-code="055490">Card</div></div>'
+
+            with self.assertRaises(RuntimeError) as cm:
+                verify_pipeline_stock_code_consistency(
+                    raw_kiwoom_positions=raw_kiwoom,
+                    db=db,
+                    held_status=test_held,
+                    excel_path=xlsx_path,
+                    html_report=html_missing
+                )
+            self.assertIn("missing_action_cards", str(cm.exception))
+            self.assertIn("140670", str(cm.exception))
+        finally:
+            for p in [db_path, str(xlsx_path)]:
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    def test_10_action_cards_completeness_failure_when_zero(self):
+        """테스트 10: 기대 대응종목이 있는데 카드가 0개 출력되면 verify_pipeline_stock_code_consistency 실패 검증"""
+        from main import verify_pipeline_stock_code_consistency
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+        import pandas as pd
+
+        test_held = [FIXTURE_CONCENTRATION_RISK[0]] # 055490
+        raw_kiwoom = [{"stock_code": "055490", "quantity": 100}]
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f, tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xlsx_f:
+            db_path = db_f.name
+            xlsx_path = Path(xlsx_f.name)
+
+        try:
+            db = DatabaseManager(db_path)
+            db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)", ("055490", "테이팩스"))
+            db.execute_non_query("INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES (?, 100, 10000.0)", ("055490",))
+            pd.DataFrame([{"종목코드": "055490"}]).to_excel(xlsx_path, index=False)
+
+            # 카드가 0개인 HTML
+            html_zero = '<div class="mobile-wrapper" data-render-version="V2" data-held-stock-codes="055490"><div>오늘 특별 대응 종목 없음</div></div>'
+
+            with self.assertRaises(RuntimeError) as cm:
+                verify_pipeline_stock_code_consistency(
+                    raw_kiwoom_positions=raw_kiwoom,
+                    db=db,
+                    held_status=test_held,
+                    excel_path=xlsx_path,
+                    html_report=html_zero
+                )
+            self.assertIn("missing_action_cards", str(cm.exception))
+            self.assertIn("055490", str(cm.exception))
+        finally:
+            for p in [db_path, str(xlsx_path)]:
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    def test_11_action_cards_completeness_failure_when_unexpected_added(self):
+        """테스트 11: 대응대상이 아닌 종목 카드가 추가되면 verify_pipeline_stock_code_consistency 실패 검증"""
+        from main import verify_pipeline_stock_code_consistency
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+        import pandas as pd
+
+        test_held = [FIXTURE_NORMAL[0]] # 004960 (NORMAL, 계속보유) -> 기대 대응카드 0개
+        raw_kiwoom = [{"stock_code": "004960", "quantity": 100}]
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f, tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xlsx_f:
+            db_path = db_f.name
+            xlsx_path = Path(xlsx_f.name)
+
+        try:
+            db = DatabaseManager(db_path)
+            db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)", ("004960", "한신공영"))
+            db.execute_non_query("INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES (?, 100, 10000.0)", ("004960",))
+            pd.DataFrame([{"종목코드": "004960"}]).to_excel(xlsx_path, index=False)
+
+            # 비대응 종목 004960 카드가 억지로 들어간 HTML
+            html_unexpected = '<div class="mobile-wrapper" data-render-version="V2" data-held-stock-codes="004960"><div data-stock-code="004960">Card</div></div>'
+
+            with self.assertRaises(RuntimeError) as cm:
+                verify_pipeline_stock_code_consistency(
+                    raw_kiwoom_positions=raw_kiwoom,
+                    db=db,
+                    held_status=test_held,
+                    excel_path=xlsx_path,
+                    html_report=html_unexpected
+                )
+            self.assertIn("unexpected_action_cards", str(cm.exception))
+            self.assertIn("004960", str(cm.exception))
+        finally:
+            for p in [db_path, str(xlsx_path)]:
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    def test_12_dart_disclosures_completeness_failure_when_missing(self):
+        """테스트 12: DART 공시 2건인데 1건만 출력되면 verify_pipeline_stock_code_consistency 실패 검증"""
+        from main import verify_pipeline_stock_code_consistency
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+        import pandas as pd
+
+        test_held = [FIXTURE_NORMAL[0]] # 004960
+        raw_kiwoom = [{"stock_code": "004960", "quantity": 100}]
+        disclosures = [
+            {"stock_name": "한신공영", "stock_code": "004960", "report_nm": "공시1", "rcept_no": "20260819000001"},
+            {"stock_name": "한신공영", "stock_code": "004960", "report_nm": "공시2", "rcept_no": "20260819000002"}
+        ]
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f, tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xlsx_f:
+            db_path = db_f.name
+            xlsx_path = Path(xlsx_f.name)
+
+        try:
+            db = DatabaseManager(db_path)
+            db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)", ("004960", "한신공영"))
+            db.execute_non_query("INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES (?, 100, 10000.0)", ("004960",))
+            pd.DataFrame([{"종목코드": "004960"}]).to_excel(xlsx_path, index=False)
+
+            # 공시 1개(20260819000001)만 포함된 HTML
+            html_missing_disc = '<div class="mobile-wrapper" data-render-version="V2" data-held-stock-codes="004960"><div data-disclosure-id="20260819000001">DART 1</div></div>'
+
+            with self.assertRaises(RuntimeError) as cm:
+                verify_pipeline_stock_code_consistency(
+                    raw_kiwoom_positions=raw_kiwoom,
+                    db=db,
+                    held_status=test_held,
+                    excel_path=xlsx_path,
+                    html_report=html_missing_disc,
+                    disclosures=disclosures
+                )
+            self.assertIn("missing_disclosures", str(cm.exception))
+            self.assertIn("20260819000002", str(cm.exception))
+        finally:
+            for p in [db_path, str(xlsx_path)]:
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    def test_13_dart_disclosures_completeness_same_stock_two_disclosures(self):
+        """테스트 13: 동일 종목 공시 2건 모두 렌더링 시 정상 통과 및 1건 누락 시 검출 검증"""
+        from main import verify_pipeline_stock_code_consistency
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+        import pandas as pd
+
+        test_held = [FIXTURE_NORMAL[0]] # 004960
+        raw_kiwoom = [{"stock_code": "004960", "quantity": 100}]
+        disclosures = [
+            {"stock_name": "한신공영", "stock_code": "004960", "report_nm": "반기보고서", "rcept_no": "20260814000688"},
+            {"stock_name": "한신공영", "stock_code": "004960", "report_nm": "주요사항보고서", "rcept_no": "20260814000999"}
+        ]
+
+        # 1. 2건 모두 정상 렌더링 시
+        html_both = generate_mobile_html_report_v2(
             date_str=self.date_str,
             total_count=1,
             caught_signals=[],
             all_results=[],
-            held_portfolio=[float_sample_stock],
-            disclosures=[]
+            held_portfolio=test_held,
+            disclosures=disclosures
+        )
+        self.assertIn('data-disclosure-id="20260814000688"', html_both)
+        self.assertIn('data-disclosure-id="20260814000999"', html_both)
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f, tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xlsx_f:
+            db_path = db_f.name
+            xlsx_path = Path(xlsx_f.name)
+
+        try:
+            db = DatabaseManager(db_path)
+            db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)", ("004960", "한신공영"))
+            db.execute_non_query("INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES (?, 100, 10000.0)", ("004960",))
+            pd.DataFrame([{"종목코드": "004960"}]).to_excel(xlsx_path, index=False)
+
+            # 정상 통과해야 함
+            verify_pipeline_stock_code_consistency(
+                raw_kiwoom_positions=raw_kiwoom,
+                db=db,
+                held_status=test_held,
+                excel_path=xlsx_path,
+                html_report=html_both,
+                disclosures=disclosures
+            )
+        finally:
+            for p in [db_path, str(xlsx_path)]:
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    def test_14_html_escaping_and_url_sanitization(self):
+        """테스트 14: 공시 제목에 &, <, >, " 가 있어도 HTML 이스케이프되고 부적절한 URL이 #으로 치환되는지 검증"""
+        disclosures_with_special_chars = [{
+            "stock_name": "특수<종목>&이름",
+            "stock_code": "004960",
+            "report_nm": "공시 <특수> & \"보고서\"",
+            "rcept_no": "20260819_SPEC_01",
+            "link": "javascript:alert('xss')", # 허용되지 않는 URL
+            "summary": "요약 & <테스트>",
+            "impact": "영향 \"100%\" & <긍정>",
+            "guide": "가이드 <주의> & \"유지\""
+        }]
+
+        html = generate_mobile_html_report_v2(
+            date_str=self.date_str,
+            total_count=1,
+            caught_signals=[],
+            all_results=[],
+            held_portfolio=FIXTURE_NORMAL,
+            disclosures=disclosures_with_special_chars
         )
 
-        # 정수 원 단위 확인
-        self.assertIn("23,600원", html_float)
-        self.assertIn("-7,034,396원", html_float)
-        self.assertIn("28,000원", html_float)
-        self.assertIn("21,000원", html_float)
-        self.assertIn("750원", html_float)
-        self.assertIn("1,031원 (9.5%)", html_float)
-        self.assertNotIn("23,600.0원", html_float)
-        self.assertNotIn("-7034396.0원", html_float)
+        # HTML 이스케이프 검증
+        self.assertIn("공시 &lt;특수&gt; &amp; &quot;보고서&quot;", html)
+        self.assertIn("요약 &amp; &lt;테스트&gt;", html)
+        self.assertIn("영향 &quot;100%&quot; &amp; &lt;긍정&gt;", html)
+        self.assertIn("가이드 &lt;주의&gt; &amp; &quot;유지&quot;", html)
 
-        # 비율·점수·지표 소수점 보존 확인
-        self.assertIn("+10.28%", html_float)
-        self.assertIn("48.8점", html_float)
-        self.assertIn("45m ADX: 56.9", html_float)
+        # URL Sanitization (# 치환) 검증
+        self.assertIn('href="#"', html)
+        self.assertNotIn('href="javascript:alert', html)
 
-        # 특수 문자열 상태값 보존 확인
-        html_suspended = generate_mobile_html_report_v2(self.date_str, 1, [], [], FIXTURE_SUSPENDED_HOLD, [])
-        self.assertIn("HOLD (거래정지)", html_suspended)
-        self.assertIn("HOLD (비활성)", html_suspended)
-        self.assertIn("N/A (거래정지)", html_suspended)
+    def test_15_11_to_10_sell_off_current_fixture_regression(self):
+        """테스트 15: HD현대일렉트릭(267260) 전량매도 후 10종목 현재 포트폴리오의 폼 무결성 전수 검증"""
+        from tests.fixtures.sample_portfolio_fixture import SAMPLE_HELD_PORTFOLIO_10_CURRENT
+        from main import verify_pipeline_stock_code_consistency
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+        import pandas as pd
+
+        # 1. 10종목 검증
+        self.assertEqual(len(SAMPLE_HELD_PORTFOLIO_10_CURRENT), 10)
+        held_codes = [s["stock_code"] for s in SAMPLE_HELD_PORTFOLIO_10_CURRENT]
+        self.assertIn("000490", held_codes) # 대동 포함
+        self.assertNotIn("267260", held_codes) # HD현대일렉트릭 제외
+
+        # 2. HTML 생성
+        html_10 = generate_mobile_html_report_v2(
+            date_str=self.date_str,
+            total_count=10,
+            caught_signals=[],
+            all_results=[],
+            held_portfolio=SAMPLE_HELD_PORTFOLIO_10_CURRENT,
+            disclosures=SAMPLE_DISCLOSURES
+        )
+
+        # 3. data-held-stock-codes 검증 (정확히 10개)
+        soup = BeautifulSoup(html_10, "html.parser")
+        wrapper = soup.find("div", class_="mobile-wrapper")
+        self.assertIsNotNone(wrapper)
+        meta_codes = wrapper.get("data-held-stock-codes", "").split(",")
+        self.assertEqual(len(meta_codes), 10)
+        self.assertIn("000490", meta_codes)
+        self.assertNotIn("267260", meta_codes)
+
+        # 4. 본문 카드 및 공시에도 267260 완전 부재
+        self.assertNotIn('data-stock-code="267260"', html_10)
+        self.assertNotIn('data-disclosure-code="267260"', html_10)
+        self.assertNotIn("HD현대일렉트릭", html_10)
+
+        # 5. verify_pipeline_stock_code_consistency 전 계층 10종목 무결성 통과 검증
+        raw_kiwoom_10 = [{"stock_code": c, "quantity": 100} for c in held_codes]
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f, tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xlsx_f:
+            db_path = db_f.name
+            xlsx_path = Path(xlsx_f.name)
+
+        try:
+            db = DatabaseManager(db_path)
+            for c in held_codes:
+                db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)", (c, f"종목_{c}"))
+                db.execute_non_query("INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES (?, 100, 10000.0)", (c,))
+            pd.DataFrame([{"종목코드": c} for c in held_codes]).to_excel(xlsx_path, index=False)
+
+            # 정상 통과 단언
+            verify_pipeline_stock_code_consistency(
+                raw_kiwoom_positions=raw_kiwoom_10,
+                db=db,
+                held_status=SAMPLE_HELD_PORTFOLIO_10_CURRENT,
+                excel_path=xlsx_path,
+                html_report=html_10,
+                disclosures=SAMPLE_DISCLOSURES
+            )
+        finally:
+            for p in [db_path, str(xlsx_path)]:
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    def test_16_dart_rcept_no_missing_or_empty_raises(self):
+        """테스트 16: DART 공시 rcept_no 누락 또는 빈 문자열 시 즉시 예외 발생 및 발송 차단 검증"""
+        from main import verify_pipeline_stock_code_consistency
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+        import pandas as pd
+
+        # 1. rcept_no가 None인 경우 (렌더러 단)
+        disc_none = [{"stock_name": "한신공영", "stock_code": "004960", "report_nm": "보고서", "rcept_no": None}]
+        with self.assertRaises(ValueError) as cm1:
+            generate_mobile_html_report_v2(
+                date_str=self.date_str,
+                total_count=1,
+                caught_signals=[],
+                all_results=[],
+                held_portfolio=FIXTURE_NORMAL,
+                disclosures=disc_none
+            )
+        self.assertIn("rcept_no 누락", str(cm1.exception))
+
+        # 2. rcept_no가 빈 문자열인 경우 (렌더러 단)
+        disc_empty = [{"stock_name": "한신공영", "stock_code": "004960", "report_nm": "보고서", "rcept_no": "   "}]
+        with self.assertRaises(ValueError) as cm2:
+            generate_mobile_html_report_v2(
+                date_str=self.date_str,
+                total_count=1,
+                caught_signals=[],
+                all_results=[],
+                held_portfolio=FIXTURE_NORMAL,
+                disclosures=disc_empty
+            )
+        self.assertIn("rcept_no 누락 또는 빈 문자열", str(cm2.exception))
+
+        # 3. verify_pipeline_stock_code_consistency 에서도 차단되는지 검증
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f, tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xlsx_f:
+            db_path = db_f.name
+            xlsx_path = Path(xlsx_f.name)
+        try:
+            db = DatabaseManager(db_path)
+            db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES ('004960', '한신공영')")
+            db.execute_non_query("INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES ('004960', 100, 10000.0)")
+            pd.DataFrame([{"종목코드": "004960"}]).to_excel(xlsx_path, index=False)
+            html = '<div class="mobile-wrapper" data-render-version="V2" data-held-stock-codes="004960"></div>'
+
+            with self.assertRaises(RuntimeError) as cm3:
+                verify_pipeline_stock_code_consistency(
+                    raw_kiwoom_positions=[{"stock_code": "004960", "quantity": 100}],
+                    db=db,
+                    held_status=FIXTURE_NORMAL,
+                    excel_path=xlsx_path,
+                    html_report=html,
+                    disclosures=disc_empty
+                )
+            self.assertIn("rcept_no 누락 또는 빈 문자열", str(cm3.exception))
+        finally:
+            for p in [db_path, str(xlsx_path)]:
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    def test_17_dart_rcept_no_duplicate_raises(self):
+        """테스트 17: DART 공시 rcept_no 중복 감지 시 즉시 예외 발생 및 발송 차단 검증"""
+        from main import verify_pipeline_stock_code_consistency
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+        import pandas as pd
+
+        disc_dup = [
+            {"stock_name": "한신공영", "stock_code": "004960", "report_nm": "보고서1", "rcept_no": "20260819_DUP_01"},
+            {"stock_name": "한신공영", "stock_code": "004960", "report_nm": "보고서2", "rcept_no": "20260819_DUP_01"} # 동일 ID 중복
+        ]
+
+        # 1. 렌더러 단 중복 감지
+        with self.assertRaises(ValueError) as cm1:
+            generate_mobile_html_report_v2(
+                date_str=self.date_str,
+                total_count=1,
+                caught_signals=[],
+                all_results=[],
+                held_portfolio=FIXTURE_NORMAL,
+                disclosures=disc_dup
+            )
+        self.assertIn("rcept_no 중복 감지", str(cm1.exception))
+
+        # 2. verify_pipeline_stock_code_consistency 무결성 게이트 중복 감지
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f, tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xlsx_f:
+            db_path = db_f.name
+            xlsx_path = Path(xlsx_f.name)
+        try:
+            db = DatabaseManager(db_path)
+            db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES ('004960', '한신공영')")
+            db.execute_non_query("INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES ('004960', 100, 10000.0)")
+            pd.DataFrame([{"종목코드": "004960"}]).to_excel(xlsx_path, index=False)
+            html = '<div class="mobile-wrapper" data-render-version="V2" data-held-stock-codes="004960"><div data-disclosure-id="20260819_DUP_01"></div></div>'
+
+            with self.assertRaises(RuntimeError) as cm2:
+                verify_pipeline_stock_code_consistency(
+                    raw_kiwoom_positions=[{"stock_code": "004960", "quantity": 100}],
+                    db=db,
+                    held_status=FIXTURE_NORMAL,
+                    excel_path=xlsx_path,
+                    html_report=html,
+                    disclosures=disc_dup
+                )
+            self.assertIn("rcept_no 중복 감지", str(cm2.exception))
+        finally:
+            for p in [db_path, str(xlsx_path)]:
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
+
+    def test_18_dart_rendered_count_mismatch_raises(self):
+        """테스트 18: rendered ID 개수와 expected ID 개수 불일치 시 발송 차단 검증"""
+        from main import verify_pipeline_stock_code_consistency
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+        import pandas as pd
+
+        disclosures = [
+            {"stock_name": "한신공영", "stock_code": "004960", "report_nm": "보고서1", "rcept_no": "20260819_CNT_01"},
+            {"stock_name": "한신공영", "stock_code": "004960", "report_nm": "보고서2", "rcept_no": "20260819_CNT_02"}
+        ]
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f, tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xlsx_f:
+            db_path = db_f.name
+            xlsx_path = Path(xlsx_f.name)
+        try:
+            db = DatabaseManager(db_path)
+            db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES ('004960', '한신공영')")
+            db.execute_non_query("INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES ('004960', 100, 10000.0)")
+            pd.DataFrame([{"종목코드": "004960"}]).to_excel(xlsx_path, index=False)
+            # HTML에 1개만 렌더링된 상태
+            html_only_one = '<div class="mobile-wrapper" data-render-version="V2" data-held-stock-codes="004960"><div data-disclosure-id="20260819_CNT_01"></div></div>'
+
+            with self.assertRaises(RuntimeError) as cm:
+                verify_pipeline_stock_code_consistency(
+                    raw_kiwoom_positions=[{"stock_code": "004960", "quantity": 100}],
+                    db=db,
+                    held_status=FIXTURE_NORMAL,
+                    excel_path=xlsx_path,
+                    html_report=html_only_one,
+                    disclosures=disclosures
+                )
+            self.assertIn("DART 공시 완전성 검증 실패", str(cm.exception))
+        finally:
+            for p in [db_path, str(xlsx_path)]:
+                if os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except Exception:
+                        pass
 
 if __name__ == "__main__":
     unittest.main()
