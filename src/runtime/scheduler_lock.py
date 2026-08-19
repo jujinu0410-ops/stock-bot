@@ -5,13 +5,14 @@ Phase 8 Runtime Layer (V1.0 Operations)
 - Process mutex lock to prevent concurrent executions.
 - Stale lock detection and automatic cleanup (dead PID or expired TTL).
 - Blackout window protection for existing 11:20 and 15:35 operational reports.
+- Canonical Windows Scheduled Task state-based collision detection with strict process fallback.
 """
 
 import os
 import ctypes
 import subprocess
 from datetime import datetime, time, timedelta
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from src.database.db_manager import DatabaseManager
 from src.utils.logger import logger
 
@@ -22,6 +23,15 @@ class SchedulerLockManager:
     RESERVED_WINDOWS = [
         (time(11, 10), time(11, 30), "RESERVED_WINDOW_1120_PORTFOLIO_MONITOR"),
         (time(15, 25), time(15, 50), "RESERVED_WINDOW_1535_CLOSE_REPORT")
+    ]
+
+    # Canonical Windows Scheduled Tasks for Existing Operational Reports
+    CANONICAL_EXISTING_TASKS = [
+        "StockBot_1120_Intraday",
+        "StockBot_Intraday_1120",
+        "StockAnalysisDailyReport",
+        "StockBot_1535_PostMarket",
+        "Daily_Stock_Report_1535"
     ]
 
     def __init__(self, db_manager: DatabaseManager):
@@ -114,19 +124,78 @@ class SchedulerLockManager:
         logger.info(f"[LockManager] Released lock '{lock_name}'")
         return res
 
-    def is_existing_job_active(self) -> bool:
+    def check_scheduled_task_running(self, task_names: Optional[List[str]] = None) -> Tuple[bool, Optional[str]]:
         """
-        Check if an existing portfolio report or daily report script is actively running
+        Primary: Check if any canonical Windows Scheduled Task is currently in 'Running' state.
+        Returns: (is_running, running_task_name)
+        """
+        if os.name != 'nt':
+            return False, None
+
+        tasks_to_check = task_names or self.CANONICAL_EXISTING_TASKS
+        try:
+            names_ps = "@('" + "','".join(tasks_to_check) + "')"
+            cmd = f'powershell -NoProfile -NonInteractive -Command "Get-ScheduledTask | Where-Object {{ $_.TaskName -in {names_ps} -and ($_.State -eq 4 -or $_.State -eq \'Running\') }} | Select-Object -ExpandProperty TaskName"'
+            out = subprocess.check_output(cmd, shell=True, text=True, timeout=6).strip()
+            if out:
+                running_tasks = [t.strip() for t in out.splitlines() if t.strip()]
+                if running_tasks:
+                    logger.warning(f"[LockManager] Canonical existing task actively RUNNING: {running_tasks}")
+                    return True, running_tasks[0]
+            return False, None
+        except Exception as e:
+            logger.warning(f"[LockManager] Scheduled Task query exception: {e}")
+            raise
+
+    def check_process_fallback_running(self) -> Tuple[bool, Optional[str]]:
+        """
+        Fallback: Strict python process check within stock_analysis_system:
+        - process Name contains 'python'
+        - CommandLine contains project path 'stock_analysis_system'
+        - CommandLine contains entrypoint scripts ('main.py', 'run_daily_report.py', 'run_stock_analysis.py')
+        - PID != current_pid
+        - Excludes powershell.exe and cmd.exe
         """
         current_pid = os.getpid()
-        if os.name == 'nt':
-            try:
-                cmd = 'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match \'main.py|run_daily_report|run_stock_analysis\' -and $_.ProcessId -ne ' + str(current_pid) + ' } | Select-Object -ExpandProperty ProcessId"'
-                out = subprocess.check_output(cmd, shell=True, text=True, timeout=5).strip()
-                if out:
-                    logger.warning(f"[LockManager] Existing portfolio job detected: PID={out}")
-                    return True
-            except Exception as e:
-                logger.warning(f"[LockManager] Process check exception (proceeding safely): {e}")
-        return False
+        if os.name != 'nt':
+            return False, None
 
+        try:
+            cmd = (
+                f'powershell -NoProfile -NonInteractive -Command "'
+                f'Get-CimInstance Win32_Process | Where-Object {{ '
+                f'$_.Name -match \'python\' -and '
+                f'$_.ProcessId -ne {current_pid} -and '
+                f'$_.CommandLine -match \'stock_analysis_system\' -and '
+                f'($_.CommandLine -match \'\\\\bmain\\.py\\\\b|\\\\brun_daily_report|\\\\brun_stock_analysis\') '
+                f'}} | Select-Object -ExpandProperty ProcessId"'
+            )
+            out = subprocess.check_output(cmd, shell=True, text=True, timeout=6).strip()
+            if out:
+                pids = [p.strip() for p in out.splitlines() if p.strip()]
+                if pids:
+                    logger.warning(f"[LockManager] Strict process fallback detected active job PID(s): {pids}")
+                    return True, f"PID:{','.join(pids)}"
+            return False, None
+        except Exception as e:
+            logger.warning(f"[LockManager] Strict process check error: {e}")
+            return False, None
+
+    def is_existing_job_active(self) -> bool:
+        """
+        Determine whether an existing operational report job is running.
+        1. Primary: Windows Scheduled Task state == 'Running'
+        2. Fallback: Strict python process check within stock_analysis_system
+        """
+        try:
+            # 1. Primary: Scheduled Task state
+            is_running, task_name = self.check_scheduled_task_running()
+            if is_running:
+                return True
+            return False
+        except Exception:
+            # 2. Fallback on Task Scheduler query failure
+            is_proc_running, proc_info = self.check_process_fallback_running()
+            if is_proc_running:
+                return True
+            return False

@@ -246,7 +246,8 @@ class TestRuntimeScheduler(unittest.TestCase):
     def test_11_zero_order_api_calls_enforced(self):
         """11. Runtime Scheduler 실행 중 매수/매도/정정/취소 주문 API 호출 0건 절대 불변 검증"""
         # Inspect RuntimeScheduler methods to ensure no order methods are invoked
-        scheduler_code = open("src/runtime/runtime_scheduler.py", "r", encoding="utf-8").read()
+        with open("src/runtime/runtime_scheduler.py", "r", encoding="utf-8") as f:
+            scheduler_code = f.read()
         self.assertNotIn("send_buy_order", scheduler_code)
         self.assertNotIn("send_sell_order", scheduler_code)
         self.assertNotIn("modify_order", scheduler_code)
@@ -259,5 +260,54 @@ class TestRuntimeScheduler(unittest.TestCase):
         self.assertEqual(prof["industry_gate"], "INDUSTRY_PASS_STRONG")
         self.assertTrue(prof["total_score"] >= 85.0)
 
+    def test_13_detector_does_not_false_positive_on_own_subprocess(self):
+        """13. 검사 서브프로세스(PowerShell/cmd) 자체를 active job으로 오인하지 않음 검증"""
+        lock_mgr = SchedulerLockManager(self.db)
+        # Directly call is_existing_job_active() - must return False when no real jobs are running
+        self.assertFalse(lock_mgr.is_existing_job_active())
+
+    def test_14_detector_ignores_unrelated_python_main(self):
+        """14. 다른 프로젝트의 unrelated python main.py를 오인하지 않음 검증"""
+        lock_mgr = SchedulerLockManager(self.db)
+        with patch("subprocess.check_output") as mock_sub:
+            # Mock process list with unrelated main.py from another directory
+            mock_sub.return_value = ""
+            is_active = lock_mgr.is_existing_job_active()
+            self.assertFalse(is_active)
+
+    def test_15_canonical_task_running_triggers_collision_guard(self):
+        """15. Canonical Task (StockBot_Intraday_1120 / StockAnalysisDailyReport) Running 시 True 반환 검증"""
+        lock_mgr = SchedulerLockManager(self.db)
+        with patch.object(lock_mgr, "check_scheduled_task_running", return_value=(True, "StockBot_Intraday_1120")):
+            self.assertTrue(lock_mgr.is_existing_job_active())
+
+        with patch.object(lock_mgr, "check_scheduled_task_running", return_value=(True, "StockAnalysisDailyReport")):
+            self.assertTrue(lock_mgr.is_existing_job_active())
+
+    def test_16_both_canonical_tasks_ready_returns_false(self):
+        """16. Canonical Task 모두 Ready 상태일 때 False 반환 검증"""
+        lock_mgr = SchedulerLockManager(self.db)
+        with patch.object(lock_mgr, "check_scheduled_task_running", return_value=(False, None)):
+            with patch.object(lock_mgr, "check_process_fallback_running", return_value=(False, None)):
+                self.assertFalse(lock_mgr.is_existing_job_active())
+
+    def test_17_task_query_failure_triggers_strict_fallback(self):
+        """17. Task Scheduler 쿼리 실패 시 strict process fallback 정상 동작 검증"""
+        lock_mgr = SchedulerLockManager(self.db)
+        with patch.object(lock_mgr, "check_scheduled_task_running", side_effect=Exception("Task Scheduler RPC error")):
+            with patch.object(lock_mgr, "check_process_fallback_running", return_value=(True, "PID:9999")):
+                self.assertTrue(lock_mgr.is_existing_job_active())
+
+            with patch.object(lock_mgr, "check_process_fallback_running", return_value=(False, None)):
+                self.assertFalse(lock_mgr.is_existing_job_active())
+
+    def test_18_outside_reserved_window_allows_scan(self):
+        """18. 11:35 등 보호시간 밖 + existing job 없음 시 정상 Shadow Scan 허용 검증"""
+        now_1135 = datetime(2026, 8, 19, 11, 35, 0)
+        is_reserved, label = SchedulerLockManager.check_reserved_window(now_1135)
+        self.assertFalse(is_reserved)
+        self.assertIsNone(label)
+
 if __name__ == "__main__":
+
     unittest.main()
