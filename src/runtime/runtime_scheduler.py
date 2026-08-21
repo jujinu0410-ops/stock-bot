@@ -254,25 +254,44 @@ class RuntimeScheduler:
                     if snapshot_reason == "SIGNAL_CHANGE":
                         signal_changes += 1
 
+            # Determine run status semantics
+            total_universe = len(universe_stocks)
+            if total_universe > 0 and stocks_scanned == 0:
+                run_status = "DATA_HOLD"
+                error_code = "CRITICAL_LIVE_QUOTE_FAILURE"
+                error_msg = f"0 of {total_universe} stocks scanned due to live quote / data failure"
+            elif 0 < stocks_scanned < total_universe:
+                run_status = "DEGRADED"
+                error_code = "PARTIAL_QUOTE_FAILURE"
+                error_msg = f"Scanned {stocks_scanned} of {total_universe} stocks (some quotes failed)"
+            else:
+                run_status = "SUCCESS"
+                error_code = None
+                error_msg = None
+
             # Update scheduler_run completion
             end_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.db.update_scheduler_run(run_id, {
                 "actual_end_time": end_str,
-                "status": "SUCCESS",
+                "status": run_status,
                 "stocks_scanned": stocks_scanned,
                 "journals_created": journals_created,
                 "signal_changes": signal_changes,
-                "last_completed_45m_bar": completed_bar_ts
+                "last_completed_45m_bar": completed_bar_ts,
+                "error_code": error_code,
+                "error_message": error_msg
             })
 
-            logger.info(f"[IntradayScan] Run '{run_id}' finished successfully. Scanned: {stocks_scanned}, Journals Appended: {journals_created}, Signal Changes: {signal_changes}")
+            logger.info(f"[IntradayScan] Run '{run_id}' finished with status '{run_status}'. Scanned: {stocks_scanned}/{total_universe}, Journals Appended: {journals_created}, Signal Changes: {signal_changes}")
             return {
-                "status": "SUCCESS",
+                "status": run_status,
                 "run_id": run_id,
                 "stocks_scanned": stocks_scanned,
                 "journals_created": journals_created,
                 "signal_changes": signal_changes,
-                "last_completed_45m_bar": completed_bar_ts
+                "last_completed_45m_bar": completed_bar_ts,
+                "error_code": error_code,
+                "error_message": error_msg
             }
 
         except Exception as e:
@@ -611,7 +630,7 @@ def main():
     result = scheduler.run_task(args.task, is_manual=args.manual)
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    if result.get("status") in ["SUCCESS", "SKIPPED_NON_TRADING_DAY", "SKIPPED_RESERVED_WINDOW", "SKIPPED_EXISTING_JOB_ACTIVE", "SKIPPED_NO_NEW_45M_BAR"]:
+    if result.get("status") in ["SUCCESS", "DEGRADED", "DATA_HOLD", "SKIPPED_NON_TRADING_DAY", "SKIPPED_RESERVED_WINDOW", "SKIPPED_EXISTING_JOB_ACTIVE", "SKIPPED_NO_NEW_45M_BAR"]:
         sys.exit(0)
     else:
         sys.exit(1)

@@ -308,6 +308,13 @@ class TestRuntimeScheduler(unittest.TestCase):
         self.assertFalse(is_reserved)
         self.assertIsNone(label)
 
-if __name__ == "__main__":
+    def test_19_status_semantics_data_hold_and_degraded(self):
+        """19. Live Quote 장애 시 stocks_scanned==0 -> DATA_HOLD 및 일부 실패 -> DEGRADED 기록 검증"""
+        with patch.object(self.scheduler, "_get_active_universe", return_value=[{"stock_code": "005930", "stock_name": "삼성전자"}]):
+            with patch.object(self.scheduler, "_evaluate_stock_shadow", return_value=None):
+                res = self.scheduler._execute_intraday_shadow_scan(is_manual=True)
+                self.assertEqual(res["status"], "DATA_HOLD")
+                self.assertEqual(res["error_code"], "CRITICAL_LIVE_QUOTE_FAILURE")
 
+if __name__ == "__main__":
     unittest.main()
