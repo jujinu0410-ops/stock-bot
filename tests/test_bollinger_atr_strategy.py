@@ -10,6 +10,8 @@ import pandas as pd
 
 import main
 import src.analysis.bollinger_atr_strategy as strategy
+from src.notifications.mobile_renderer_v2 import generate_mobile_html_report_v2
+from tests.fixtures.sample_portfolio_fixture import SAMPLE_HELD_PORTFOLIO
 
 
 REQUIRED_SCHEMA = {
@@ -249,6 +251,47 @@ class TestBollingerATRStrategy(unittest.TestCase):
         for field in ("action_status", "trade_mode", "recommended_order_qty", "confirmed_stop_price", "prev_confirmed_stop", "profit_trail", "effective_exit_line", "auto_order_enabled"):
             self.assertEqual(item[field], before[field])
 
+    def test_main_overlay_uses_resolved_asof_and_canonical_session(self):
+        item = base_item()
+        payload = strategy.make_no_advisory(item, self.ASOF, "1335", "TEST_PAYLOAD")
+        with patch.object(strategy, "generate_bb_atr_advisory", return_value=payload) as generate:
+            main._apply_bb_atr_overlay([item], self.ASOF, "1335")
+        generate.assert_called_once_with(item, self.ASOF, "1335")
+        self.assertIs(item["bb_atr"], payload)
+
+    def test_main_overlay_exception_uses_complete_no_advisory_schema(self):
+        item = base_item()
+        with patch.object(strategy, "generate_bb_atr_advisory", side_effect=RuntimeError("boom")):
+            main._apply_bb_atr_overlay([item], self.ASOF, "1535")
+        fallback = item["bb_atr"]
+        self.assertTrue(REQUIRED_SCHEMA.issubset(fallback))
+        self.assertEqual(fallback["overlay_scope"], "ADVISORY_ONLY")
+        self.assertEqual(fallback["overlay_status"], "NO_ADVISORY")
+        self.assertEqual(fallback["reason_codes"], ["BB_ATR_OVERLAY_ERROR"])
+        self.assertEqual(fallback["bb_mode"], "NO_ADVISORY")
+        self.assertEqual(fallback["actual_order_impact"], 0)
+
+    def test_renderer_shows_two_bb_atr_lines(self):
+        portfolio = copy.deepcopy(SAMPLE_HELD_PORTFOLIO)
+        actionable = next(item for item in portfolio if item["stock_code"] == "055490")
+        actionable["bb_atr"] = {
+            "bb_mode": "PROFIT_TRAILING",
+            "advisory_text": "상단 +3호가 CONFIRMED · 참고선 11,200원",
+            "effective_advisory_floor": 11_200,
+        }
+        html_report = generate_mobile_html_report_v2(
+            date_str="2026-09-11 15:35",
+            total_count=0,
+            caught_signals=[],
+            all_results=[],
+            held_portfolio=portfolio,
+            disclosures=[],
+        )
+        self.assertEqual(html_report.count("BB-ATR ADVISORY:"), 1)
+        self.assertEqual(html_report.count("BB-ATR FLOOR:"), 1)
+        self.assertIn("PROFIT_TRAILING", html_report)
+        self.assertIn("11,200원", html_report)
+
     def test_legacy_bb_26_1_7_source_is_unchanged(self):
         source = (Path(__file__).parents[1] / "src" / "analysis" / "technical_analysis.py").read_text(encoding="utf-8")
         self.assertIn("rolling(window=26).std()", source)
@@ -262,7 +305,7 @@ class TestBollingerATRStrategy(unittest.TestCase):
         }
         for session, title in expected.items():
             self.assertEqual(main._resolve_dispatch_tag(session), title)
-            # skipped
+            self.assertEqual(main._resolve_report_session(session, self.ASOF), session)
 
 
 if __name__ == "__main__":

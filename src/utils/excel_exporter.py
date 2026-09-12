@@ -8,7 +8,8 @@ from src.utils.logger import logger
 def create_analysis_excel_report(date_str: str,
                                 held_portfolio: List[Dict[str, Any]],
                                 all_results: List[Dict[str, Any]],
-                                db_manager) -> Path:
+                                db_manager,
+                                policy_display: Dict[str, Any] = None) -> Path:
     """
     수집 및 분석된 실제 데이터(보유종목 정밀평가, DART 실제 재무제표 메타데이터, 전체 종목 6대조건 요약)를
     다중 시트 엑셀(.xlsx) 파일로 생성하여 리턴합니다.
@@ -87,7 +88,7 @@ def create_analysis_excel_report(date_str: str,
             disp_final_sc = "N/A (거래정지)"
             disp_prev_stop = f"{int(h.get('prev_confirmed_stop', 4560)):,}원 (역사값 / 효력정지)" if h.get('prev_confirmed_stop', 0) > 0 else "0"
             disp_completeness = "50.0% (재무100% / 시장0%)"
-        elif code == "348340" or trade_mode == "USER_OVERRIDE":
+        elif trade_mode == "USER_OVERRIDE":
             auto_order_ok = "금지 (DART 재무 미확정)"
             stop_mon_status = "HOLD (수동감시)"
             stop_order_status = "OFF (HOLD)"
@@ -425,6 +426,41 @@ def create_analysis_excel_report(date_str: str,
         })
     df_summary = pd.DataFrame(summary_data)
 
+    policy_columns = [
+        "종목코드", "종목명", "report 기준시각", "Policy snapshot 기준시각", "snapshot age(min)",
+        "freshness_status", "position_match_status", "position_kind", "cycle_id", "cycle_status", "stage",
+        "F0", "F current", "T0", "T2", "T current", "T change 3D", "cycle_target_qty", "stage1_target_qty", "stage2_target_qty", "stage3_target_qty", "stage_size_status", "target_qty_status", "F_baseline_status", "T_baseline_status", "quantity_policy", "quantity_current",
+        "avg_policy", "avg_current", "loss_pct", "45m bearish 2plus", "45m breakdown", "bearish gate",
+        "completed 45m timestamp", "loss_defense_trigger", "defense_state", "defense_ATR", "defense_low",
+        "rebound_trigger", "rebound_reached", "defense_peak", "defense_trail", "hard_stop_state", "hard_stop",
+        "V4 effective stop", "shadow_effective_exit", "add_locked", "shadow_action", "blocker/reason", "actual_order_impact",
+    ]
+    policy_rows = []
+    for p in (policy_display or {}).get("rows", []):
+        is_etf_row = bool(p.get("is_etf", False)) or str(p.get("stock_code", "")).zfill(6) in ['371460', '484730', '490590', '161510', '088500']
+        policy_rows.append({
+            "종목코드": p.get("stock_code"), "종목명": p.get("stock_name"), "report 기준시각": p.get("report_timestamp"),
+            "Policy snapshot 기준시각": p.get("asof_timestamp"), "snapshot age(min)": p.get("snapshot_age_minutes"),
+            "freshness_status": p.get("freshness_status"), "position_match_status": p.get("position_match_status"),
+            "position_kind": p.get("position_kind") or p.get("cycle_position_kind"), "cycle_id": p.get("position_cycle_id"),
+            "cycle_status": p.get("cycle_status"), "stage": p.get("stage"), "F0": None if is_etf_row else p.get("f0"), "F current": None if is_etf_row else p.get("f_score"),
+            "T0": p.get("t0"), "T2": p.get("t2"), "T current": p.get("t_score"), "T change 3D": p.get("t_change_3d"),
+            "cycle_target_qty": p.get("cycle_target_qty"), "stage1_target_qty": p.get("stage1_target_qty"), "stage2_target_qty": p.get("stage2_target_qty"), "stage3_target_qty": p.get("stage3_target_qty"),
+            "stage_size_status": p.get("stage_size_status"), "target_qty_status": p.get("target_qty_status"), "F_baseline_status": "NOT_APPLICABLE" if is_etf_row else p.get("f_baseline_status"), "T_baseline_status": p.get("t_baseline_status"),
+            "quantity_policy": p.get("quantity_policy"), "quantity_current": p.get("quantity_current"), "avg_policy": p.get("avg_policy"),
+            "avg_current": p.get("avg_current"), "loss_pct": p.get("loss_pct"), "45m bearish 2plus": p.get("is_45m_bearish_2plus"),
+            "45m breakdown": p.get("is_45m_breakdown"), "bearish gate": p.get("is_45m_bearish_gate"),
+            "completed 45m timestamp": p.get("completed_45m_timestamp"), "loss_defense_trigger": p.get("loss_defense_trigger"),
+            "defense_state": p.get("defense_state"), "defense_ATR": p.get("defense_atr"), "defense_low": p.get("defense_low"),
+            "rebound_trigger": p.get("rebound_trigger"), "rebound_reached": p.get("rebound_reached"), "defense_peak": p.get("defense_peak"),
+            "defense_trail": p.get("defense_trail"), "hard_stop_state": "PREEXISTING_HARD_STOP_BREACH" if p.get("hard_stop_already_breached_at_shadow_start") else p.get("shadow_action"),
+            "hard_stop": p.get("hard_stop"), "V4 effective stop": p.get("v4_effective_stop"), "shadow_effective_exit": p.get("shadow_effective_exit"),
+            "add_locked": p.get("add_locked"), "shadow_action": p.get("shadow_action"), "blocker/reason": p.get("reason") or p.get("shadow_reason"), "actual_order_impact": 0,
+        })
+    for p in (policy_display or {}).get("transition_rows", []):
+        policy_rows.append({"종목코드": p.get("stock_code"), "종목명": p.get("stock_name"), "position_kind": p.get("position_kind"), "cycle_id": p.get("position_cycle_id"), "cycle_status": p.get("cycle_status"), "freshness_status": p.get("transition_status"), "blocker/reason": "Current holding absent; next Shadow closes open cycle", "actual_order_impact": 0})
+    df_policy = pd.DataFrame(policy_rows, columns=policy_columns)
+
     header_banner = f"데이터 수집 시각: {time_kst_str} | KRX 실시간 시세 및 OpenDART 공시 원천 연동"
 
     # 1. CSV 보조 파일 저장 (Gmail API 백업용)
@@ -436,6 +472,7 @@ def create_analysis_excel_report(date_str: str,
         df_held.to_excel(writer, sheet_name="보유종목_정밀평가", startrow=1, index=False)
         df_dart.to_excel(writer, sheet_name="DART_실제재무분석", startrow=1, index=False)
         df_summary.to_excel(writer, sheet_name="전체종목_분석요약", startrow=1, index=False)
+        df_policy.to_excel(writer, sheet_name="POLICY_SHADOW", startrow=1, index=False)
 
         for sheetname in writer.sheets:
             ws = writer.sheets[sheetname]

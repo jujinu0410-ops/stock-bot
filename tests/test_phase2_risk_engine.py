@@ -1,5 +1,7 @@
 import unittest
 import math
+import tempfile
+import os
 from src.engine.risk_engine import ATRRiskEngine
 from src.analysis.technical_analysis import adjust_krx_tick_size
 from src.database.db_manager import DatabaseManager
@@ -10,13 +12,28 @@ class TestPhase2RiskEngine(unittest.TestCase):
     Phase 2: ATR Risk Engine Single Source of Truth & Position Lifecycle Unit Tests
     """
 
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp_file = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        cls._tmp_file.close()
+        cls._tmp_db_path = cls._tmp_file.name
+        cls.shared_db = DatabaseManager(cls._tmp_db_path)
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            os.unlink(cls._tmp_db_path)
+        except Exception:
+            pass
+
     def setUp(self):
-        self.db = DatabaseManager()
+        self.db = self.__class__.shared_db
         self.pm = PortfolioManager(db_manager=self.db)
         self.pm.clear_all_holdings()
 
     def tearDown(self):
         self.pm.clear_all_holdings()
+
 
     def test_01_candidate_preview_isolation(self):
         """1. 매수 전 감시 후보선 분리 검증 (PREVIEW_ONLY 상태 및 P0/A0 비영속)"""
@@ -298,7 +315,7 @@ class TestPhase2RiskEngine(unittest.TestCase):
         self.assertIn("• 현재 실행 가능 주문: 🔴 NONE (현재 매수 금지 / 주문 입력 불가 - BUY_BLOCKED)", md)
         # 2) REFERENCE ONLY / 실제 주문 입력 금지
         self.assertIn("REFERENCE ONLY / 실제 주문 입력 금지", md)
-        self.assertIn("[3단계 분할매수 가이드 (참고용)]", md)
+        self.assertIn("[분할매수 감시 가이드 (참고용)]", md)
         # 3) 3차 상승확인 추매 명칭
         self.assertIn("3차 상승확인 추매", md)
         # 4) 45분봉 Technical Gate & State
@@ -340,11 +357,11 @@ class TestPhase2RiskEngine(unittest.TestCase):
         )
 
         md = render_gems_markdown(dto_on)
-        # 1) 현재 실행 가능 주문 = 1차 진입(50%) 승인
-        self.assertIn("• 현재 실행 가능 주문: 🟢 1차 진입(50%) 주문 승인 (Technical Gate: BUY_ALLOWED 통과)", md)
-        self.assertIn("[3단계 분할매수 가이드 (50% / 30% / 20%)]", md)
+        # 1) 현재 실행 가능 주문 = 1차 진입 승인
+        self.assertIn("• 현재 실행 가능 주문: 🟢 1차 진입 주문 승인 (Technical Gate: BUY_ALLOWED 통과)", md)
+        self.assertIn("[분할매수 감시 가이드]:", md)
         # 2) 3차 상승확인 추매 명칭
-        self.assertIn("3차 상승확인 추매 (20%)", md)
+        self.assertIn("3차 상승확인 추매", md)
         # 3) 45분봉 Technical Gate & State
         self.assertIn("• 45분봉 Technical State: STRONG (+DI 우위 / OBV 매집 / CHO 유입)", md)
         self.assertIn("• 45분봉 Technical Gate: BUY_ALLOWED", md)

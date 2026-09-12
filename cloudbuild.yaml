@@ -1,0 +1,95 @@
+# =============================================================================
+# StockBot Cloud Run Phase 1 - Google Cloud Build Pipeline
+#
+# Steps:
+# 1. Build Test Stage Image (includes tests & verification tools)
+# 2. Smoke Test inside container (Python 3.12, timezone, core imports)
+# 3. Full Isolated Regression inside container (416/416 tests MUST pass)
+# 4. Build Lean Production Runtime Image (tests & scratch excluded)
+# 5. Push to Artifact Registry ONLY after all tests pass
+# =============================================================================
+
+steps:
+  # ---------------------------------------------------------------------------
+  # Step 1: Build Test Stage Image
+  # ---------------------------------------------------------------------------
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-test-stage'
+    args:
+      - 'build'
+      - '--target'
+      - 'test'
+      - '-t'
+      - 'stockbot-test:local'
+      - '.'
+
+  # ---------------------------------------------------------------------------
+  # Step 2: In-Container Smoke Test (Timezone, Core Libraries, Entrypoints)
+  # ---------------------------------------------------------------------------
+  - name: 'stockbot-test:local'
+    id: 'container-smoke-test'
+    env:
+      - 'STOCKBOT_TEST_MODE=1'
+      - 'STOCKBOT_CLOUD_MODE=1'
+      - 'TZ=Asia/Seoul'
+      - 'STOCKBOT_STATE_DIR=/tmp/stockbot'
+    entrypoint: 'python'
+    args:
+      - '-c'
+      - |
+        import sys
+        from zoneinfo import ZoneInfo
+        import sqlite3, pandas, openpyxl, google.cloud.storage
+        import main, cloud_runner, src.utils.gcs_state_adapter, src.policy.policy_shadow_observer
+        assert ZoneInfo('Asia/Seoul') is not None
+        print(f"[Cloud Build Smoke Test] Python {sys.version}")
+        print("[Cloud Build Smoke Test] All core modules & Asia/Seoul timezone verified successfully!")
+
+  # ---------------------------------------------------------------------------
+  # Step 3: Container Full Regression Suite (Must pass 416/416 tests)
+  # ---------------------------------------------------------------------------
+  - name: 'stockbot-test:local'
+    id: 'container-full-regression'
+    env:
+      - 'STOCKBOT_TEST_MODE=1'
+      - 'STOCKBOT_CLOUD_MODE=1'
+      - 'TZ=Asia/Seoul'
+    entrypoint: 'python'
+    args:
+      - 'scripts/run_tests_isolated.py'
+
+  # ---------------------------------------------------------------------------
+  # Step 4: Build Lean Production Runtime Image (Only runs if Step 1-3 pass)
+  # ---------------------------------------------------------------------------
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-production-runtime'
+    args:
+      - 'build'
+      - '--target'
+      - 'runtime'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:${_TAG}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:latest'
+      - '.'
+
+# -----------------------------------------------------------------------------
+# Artifact Registry Push Gate:
+# Images listed here are automatically pushed by Cloud Build ONLY if all
+# preceding build & test steps exit with return code 0.
+# -----------------------------------------------------------------------------
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:${_TAG}'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:latest'
+
+# -----------------------------------------------------------------------------
+# Default Substitutions (Parameterized, NO hardcoded Project ID)
+# -----------------------------------------------------------------------------
+substitutions:
+  _REGION: 'asia-northeast3'
+  _REPOSITORY: 'stockbot-repo'
+  _IMAGE: 'stockbot-cloud-runner'
+  _TAG: 'phase1'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

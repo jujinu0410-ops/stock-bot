@@ -1,5 +1,8 @@
+import os
 import sys
 import json
+import tempfile
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Dict, Any, Optional
@@ -7,6 +10,9 @@ from typing import Tuple, Dict, Any, Optional
 # 프로젝트 루트 디렉토리 추가
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
+
+# 스캐너 실행 환경 모드 명시 (운영 DB/로그 오염 원천 차단)
+os.environ.setdefault("GEMS_SCANNER_MODE", "1")
 
 from src.database.db_manager import DatabaseManager
 from src.api.kiwoom_api import KiwoomAPIClient
@@ -16,6 +22,34 @@ from src.engine.trading_engine import TradingEngine
 from src.core.dto import ScanResultDTO
 from src.formatters.gems_formatter import render_gems_markdown
 from src.utils.logger import logger
+
+
+class IsolatedGemsDatabase:
+    """
+    Gemini Gems Scanner 전용 임시 격리 SQLite DB 컨텍스트 매니저.
+    - 운영 DB(stock_system.db)를 일절 건드리지 않고, 시스템 임시 디렉터리에 격리된 SQLite DB를 생성합니다.
+    - 컨텍스트 종료 시 임시 DB 및 디렉터리를 100% 자동 폐기(cleanup)하여 운영 데이터 오염과 Lock 충돌을 원천 차단합니다.
+    """
+    def __init__(self):
+        self.temp_dir = None
+        self.db = None
+
+    def __enter__(self) -> DatabaseManager:
+        self.temp_dir = tempfile.mkdtemp(prefix="gems_isolated_db_")
+        temp_db_path = str(Path(self.temp_dir) / "gems_temp.db")
+        self.db = DatabaseManager(temp_db_path)
+        return self.db
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        import gc
+        self.db = None
+        gc.collect()
+        if self.temp_dir and os.path.exists(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+            except Exception as e:
+                logger.debug(f"[IsolatedGemsDatabase] Temp DB cleanup notice: {e}")
+
 
 def resolve_stock_code(stock_input: str) -> Tuple[str, str]:
     """종목명 또는 종목코드를 6자리 코드 및 정식 종목명으로 변환"""
@@ -54,13 +88,18 @@ def resolve_stock_code(stock_input: str) -> Tuple[str, str]:
 
     return s, s
 
-def scan_stock_dto(stock_code_or_name: str) -> ScanResultDTO:
+def scan_stock_dto(stock_code_or_name: str, db: Optional[DatabaseManager] = None) -> ScanResultDTO:
     """
     관심 종목 1개(또는 종목코드)에 대해 시세, DART 재무, 기술적 지표를 수집·분석하여
     정형화된 ScanResultDTO 인스턴스를 반환합니다.
-    (Watchlist 매수 전 감시 기준이므로 candidate_reference_price / candidate_reference_atr 로 명명)
+    (운영 DB 격리를 위해 db 인자가 None이면 IsolatedGemsDatabase 임시 DB를 자동 생성/폐기합니다.)
     """
-    db = DatabaseManager()
+    if db is not None:
+        return _scan_stock_dto_core(stock_code_or_name, db)
+    with IsolatedGemsDatabase() as isolated_db:
+        return _scan_stock_dto_core(stock_code_or_name, isolated_db)
+
+def _scan_stock_dto_core(stock_code_or_name: str, db: DatabaseManager) -> ScanResultDTO:
     kiwoom = KiwoomAPIClient()
     market_api = RealMarketAPIClient()
     dart_api = DartAPIClient()
@@ -133,8 +172,8 @@ def scan_stock_dto(stock_code_or_name: str) -> ScanResultDTO:
 
     cand_ref_p = int(res.get("candidate_reference_price", cur_p))
     cand_ref_atr = float(res.get("candidate_reference_atr", atr_v))
-    rebound_delta = int(res.get("buy_rebound_delta") or (round(atr_v * 0.5) if atr_v > 0 else 0))
-    drop_delta = int(res.get("sell_drop_delta") or (round(atr_v * 0.8) if atr_v > 0 else 0))
+    rebound_delta = int(res.get("buy_rebound_delta") or 0)
+    drop_delta = int(res.get("sell_drop_delta") or 0)
     # 일봉 및 45분봉 원자값 추출
     daily_cho = res.get("daily_cho_recent2", [0, 0])
     daily_adx_dom = str(res.get("daily_adx_di_dominance", "-"))
@@ -150,13 +189,13 @@ def scan_stock_dto(stock_code_or_name: str) -> ScanResultDTO:
     intra_adx_dom = str(res.get("adx_di_dominance_45m", "-"))
     obv_trend = str(res.get("obv_45m_trend", "N/A"))
 
-    # 매수 승인 판정 및 상태
-    act_st = str(res.get("reason", "보유"))
-    if final_sc >= 70.0 and f_sc >= 65.0 and t_sc >= 60.0 and daily_chg < 5.0:
-        buy_approval = "🔵 ON (트레일링/눌림목 분할매수 승인)"
-        act_st = f"우수한 펀더멘탈({f_sc:.1f}점)과 기술추세({t_sc:.1f}점)를 갖춘 우량 종목으로, 당일 과열 폭등 없는 안정 구간({daily_chg:+.2f}%)입니다. 1차 최초 진입(50%) 및 2차 -1.5 ATR 눌림목 반등(30%) 분할 매수 진입이 매우 합리적입니다."
-    elif "제한적 분할추매 고려" in act_st:
-        buy_approval = "🔵 ON (제한적 매수 승인)"
+    # 공용 TradingEngine 분석 결과로부터 매매 신호 및 사유 수신 (독자 판정/문구 제거)
+    signal_type = str(res.get("signal_type", "관망"))
+    act_st = str(res.get("reason", "관망"))
+    if "매수" in signal_type:
+        buy_approval = f"🔵 ON ({signal_type})"
+    elif "매도" in signal_type or "손절" in signal_type:
+        buy_approval = f"🔴 OFF ({signal_type})"
     else:
         buy_approval = "🔴 OFF (매수 금지/관망)"
 
@@ -467,12 +506,12 @@ def scan_stock_dto(stock_code_or_name: str) -> ScanResultDTO:
         action_strategy=act_st
     )
 
-def scan_stock_for_gems(stock_code_or_name: str) -> str:
+def scan_stock_for_gems(stock_code_or_name: str, db: Optional[DatabaseManager] = None) -> str:
     """
     관심 종목 1개(또는 종목코드)에 대해 DTO를 생성하고 Gemini Gems 마크다운 리포트로 렌더링합니다.
     (기존 호출부 완벽 하위 호환)
     """
-    dto = scan_stock_dto(stock_code_or_name)
+    dto = scan_stock_dto(stock_code_or_name, db=db)
     return render_gems_markdown(dto)
 
 if __name__ == "__main__":

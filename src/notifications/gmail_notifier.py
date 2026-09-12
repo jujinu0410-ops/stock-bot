@@ -74,6 +74,11 @@ class GmailNotifier:
         self.recipient_email = sender_email
 
     def send_email(self, subject: str, html_content: str, attachments: List[Path] = None) -> bool:
+        import os
+        if os.getenv("STOCKBOT_TEST_MODE") == "1":
+            logger.info(f"[TEST_MODE] Email send suppressed: subject='{subject}'")
+            return False
+
         if not self.gmail_user or not self.gmail_password:
             logger.warning("[Gmail] GMAIL_SENDER_EMAIL 또는 GMAIL_APP_PASSWORD가 설정되지 않았습니다.")
             return False
@@ -118,6 +123,63 @@ class GmailNotifier:
             logger.error(f"[Gmail] 이메일 발송 최종 예외 발생: {e}", exc_info=True)
             return False
 
+    def send_failure_alert(
+        self,
+        session_name: str,
+        failed_step: str,
+        error_reason: str,
+        date_str_korean: Optional[str] = None
+    ) -> bool:
+        """
+        정상 리포트 생성 실패 시 관리자에게 최소 실패 알림 메일 발송.
+        주의: 본 메일에는 가격, 손절선, 목표가, 권고수량, 전략판단 등 어떠한 투자 수치/판단도 포함되지 않음 (Fail-Closed).
+        """
+        import os
+        from datetime import datetime
+        now_dt = datetime.now()
+        if not date_str_korean:
+            date_str_korean = f"{now_dt.month}월 {now_dt.day}일 {now_dt.strftime('%H:%M')}"
+
+        subject = f"[StockBot 실행 실패] {date_str_korean} {session_name} 리포트"
+
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>StockBot 실행 실패 알림</title>
+</head>
+<body style="font-family:-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; background-color:#F8FAFC; margin:0; padding:20px; color:#0F172A;">
+    <div style="max-width:560px; margin:0 auto; background:#FFFFFF; border:1px solid #E2E8F0; border-top:4px solid #DC2626; border-radius:8px; padding:20px; box-sizing:border-box;">
+        <div style="font-size:16px; font-weight:bold; color:#DC2626; margin-bottom:12px;">
+            🛑 StockBot {session_name} 리포트 생성 실패
+        </div>
+        <p style="font-size:13px; color:#334155; margin-bottom:16px; line-height:1.5;">
+            {session_name} 리포트를 생성하지 못했습니다.
+        </p>
+        <div style="background:#FEF2F2; border:1px solid #FECACA; border-radius:6px; padding:12px; font-size:12px; color:#991B1B; line-height:1.6; margin-bottom:16px;">
+            <div>• <b>실패 단계</b>: {failed_step}</div>
+            <div>• <b>원인</b>: {error_reason}</div>
+            <div>• <b>안내</b>: 정상 투자 리포트는 생성하지 않았습니다.</div>
+            <div>• <b>보안 상태</b>: Fail-Closed 상태 유지 (오염/추정 데이터 발송 원천 차단)</div>
+        </div>
+        <div style="font-size:11px; color:#94A3B8; text-align:center; padding-top:8px; border-top:1px solid #F1F5F9;">
+            ※ 본 메일은 시스템 이상 발생 시 자동 발송되는 알림이며, stale 데이터 및 추정 투자 정보는 일체 포함되지 않습니다.
+        </div>
+    </div>
+</body>
+</html>"""
+
+        if os.getenv("STOCKBOT_TEST_MODE") == "1":
+            logger.info(f"[TEST_MODE] failure alert external send suppressed: subject='{subject}', step='{failed_step}', reason='{error_reason}'")
+            return False
+
+        logger.info(f"[Gmail] 실패 알림 발송 시도: subject='{subject}', step={failed_step}, reason={error_reason}")
+        try:
+            return self.send_email(subject=subject, html_content=html_content, attachments=None)
+        except Exception as e_alert:
+            logger.critical(f"[Gmail] 🛑 실패 알림 메일 발송 중 예외 발생: {e_alert}", exc_info=True)
+            return False
+
     def generate_html_report(
         self,
         date_str: str,
@@ -125,7 +187,9 @@ class GmailNotifier:
         caught_signals: List[Dict[str, Any]],
         all_results: List[Dict[str, Any]],
         held_portfolio: List[Dict[str, Any]] = None,
-        disclosures: Optional[List[Dict[str, Any]]] = None
+        disclosures: Optional[List[Dict[str, Any]]] = None,
+        policy_display: Optional[Dict[str, Any]] = None,
+        marketcap_radar_items: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         환경변수 EMAIL_RENDER_VERSION에 따라 V1 또는 V2 렌더러로 라우팅 (V2 예외 시 V1 Fallback 절대 금지 및 RuntimeError 발생)
@@ -143,7 +207,9 @@ class GmailNotifier:
                     caught_signals=caught_signals,
                     all_results=all_results,
                     held_portfolio=held_portfolio,
-                    disclosures=disclosures
+                    disclosures=disclosures,
+                    policy_display=policy_display,
+                    marketcap_radar_items=marketcap_radar_items,
                 )
             except Exception as e:
                 self.fallback_occurred = True
@@ -296,7 +362,7 @@ class GmailNotifier:
                 if trade_mode == "SUSPENDED_HOLD" or code == "234920":
                     badge_bg, badge_border, badge_color = "#F1F5F9", "#94A3B8", "#475569"
                     action_kw = "⚫ 거래정지 보류/공시감시"
-                elif "수동" in clean_strategy or "USER_OVERRIDE" in clean_strategy or code == "348340":
+                elif "수동" in clean_strategy or "USER_OVERRIDE" in clean_strategy:
                     badge_bg, badge_border, badge_color = "#FFFBEB", "#FCD34D", "#B45309"
                     action_kw = "⚠️ DART미확정 (수동감시 31주)"
                 elif not f_confirmed or "재무" in clean_strategy or "미확정" in clean_strategy:

@@ -198,6 +198,14 @@ class RuntimeScheduler:
 
                 stocks_scanned += 1
 
+                # Policy Shadow is strictly isolated: it reads the completed
+                # Runtime snapshot and may only write its own SQLite database.
+                # Any failure is intentionally non-fatal to the existing scan.
+                self._capture_policy_shadow(scan_res, trading_date, now_str, completed_bar_ts, run_id)
+
+                # Phase 1: 45m ADD ADVISORY Sidecar Evaluation (Isolated persistence to add_advisory_45m)
+                self._evaluate_add_advisory_sidecar(code, scan_res, trading_date, completed_bar_ts)
+
                 # Deduplication & Snapshot Reason Decision
                 snapshot_reason = self._determine_snapshot_reason(code, scan_res, trading_date, is_manual)
 
@@ -239,7 +247,11 @@ class RuntimeScheduler:
                         "shadow_integrated_state": scan_res.get("shadow_integrated_state"),
                         "primary_blocker": scan_res.get("primary_blocker", "NONE"),
                         "all_blockers": scan_res.get("all_blockers", []),
-                        "existing_f_score": scan_res.get("existing_f_score"),
+                        # scan_journal's legacy numeric column serializes a
+                        # missing score as its established 0.0 sentinel.  The
+                        # Policy capture above has already received the
+                        # authoritative ``None`` and records DATA_GAP there.
+                        "existing_f_score": scan_res.get("existing_f_score") if scan_res.get("existing_f_score") is not None else 0.0,
                         "existing_final_score": scan_res.get("existing_final_score"),
                         "buy_approval": scan_res.get("buy_approval"),
                         "p0_status": scan_res.get("p0_status", "NONE"),
@@ -464,7 +476,11 @@ class RuntimeScheduler:
             quarterly_records = [dict(r) for r in q_rows] if q_rows else []
             fund_res = self.fund_scanner.evaluate_evidence(quarterly_records, stock_code)
             fund_state = fund_res.get("fundamental_state", "STABLE")
-            f_score = fund_res.get("f_score", 70.0)
+            # Keep the existing V4-facing fallback local to the pre-existing
+            # synthesis path, but never present it as an authoritative score
+            # to Policy Shadow when the underlying score is absent.
+            fundamental_f_score = fund_res.get("f_score")
+            f_score = fundamental_f_score if isinstance(fundamental_f_score, (int, float)) else 70.0
             turnaround_type = fund_res.get("turnaround_type", "NONE")
             turnaround_label = fund_res.get("turnaround_label", "안정 성장")
 
@@ -485,14 +501,16 @@ class RuntimeScheduler:
                 tech_state = eng_res.get("technical_state", "NEUTRAL")
                 tech_action = eng_res.get("technical_action", "BUY_WAIT")
                 intraday_dq = eng_res.get("intraday_data_quality", "VALID")
-                existing_f = eng_res.get("f_score", f_score)
+                existing_f = eng_res.get("f_score")
+                if not isinstance(existing_f, (int, float)):
+                    existing_f = fundamental_f_score if isinstance(fundamental_f_score, (int, float)) else None
                 existing_fin = eng_res.get("final_score", round(0.4 * f_score + 0.6 * t_score, 1))
             else:
                 t_score = 65.0
                 tech_state = "NEUTRAL"
                 tech_action = "BUY_WAIT"
                 intraday_dq = "VALID"
-                existing_f = f_score
+                existing_f = fundamental_f_score if isinstance(fundamental_f_score, (int, float)) else None
                 existing_fin = round(0.4 * f_score + 0.6 * t_score, 1)
 
             # 6. Synthesize Shadow State & Blockers
@@ -501,7 +519,7 @@ class RuntimeScheduler:
                 industry_score=ind_prof["total_score"],
                 exposure_type=ind_prof["exposure_type"],
                 fundamental_state=fund_state,
-                f_score=existing_f,
+                f_score=existing_f if isinstance(existing_f, (int, float)) else f_score,
                 forward_opp_state=fwd_opp,
                 forward_risk_state=fwd_risk,
                 technical_action=tech_action,
@@ -538,6 +556,8 @@ class RuntimeScheduler:
                 "forward_risk_override_tag": fwd_risk_tag,
                 "book_to_bill_summary": b2b_summary,
                 "t_score": t_score,
+                "is_45m_bearish_2plus": bool(eng_res.get("is_45m_bearish_2plus", False)) if eng_res else False,
+                "is_45m_breakdown": bool(eng_res.get("is_45m_breakdown", False)) if eng_res else False,
                 "technical_state": tech_state,
                 "technical_action": tech_action,
                 "intraday_data_quality": "VALID",
@@ -550,8 +570,16 @@ class RuntimeScheduler:
                 "shadow_integrated_state": shadow_synth["shadow_integrated_state"],
                 "primary_blocker": shadow_synth["primary_blocker"],
                 "all_blockers": shadow_synth["all_blockers"],
-                "existing_f_score": f_score,
-                "existing_final_score": round(0.4 * f_score + 0.6 * t_score, 1),
+                # ``existing_f_score`` is the authoritative TradingEngine / F
+                # score used by the Runtime result.  It deliberately remains
+                # NULL when no real score exists or for ETF; Policy Shadow must not fill
+                # it with 70.
+                "existing_f_score": None if (bool(eng_res.get("is_etf", False)) if eng_res else False) else existing_f,
+                "existing_final_score": existing_fin,
+                "is_etf": bool(eng_res.get("is_etf", False)) if eng_res else (
+                    any(k in stock_name.upper() for k in ['ETF', 'TIGER', 'RISE', 'PLUS', 'KODEX', 'ACE', 'SOL', 'KBSTAR', 'ARIRANG', 'HANARO', '커버드콜', 'SOLACTIVE']) or
+                    stock_code in ['371460', '484730', '490590', '161510', '088500']
+                ),
                 "buy_approval": buy_approval,
                 "p0_status": "NONE",
                 "position_cycle_id": "NONE",
@@ -562,6 +590,82 @@ class RuntimeScheduler:
         except Exception as e:
             logger.error(f"[ShadowScan] Error evaluating stock {stock_code}: {e}", exc_info=True)
             return None
+
+    def _capture_policy_shadow(
+        self, scan_res: Dict[str, Any], trading_date: str, now_str: str, completed_bar_ts: str, run_id: str
+    ) -> None:
+        """Best-effort Policy Shadow bridge.  It must never affect V4/Runtime status."""
+        try:
+            from src.policy.policy_shadow_store import PolicyShadowService, PolicyShadowStore
+
+            code = str(scan_res["stock_code"]).zfill(6)
+            rows = self.db.execute_query(
+                "SELECT quantity, avg_buy_price, data_validity_flag, data_hold_reason, effective_exit_line, trade_mode "
+                "FROM portfolio_positions WHERE stock_code = ?", (code,)
+            )
+            pos = dict(rows[0]) if rows else {}
+            all_positions = self.db.execute_query("SELECT stock_code FROM portfolio_positions WHERE quantity > 0") or []
+            data_hold = str(pos.get("data_hold_reason") or "")
+            mode = str(pos.get("trade_mode") or "")
+            raw = {
+                "asof_timestamp": now_str,
+                "source_identifier": f"{run_id}:{code}", "stock_code": code,
+                "market_price": scan_res.get("market_price"), "quantity": int(pos.get("quantity") or 0),
+                "weighted_avg_price": pos.get("avg_buy_price"),
+                "loss_pct": ((float(scan_res["market_price"]) / float(pos["avg_buy_price"]) - 1.0) * 100.0) if pos.get("avg_buy_price") and scan_res.get("market_price") else None,
+                "atr14": scan_res.get("atr14"),
+                # TradingEngine retains its legacy ETF display score, but F is
+                # not applicable to Policy Shadow ETF evaluation.
+                "f_score": None if (bool(scan_res.get("is_etf", False)) or code in ['371460', '484730', '490590', '161510', '088500']) else scan_res.get("existing_f_score"),
+                "t_score": scan_res.get("t_score"),
+                "is_etf": bool(scan_res.get("is_etf", False)) or code in ['371460', '484730', '490590', '161510', '088500'],
+                # This runtime scan has no V4 risk-target calculation of its
+                # own.  Accept a contemporaneous V4-provided value if one is
+                # ever supplied; otherwise Policy records DATA_GAP rather
+                # than reading recommendation/order fields or recalculating.
+                "risk_target_qty": scan_res.get("risk_target_qty"),
+                "daily_state": scan_res.get("technical_state"),
+                "is_45m_bearish_2plus": int(bool(scan_res.get("is_45m_bearish_2plus"))),
+                "is_45m_breakdown": int(bool(scan_res.get("is_45m_breakdown"))),
+                "is_45m_bearish_gate": int(bool(scan_res.get("is_45m_bearish_2plus") or scan_res.get("is_45m_breakdown"))),
+                "completed_45m_timestamp": completed_bar_ts,
+                "concentration_state": "BLOCKED" if mode == "CONCENTRATION_RISK" else "CLEAR",
+                "data_validity": int(pos.get("data_validity_flag", 0) or 0),
+                "suspension_state": "SUSPENDED" if mode == "SUSPENDED_HOLD" or "거래정지" in data_hold else "ACTIVE",
+                "v4_effective_stop": pos.get("effective_exit_line"),
+            }
+            PolicyShadowService(PolicyShadowStore()).observe(raw, [r["stock_code"] for r in all_positions])
+        except Exception as exc:
+            logger.warning(f"[PolicyShadow] isolated capture failed for {scan_res.get('stock_code')}: {exc}")
+
+    def _evaluate_add_advisory_sidecar(
+        self,
+        stock_code: str,
+        scan_res: Dict[str, Any],
+        trading_date: str,
+        completed_bar_ts: str
+    ):
+        """
+        Phase 1: 45m ADD ADVISORY sidecar evaluation and persistence into add_advisory_45m.
+        Failures in sidecar evaluation are caught so they do not disrupt the core scan_journal flow.
+        """
+        try:
+            from src.analysis.add_advisory_engine import AddAdvisory45mEngine
+            if not hasattr(self, "_add_advisory_engine") or self._add_advisory_engine is None:
+                self._add_advisory_engine = AddAdvisory45mEngine()
+
+            tech_ref = scan_res.get("technical_state", "UNKNOWN")
+            prev_advisory = self.db.get_latest_add_advisory_for_stock(stock_code)
+            advisory_entry = self._add_advisory_engine.evaluate_stock_advisory(
+                stock_code=stock_code,
+                trading_date=trading_date,
+                bar_timestamp=completed_bar_ts,
+                technical_state_reference=tech_ref,
+                latest_previous_advisory=prev_advisory
+            )
+            self.db.insert_add_advisory_45m(advisory_entry)
+        except Exception as e:
+            logger.error(f"[AddAdvisorySidecar] {stock_code} sidecar evaluation error: {e}", exc_info=True)
 
     def _determine_snapshot_reason(
         self,

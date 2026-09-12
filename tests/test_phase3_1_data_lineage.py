@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import pandas as pd
 import numpy as np
 from src.analysis.intraday_analysis import Intraday45mAnalyzer
@@ -16,7 +17,12 @@ class TestPhase31DataLineage(unittest.TestCase):
 
     def test_01_intraday_missing_data_explicit_error_code(self):
         """1. 결측값 정책: 데이터 부재 시 0이나 [0,0]으로 위장하지 않고 None 및 명시적 에러 코드 반환"""
-        res = self.analyzer.analyze_45m_indicators("999999")  # 존재하지 않는 임의의 코드
+        with patch.object(
+            self.analyzer,
+            "fetch_canonical_15m_data",
+            return_value=(None, "NONE", "NO_INTRADAY_DATA"),
+        ):
+            res = self.analyzer.analyze_45m_indicators("999999")
         self.assertFalse(res["has_45m_data"])
         self.assertIn("INVALID", res["intraday_quality"])
         self.assertEqual(res["intraday_error_code"], "NO_INTRADAY_DATA")
@@ -34,7 +40,7 @@ class TestPhase31DataLineage(unittest.TestCase):
             technical_state="STRONG"
         )
         md = render_gems_markdown(dto)
-        self.assertIn("🟢 1차 진입(50%) 주문 승인", md)
+        self.assertIn("🟢 1차 진입 주문 승인", md)
         self.assertIn("이 종목의 키움 트레일링 매수/매도 설정가와 수량 비중 가이드를 요약해 줘", md)
 
     def test_03_prompt_branching_buy_allowed_conditional(self):
@@ -48,7 +54,7 @@ class TestPhase31DataLineage(unittest.TestCase):
             technical_state="NEUTRAL"
         )
         md = render_gems_markdown(dto)
-        self.assertIn("🟡 1차 진입(50%) 조건부 승인", md)
+        self.assertIn("🟡 1차 진입 조건부 승인", md)
         self.assertIn("이 종목의 조건부 매수 승인 조건과 키움 분할매수/트레일링 설정 가이드를 요약해 줘", md)
 
     def test_04_prompt_branching_buy_wait_and_wait_data(self):

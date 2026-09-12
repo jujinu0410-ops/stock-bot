@@ -1,5 +1,7 @@
 import unittest
 import json
+import tempfile
+import os
 from src.database.db_manager import DatabaseManager
 from src.analysis.canonical_registry import CanonicalMetricRegistry, CanonicalConsistencyChecker
 from src.analysis.outcome_evaluator import OutcomeEvaluator
@@ -14,11 +16,79 @@ class TestPhase7ShadowJournal(unittest.TestCase):
     """
     @classmethod
     def setUpClass(cls):
-        cls.db = DatabaseManager()
+        cls._tmp_file = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        cls._tmp_file.close()
+        cls._tmp_db_path = cls._tmp_file.name
+        cls.db = DatabaseManager(cls._tmp_db_path)
         cls.radar = IndustryRadarEngine(cls.db)
         cls.checker = CanonicalConsistencyChecker(cls.db)
         cls.evaluator = OutcomeEvaluator(cls.db)
         cls.attribution = AttributionEngine(cls.db)
+
+        # ── test_01 픽스처: HD현대일렉트릭(267260) 2026 Q2 데이터 ──
+        # industry_runs (FK 참조) — run_mode, as_of_date, evidence_cutoff NOT NULL
+        cls.db.execute_non_query(
+            """INSERT OR IGNORE INTO industry_runs
+               (run_id, run_date, run_mode, as_of_date, evidence_cutoff, run_status)
+               VALUES (?,?,?,?,?,?)""",
+            ("PROD_2026_W33_001", "2026-08-17", "PRODUCTION", "2026-08-17", "2026-08-16", "COMPLETED")
+        )
+        # stock_info
+        cls.db.execute_non_query(
+            "INSERT OR IGNORE INTO stock_info (stock_code, stock_name, market_type) VALUES (?,?,?)",
+            ("267260", "HD현대일렉트릭", "KRX")
+        )
+        # quarterly_financials: revenue=1000, operating_income=251 → OPM=25.1%
+        # fiscal_period_end NOT NULL 필수
+        cls.db.execute_non_query(
+            """INSERT OR IGNORE INTO quarterly_financials
+               (stock_code, fiscal_year, fiscal_quarter, fiscal_period_end, fs_div,
+                revenue, operating_income, net_income)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            ("267260", 2026, "Q2", "2026-06-30", "CFS", 1000.0, 251.0, 200.0)
+        )
+        # order_backlog_metrics: backlog_yoy=28.5
+        cls.db.execute_non_query(
+            """INSERT OR IGNORE INTO order_backlog_metrics
+               (stock_code, fiscal_year, fiscal_quarter, order_backlog, order_backlog_yoy,
+                book_to_bill, scope_id)
+               VALUES (?,?,?,?,?,?,?)""",
+            ("267260", 2026, "Q2", 5000000.0, 28.5, 1.35, "CONSOLIDATED_CFS")
+        )
+        # industry_evidence: OPM 25.1 + backlog_yoy 28.5 (run_id='PROD_2026_W33_001')
+        # NOT NULL: source_type, source_name, evidence_date, normalized_value,
+        #           evidence_direction, reliability
+        for factor_name, metric_key, metric_val, doc_id in [
+            ("operating_margin", "operating_margin", 25.1, "DOC_OPM_267260_2026Q2"),
+            ("backlog_yoy_growth", "backlog_yoy_growth", 28.5, "DOC_BACKLOG_267260_2026Q2"),
+        ]:
+            cls.db.execute_non_query(
+                """INSERT OR IGNORE INTO industry_evidence
+                   (run_id, industry_id, factor_name, evidence_family, underlying_driver_id,
+                    origin_type, source_type, source_name, source_document_id,
+                    source_published_at, evidence_date, raw_value, extracted_fact_json,
+                    normalized_value, evidence_direction, reliability)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "PROD_2026_W33_001", "HD_ELEC", factor_name, "FUNDAMENTAL",
+                    factor_name.upper(), "DART_QUARTERLY",
+                    "DART_QUARTERLY", "DART_공시", doc_id,
+                    "2026-08-14", "2026-06-30",
+                    f"267260 HD현대일렉트릭 2026Q2 {factor_name}",
+                    json.dumps({"entity": "267260", "metric": metric_key,
+                                "value": metric_val, "scope": "CONSOLIDATED_CFS",
+                                "period": "2026_Q2"}),
+                    metric_val, "POSITIVE", "HIGH"
+                )
+            )
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            os.unlink(cls._tmp_db_path)
+        except Exception:
+            pass
+
 
     def setUp(self):
         self.db.execute_non_query("DELETE FROM scan_journal WHERE journal_id LIKE 'JRN_TEST%'")

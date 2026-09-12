@@ -535,7 +535,7 @@ class DartAPIClient:
         
         if code == "234920" or trade_mode == "SUSPENDED_HOLD":
             guide = "매매재개 전 가격·ATR 대응 금지. 상장적격성 심사, 개선기간, 거래재개 또는 상장폐지 관련 후속 공시만 감시."
-        elif code == "348340" or trade_mode == "USER_OVERRIDE":
+        elif trade_mode == "USER_OVERRIDE":
             guide = "DART 재무 미확정에 따른 사용자 수동 감시주문(활성가 24,450원 / 추적폭 700원 / 31주 미체결) 유지 및 실시간 호가 감시."
         elif trade_mode == "CONCENTRATION_RISK":
             guide = f"단일 비중 20% 초과 집중위험 종목으로, 공시 호악재와 무관하게 20% 초과 수량({rec_qty:,}주) 분할축소(33%)를 최우선 집행."
@@ -557,4 +557,3 @@ class DartAPIClient:
             "impact": impact,
             "guide": guide
         }
-

@@ -33,10 +33,12 @@ class PortfolioManager:
     - ATR 기반 계좌 위험예산(0.5%~0.75%) & 20% 비중 상한 포지션 사이징
     - DATA_HOLD 및 비정상 변동성(NATR >= 20%) 자동 주문 차단
     """
-    def __init__(self, db_manager: Optional[DatabaseManager] = None, kiwoom_client=None):
+    def __init__(self, db_manager: Optional[DatabaseManager] = None, kiwoom_client=None, holdings_backup_path: Optional[str] = None):
         self.db = db_manager if db_manager is not None else DatabaseManager()
         self.kiwoom = kiwoom_client if kiwoom_client else KiwoomAPIClient()
         self.config = ATR_CONFIG
+        # holdings_backup_path: None이면 기존 config/portfolio_holdings.json 사용 (운영 기본값 유지)
+        self._holdings_backup_path = holdings_backup_path
 
     def clear_all_holdings(self):
         """테스트 및 세션 갱신 시 기존 보유 종목 데이터 초기화"""
@@ -163,7 +165,12 @@ class PortfolioManager:
             self._update_portfolio_in_single_transaction(positions)
             
             # 로컬 JSON 파일 백업 갱신
-            cfg_path = pathlib.Path("config/portfolio_holdings.json")
+            if self._holdings_backup_path:
+                cfg_path = pathlib.Path(self._holdings_backup_path)
+            elif os.getenv("STOCKBOT_STATE_DIR"):
+                cfg_path = pathlib.Path(os.getenv("STOCKBOT_STATE_DIR")) / "config" / "portfolio_holdings.json"
+            else:
+                cfg_path = pathlib.Path("config/portfolio_holdings.json")
             try:
                 cfg_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(cfg_path, "w", encoding="utf-8") as f:
@@ -398,20 +405,34 @@ class PortfolioManager:
                     at = current_price * 0.03
                 natr_pct = round((at / (current_price + 1e-9)) * 100.0, 2)
 
-                # 3. 🔥 P0(감시개시 기준가격) & A0(기준 ATR) 동결 및 기존 보유종목 마이그레이션
+                # 3. 🔥 P0(감시개시 기준가격) & A0(기준 ATR) 동결 및 포지션 사이클 영속 관리
                 p0 = safe_float(p_row.get("anchor_price_p0"))
                 a0 = safe_float(p_row.get("anchor_atr_a0"))
                 cycle_id = p_row.get("position_cycle_id")
                 anchor_created_at = p_row.get("anchor_created_at")
+                reanchor_flag = int(p_row.get("reanchor_flag", 0) or 0)
 
-                is_legacy_misanchored = (p0 > current_price * 1.15 and pnl_pct < -10.0)
                 is_migrated_anchor = False
-                if p0 <= 0 or a0 <= 0 or (p_row.get("reanchor_flag", 0) == 1) or is_legacy_misanchored:
+                if reanchor_flag == 1:
+                    # 사용자의 명시적 1회성 수동 재앵커링 승인 시에만 수행
+                    logger.warning(f"[PortfolioManager] ⚠️ [{code}] 사용자의 명시적 reanchor_flag=1 감지: P0({p0} -> {current_price:,}원), A0({a0} -> {at:.1f}) 수동 재앵커링 수행")
                     p0 = float(current_price)
                     a0 = float(at)
                     anchor_created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    cycle_id = f"{code}_{datetime.now().strftime('%Y%m%d')}_V4"
+                    cycle_id = f"{code}_{datetime.now().strftime('%Y%m%d%H%M')}_MANUAL"
                     is_migrated_anchor = True
+                    # 적용 즉시 DB에서 reanchor_flag를 0으로 안전 복원
+                    self.db.execute_non_query("UPDATE portfolio_positions SET reanchor_flag = 0 WHERE stock_code = ?", (code,))
+                elif p0 <= 0 or a0 <= 0 or not cycle_id:
+                    # 신규 편입 종목 최초 앵커링
+                    p0 = float(current_price)
+                    a0 = float(at)
+                    anchor_created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    cycle_id = f"{code}_{datetime.now().strftime('%Y%m%d%H%M')}_V4"
+                    is_migrated_anchor = True
+                else:
+                    # 기존 보유종목: 동일 포지션 사이클에서는 P0/A0 절대 불변
+                    is_migrated_anchor = False
 
             # 4. 🔥 데이터 이상 및 자동 주문설정 차단 검증 (DATA_HOLD)
             data_validity_flag = 1
@@ -443,8 +464,6 @@ class PortfolioManager:
                 trade_mode = str(mode_override).upper()
             elif eval_weight_pct > self.config.get("max_position_weight_pct", 20.0):
                 trade_mode = "CONCENTRATION_RISK" # 단일 비중 20% 초과 종목
-            elif pnl_pct <= -25.0 and code == "348340":
-                trade_mode = "EMERGENCY"  # 뉴로메카 등 고위험 비상축소
             else:
                 trade_mode = "NORMAL"
 
@@ -460,9 +479,8 @@ class PortfolioManager:
             prev_highest_intraday = safe_float(p_row.get("highest_intraday") or p_row.get("highest_after_activation"))
             highest_intraday = max(prev_highest_intraday, highest_close, float(current_price))
 
+            # 기존 손절가 보존: 현재가가 손절가를 하회하더라도 절대 0으로 초기화하지 않음
             prev_confirmed_stop = safe_float(p_row.get("previous_confirmed_stop") or p_row.get("confirmed_stop_price"))
-            if prev_confirmed_stop >= current_price or prev_confirmed_stop <= 0:
-                prev_confirmed_stop = 0.0
 
             pos_risk = ATRRiskEngine.calculate_position_risk(
                 p0=p0,
@@ -491,6 +509,7 @@ class PortfolioManager:
             candidate_stop = pos_risk["candidate_stop"]
             ratchet_stop = pos_risk["ratchet_stop"]
             kiwoom_stop_tick = pos_risk["kiwoom_stop_tick"]
+            is_stop_breached = pos_risk.get("is_stop_breached", False) or (prev_confirmed_stop > 0 and current_price <= prev_confirmed_stop)
             raw_profit_activation = pos_risk["raw_profit_activation"]
             effective_profit_activation = raw_profit_activation
             profit_act_status = pos_risk["profit_activation_status"]
@@ -512,14 +531,41 @@ class PortfolioManager:
             lifecycle_status = pos_risk["lifecycle_status"]
             profit_progress_1atr_reached = bool(highest_close >= (p0 + a0))
 
-            # 손절 갱신 상태 판정
-            if prev_confirmed_stop == 0:
+            # 동일 포지션 사이클 내 손절 래칫 / 익절 추적선 절대 하향 금지 Fail-Closed 검증
+            if not is_migrated_anchor and prev_confirmed_stop > 0:
+                if isinstance(kiwoom_stop_tick, (int, float)) and kiwoom_stop_tick < prev_confirmed_stop:
+                    err_ratchet = f"🛑 [손절 래칫 하향 감지 - 발송 차단] {name}({code}) 금일 확정 손절가({kiwoom_stop_tick}) < 전일 확정 손절가({prev_confirmed_stop})"
+                    logger.critical(err_ratchet)
+                    raise RuntimeError(err_ratchet)
+
+            if profit_act_status == "ACTIVE":
+                prev_pt = safe_float(p_row.get("profit_trail"))
+                if prev_pt > 0 and profit_trail < prev_pt:
+                    err_trail = f"🛑 [익절 추적선 하향 감지 - 발송 차단] {name}({code}) 금일 추적선({profit_trail}) < 전일 추적선({prev_pt})"
+                    logger.critical(err_trail)
+                    raise RuntimeError(err_trail)
+
+            # 스마트폰 조치 및 손절 갱신 상태 판정
+            if is_suspended or trade_mode == "SUSPENDED_HOLD":
+                smartphone_action = "HOLD — 주문 설정 금지"
+                stop_update_status = "HOLD (거래정지)"
+            elif p_row.get("user_override_flag") or trade_mode == "USER_OVERRIDE":
+                smartphone_action = "수동감시 — 자동 변경 금지"
+                stop_update_status = "수동감시"
+            elif data_validity_flag == 0 or trade_mode == "HOLD":
+                smartphone_action = "HOLD — 주문 설정 금지"
+                stop_update_status = "HOLD (데이터보류)"
+            elif is_stop_breached:
+                smartphone_action = "손절선 침범 — 즉시 확인"
+                stop_update_status = "🚨 손절선 침범 — 즉시 확인"
+            elif prev_confirmed_stop == 0 or is_migrated_anchor:
+                smartphone_action = "신규 입력"
                 stop_update_status = "🆕 신규설정"
             elif isinstance(kiwoom_stop_tick, (int, float)) and kiwoom_stop_tick > prev_confirmed_stop:
-                stop_update_status = "⬆️ 상향갱신"
-            elif is_suspended or trade_mode == "SUSPENDED_HOLD":
-                stop_update_status = "HOLD (거래정지 / 자동승계금지)"
+                smartphone_action = "상향 수정"
+                stop_update_status = "⬆️ 상향수정"
             else:
+                smartphone_action = "변경 없음"
                 stop_update_status = "유지"
 
             # 권고 방향 및 실제 권고 주문수량 산출
@@ -528,12 +574,6 @@ class PortfolioManager:
             if code == "234920" or trade_mode == "SUSPENDED_HOLD":
                 order_direction = "보류 (거래정지 [매매불가])"
                 actual_recommended_qty = 0
-            elif code == "348340": # 뉴로메카 수동 감시주문 오버라이드
-                user_override_flag = True
-                manual_order_info = "활성가 24,450원 / 추적폭 700원 / 31주 (미체결)"
-                trade_mode = "USER_OVERRIDE"
-                order_direction = "수동감시 (24,450원/700원/31주 미체결)"
-                actual_recommended_qty = 31
             elif data_validity_flag == 0 or trade_mode == "HOLD":
                 order_direction = f"보류 ({' / '.join(data_hold_reasons) if data_hold_reasons else 'DATA_HOLD'})"
                 actual_recommended_qty = 0
@@ -564,12 +604,6 @@ class PortfolioManager:
             if code == "234920" or trade_mode == "SUSPENDED_HOLD":
                 display_stop_tick = "HOLD"
                 display_target_tick = "HOLD"
-                display_buy_tick = "HOLD"
-                display_exit_tick = "HOLD"
-                auto_order_enabled = False
-            elif code == "348340":
-                display_stop_tick = "HOLD"
-                display_target_tick = "24,450원 (수동)"
                 display_buy_tick = "HOLD"
                 display_exit_tick = "HOLD"
                 auto_order_enabled = False
@@ -677,13 +711,18 @@ class PortfolioManager:
                 "stop_update_status": stop_update_status,
 
                 # 익절 및 트레일링선
+                "raw_profit_activation": int(round(raw_profit_activation)),
+                "profit_activation_price": int(round(raw_profit_activation)),
                 "profit_activation_raw": int(round(raw_profit_activation)),
                 "profit_activation_effective": int(round(effective_profit_activation)),
                 "profit_activation_status": profit_act_status,
                 "profit_trail_delta": profit_trail_delta,
+                "profit_trail": int(round(profit_trail)),
                 "profit_trail_price": int(round(profit_trail)),
                 "effective_exit_line": int(round(effective_exit_line)),
                 "target_profit_price": kiwoom_target_tick,
+                "smartphone_action": smartphone_action,
+                "is_stop_breached": is_stop_breached,
 
                 # 키움 호가 보정값
                 "kiwoom_buy_tick_price": display_buy_tick,
@@ -810,14 +849,17 @@ class PortfolioManager:
             is_45m_bearish_2plus = item.get("is_45m_bearish_2plus", False)
             is_45m_breakdown = item.get("is_45m_breakdown", False)
             is_cho_outflow = item.get("is_cho_outflow", False)
+            is_stop_breached_item = item.get("is_stop_breached", False)
 
             if trade_mode == "SUSPENDED_HOLD" or item.get("stock_code") == "234920":
                 item["action_status"] = "⚠️ 거래정지 [상장적격성 실질심사 (매매불가)]"
                 item["order_direction"] = "보류 (거래정지 [매매불가])"
                 item["recommended_order_qty"] = 0
                 item["recommended_quantity"] = 0
-            elif item.get("user_override_flag", False) or item.get("stock_code") == "348340":
-                item["action_status"] = "⚠️ DART 미확정 [수동감시: 24,450원/700원/31주]"
+            elif item.get("user_override_flag", False):
+                item["action_status"] = "⚠️ 사용자 수동감시"
+            elif is_stop_breached_item:
+                item["action_status"] = "🚨 손절선 침범 [손실축소 판단 필요]"
             elif trade_mode == "HOLD" or not f_confirmed or completeness < 90.0:
                 item["action_status"] = f"⚠️ {item['data_hold_reason']} (보류)"
             elif trade_mode == "EMERGENCY":
@@ -837,7 +879,15 @@ class PortfolioManager:
                     item["action_status"] = f"⚠️ 비중과다({weight_pct}%) 집중위험 (추매금지/보유)"
             elif is_tier3_sell:
                 item["action_status"] = f"🚨 매도 대응{adx_note}{intraday_cho_note}"
-            elif is_45m_bearish_2plus and item["t_score"] >= 50.0:
+            elif (
+                str(item.get("order_direction", "")).startswith("매수")
+                and item.get("recommended_order_qty", 0) >= 1
+                and item.get("data_validity_flag", 1) == 1
+                and item.get("auto_order_enabled", True)
+                and trade_mode == "NORMAL"
+                and is_45m_bearish_2plus
+                and item["t_score"] >= 50.0
+            ):
                 item["action_status"] = "🎯 45m 눌림목 분할매수"
             else:
                 item["action_status"] = "🟢 계속 보유/홀딩"

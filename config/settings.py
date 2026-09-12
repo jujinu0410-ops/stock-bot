@@ -4,9 +4,16 @@ from pathlib import Path
 # BASE DIRECTORY
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# STATE DIRECTORY (Cloud / Local dynamic binding)
+_custom_state_dir = os.getenv("STOCKBOT_STATE_DIR")
+if _custom_state_dir:
+    STATE_DIR = Path(_custom_state_dir).resolve()
+else:
+    STATE_DIR = BASE_DIR
+
 # DATA & LOG DIRECTORIES
-DATA_DIR = BASE_DIR / "data"
-LOG_DIR = BASE_DIR / "logs"
+DATA_DIR = STATE_DIR / "data"
+LOG_DIR = STATE_DIR / "logs"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -20,13 +27,20 @@ LOG_FILE_PATH = LOG_DIR / "stock_system.log"
 # ENV FILE LOADER (C:/Users/jooji/.env 또는 로컬 .env)
 def load_env_vars(env_path: str = "C:/Users/jooji/.env") -> dict:
     config = {}
-    if os.path.exists(env_path):
-        with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    k, v = line.split('=', 1)
-                    config[k.strip()] = v.strip().strip('"').strip("'")
+    if os.getenv("STOCKBOT_CLOUD_MODE") == "1":
+        # Cloud mode prioritizes container environment variables / Secret Manager
+        return config
+    # Local fallback
+    paths_to_try = [env_path, str(BASE_DIR / ".env")]
+    for p in paths_to_try:
+        if os.path.exists(p):
+            with open(p, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        k, v = line.split('=', 1)
+                        config[k.strip()] = v.strip().strip('"').strip("'")
+            break
     return config
 
 _env_vars = load_env_vars()
@@ -594,6 +608,37 @@ TABLE_SCHEMAS = {
             lock_created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL
         );
+    """,
+    "add_advisory_45m": """
+        CREATE TABLE IF NOT EXISTS add_advisory_45m (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trading_date TEXT NOT NULL,
+            stock_code TEXT NOT NULL,
+            bar_timestamp TEXT NOT NULL,
+            evaluated_at TEXT NOT NULL,
+            vwap9 REAL,
+            vwap26 REAL,
+            vwap_state TEXT,
+            vwap_cross_state TEXT,
+            vwap_cross_age INTEGER,
+            obv REAL,
+            obv9 REAL,
+            obv_state TEXT,
+            obv_gap REAL,
+            obv_gap_delta REAL,
+            obv_gap_state TEXT,
+            chaikin_value REAL,
+            chaikin_prev REAL,
+            chaikin_delta REAL,
+            chaikin_state TEXT,
+            technical_state_reference TEXT,
+            add_advisory_state TEXT NOT NULL,
+            alert_candidate INTEGER DEFAULT 0,
+            reason_codes TEXT,
+            data_quality TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(stock_code, bar_timestamp)
+        );
     """
 }
 
@@ -614,6 +659,9 @@ INDEX_SCHEMAS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_journal_id ON scan_journal(journal_id);",
     "CREATE INDEX IF NOT EXISTS idx_signal_outcomes_journal ON signal_outcomes(journal_id);",
     "CREATE INDEX IF NOT EXISTS idx_scheduler_runs_date_task ON scheduler_runs(trading_date, task_type);",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduler_runs_id ON scheduler_runs(run_id);"
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduler_runs_id ON scheduler_runs(run_id);",
+    "CREATE INDEX IF NOT EXISTS idx_add_advisory_code_bar ON add_advisory_45m(stock_code, bar_timestamp);",
+    "CREATE INDEX IF NOT EXISTS idx_add_advisory_date_state ON add_advisory_45m(trading_date, add_advisory_state);"
 ]
+
 

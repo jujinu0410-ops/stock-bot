@@ -167,7 +167,7 @@ class TestPhase0Phase1(unittest.TestCase):
         self.assertIn("🤖 [Gemini Gems 전용 정밀 진단 프롬프트 데이터]", md)
         self.assertIn("1. 📈 키움 REST & 실시간 시세", md)
         self.assertIn("2. ⏱️ 5단계 매매 대응전략 원자값 연동 지표", md)
-        self.assertIn("3. ⚙️ ATR V4 트레일링 및 3단계 분할매매 시뮬레이션 파라미터 (PREVIEW ONLY)", md)
+        self.assertIn("3. ⚙️ ATR V4 트레일링 및 분할매매 시뮬레이션 파라미터 (PREVIEW ONLY)", md)
         self.assertIn("4. 🏢 OpenDART 2025년 공시 재무", md)
         self.assertIn("5. 🔭 Forward Order / Disclosure Evidence", md)
         self.assertIn("6. ⚖️ 100점 만점 가중 종합점수 & 5단계 매수 승인 최종 판정", md)

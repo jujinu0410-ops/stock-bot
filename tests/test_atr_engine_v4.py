@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import math
 import pandas as pd
 import numpy as np
@@ -357,18 +358,18 @@ class TestATREngineV4(unittest.TestCase):
         self.assertEqual(disp_act_status, "HOLD")
         self.assertEqual(disp_risk_target_qty, "N/A (HOLD)")
 
-    def test_23_neuromeka_auto_trailing_isolated_from_hd_hyundai(self):
-        """테스트 23: 뉴로메카 자동 트레일링폭에 HD현대일렉트릭의 48,893원이 들어가지 않고 수동 700원 출력될 것"""
-        hd_trail_delta = 48893
-        neuromeka_code = "348340"
-        
-        # 이전 행 값이 뉴로메카로 누출되지 않음을 증명
-        disp_trail_delta = hd_trail_delta
-        if neuromeka_code == "348340":
-            disp_trail_delta = "수동 700원"
-            
-        self.assertEqual(disp_trail_delta, "수동 700원")
-        self.assertNotEqual(disp_trail_delta, hd_trail_delta)
+    def test_23_neuromeka_uses_standard_atr_trailing_width(self):
+        """테스트 23: 뉴로메카도 일반 종목과 동일하게 0.8 ATR 익절 trailing 폭을 사용한다."""
+        from src.engine.risk_engine import ATRRiskEngine
+
+        result = ATRRiskEngine.calculate_position_risk(
+            p0=24000.0, a0=1200.0, at=1200.0, current_price=24000.0,
+            highest_close=24000.0, highest_high=24000.0,
+            trade_mode="NORMAL",
+        )
+
+        self.assertEqual(result["profit_trail_delta"], 960)
+        self.assertNotEqual(result["profit_trail_delta"], 700)
 
     def test_24_deduplication_fingerprint_blocks_duplicate_dispatch(self):
         """테스트 24: 동일한 거래일·세션·잔고 해시로 연속 실행 시 메일 발송 차단 검증"""
@@ -459,26 +460,36 @@ class TestATREngineV4(unittest.TestCase):
         """테스트 29: DART 공시 브리핑의 매매 대응 가이드가 포지션 전략(Trade Mode)을 최우선 준수할 것"""
         from src.api.dart_api import DartAPIClient
         client = DartAPIClient()
-        
-        # 1. 자이글(SUSPENDED_HOLD)
-        zaigle_stock = {"stock_code": "234920", "trade_mode": "SUSPENDED_HOLD", "recommended_order_qty": 0}
-        b_zaigle = client._generate_disclosure_briefing("자이글", "234920", "반기보고서 (2026.06)", "202608140001", "20260814", stock_info=zaigle_stock)
-        self.assertIn("매매재개 전 가격·ATR 대응 금지", b_zaigle["guide"])
-        
-        # 2. DSC인베스트먼트(RECOVERY)
-        dsc_stock = {"stock_code": "241520", "trade_mode": "RECOVERY", "recommended_order_qty": 34}
-        b_dsc = client._generate_disclosure_briefing("DSC인베스트먼트", "241520", "반기보고서 (2026.06)", "202608140002", "20260814", stock_info=dsc_stock)
-        self.assertIn("30%(34주) 손실축소 분할매도", b_dsc["guide"])
-        
-        # 3. 테이팩스(CONCENTRATION_RISK)
-        tpx_stock = {"stock_code": "055490", "trade_mode": "CONCENTRATION_RISK", "recommended_order_qty": 103}
-        b_tpx = client._generate_disclosure_briefing("테이팩스", "055490", "반기보고서 (2026.06)", "202608140003", "20260814", stock_info=tpx_stock)
-        self.assertIn("20% 초과 수량(103주) 분할축소", b_tpx["guide"])
-        
-        # 4. 뉴로메카(USER_OVERRIDE)
-        nrm_stock = {"stock_code": "348340", "trade_mode": "USER_OVERRIDE", "recommended_order_qty": 31}
-        b_nrm = client._generate_disclosure_briefing("뉴로메카", "348340", "반기보고서 (2026.06)", "202608140004", "20260814", stock_info=nrm_stock)
-        self.assertIn("사용자 수동 감시주문(활성가 24,450원 / 추적폭 700원 / 31주 미체결)", b_nrm["guide"])
+
+        half_year_financials = {
+            "fiscal_year": 2026,
+            "quarter_code": "11012",
+            "revenue": 1_000_000_000,
+            "revenue_yoy": 10.0,
+            "operating_profit": 100_000_000,
+            "op_profit_yoy": 20.0,
+            "operating_cash_flow": 80_000_000,
+        }
+        with patch.object(client, "get_financial_statement", return_value=half_year_financials):
+            # 1. 자이글(SUSPENDED_HOLD)
+            zaigle_stock = {"stock_code": "234920", "trade_mode": "SUSPENDED_HOLD", "recommended_order_qty": 0}
+            b_zaigle = client._generate_disclosure_briefing("자이글", "234920", "반기보고서 (2026.06)", "202608140001", "20260814", stock_info=zaigle_stock)
+            self.assertIn("매매재개 전 가격·ATR 대응 금지", b_zaigle["guide"])
+
+            # 2. DSC인베스트먼트(RECOVERY)
+            dsc_stock = {"stock_code": "241520", "trade_mode": "RECOVERY", "recommended_order_qty": 34}
+            b_dsc = client._generate_disclosure_briefing("DSC인베스트먼트", "241520", "반기보고서 (2026.06)", "202608140002", "20260814", stock_info=dsc_stock)
+            self.assertIn("30%(34주) 손실축소 분할매도", b_dsc["guide"])
+
+            # 3. 테이팩스(CONCENTRATION_RISK)
+            tpx_stock = {"stock_code": "055490", "trade_mode": "CONCENTRATION_RISK", "recommended_order_qty": 103}
+            b_tpx = client._generate_disclosure_briefing("테이팩스", "055490", "반기보고서 (2026.06)", "202608140003", "20260814", stock_info=tpx_stock)
+            self.assertIn("20% 초과 수량(103주) 분할축소", b_tpx["guide"])
+
+            # 4. 뉴로메카(NORMAL)
+            nrm_stock = {"stock_code": "348340", "trade_mode": "NORMAL", "recommended_order_qty": 0}
+            b_nrm = client._generate_disclosure_briefing("뉴로메카", "348340", "반기보고서 (2026.06)", "202608140004", "20260814", stock_info=nrm_stock)
+            self.assertIn("기존 V4 목표가 및 트레일링 손절선 기준 안정적 보유 지속", b_nrm["guide"])
 
 if __name__ == "__main__":
     unittest.main()

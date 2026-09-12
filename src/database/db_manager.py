@@ -1,10 +1,14 @@
 import sqlite3
 import os
 import json
+import pathlib
 import pandas as pd
 from typing import List, Dict, Any, Optional
 from config.settings import DB_PATH, TABLE_SCHEMAS, INDEX_SCHEMAS
 from src.utils.logger import logger
+
+# 모듈 기준 프로젝트 루트 (src/database/db_manager.py → 세 단계 위)
+_DB_MANAGER_BASE_DIR = pathlib.Path(__file__).resolve().parent.parent.parent
 
 class DatabaseManager:
     """
@@ -12,6 +16,20 @@ class DatabaseManager:
     """
     def __init__(self, db_path: str = str(DB_PATH)):
         self.db_path = db_path
+
+        # 테스트 환경 및 온디맨드 스캐너 환경에서 실수로 운영 DB를 열지 못하도록 Fail-Fast 보호
+        import os as _os
+        if _os.environ.get("STOCKBOT_TEST_MODE") == "1" or _os.environ.get("GEMS_SCANNER_MODE") == "1":
+            _op_db = str((_DB_MANAGER_BASE_DIR / "data" / "stock_system.db").resolve())
+            if str(pathlib.Path(db_path).resolve()) == _op_db:
+                mode_str = "STOCKBOT_TEST_MODE=1" if _os.environ.get("STOCKBOT_TEST_MODE") == "1" else "GEMS_SCANNER_MODE=1"
+                raise RuntimeError(
+                    f"[{mode_str}] 스캐너/테스트 환경에서 운영 DB 접근이 차단되었습니다.\n"
+                    f"  운영 DB: {_op_db}\n"
+                    f"  실제로 주입된 경로: {db_path}\n"
+                    "반드시 임시 격리 DB 경로를 명시적으로 전달하세요."
+                )
+
         self._init_db()
 
     def get_connection(self) -> sqlite3.Connection:
@@ -1334,6 +1352,104 @@ class DatabaseManager:
     def get_today_scheduler_runs(self, trading_date: str) -> List[Dict[str, Any]]:
         """당일 스케줄러 실행 기록 목록 조회"""
         query = "SELECT * FROM scheduler_runs WHERE trading_date = ? ORDER BY id ASC"
+        rows = self.execute_query(query, (trading_date,))
+        return [dict(r) for r in rows] if rows else []
+
+    def get_latest_scan_journal_for_stock(self, stock_code: str) -> Optional[Dict[str, Any]]:
+        """특정 종목의 가장 최근 Scan Journal 스냅샷 조회 (상태 변경 감지용)"""
+        query = "SELECT * FROM scan_journal WHERE stock_code = ? ORDER BY id DESC LIMIT 1"
+        rows = self.execute_query(query, (stock_code,))
+        if not rows:
+            return None
+        return dict(rows[0])
+
+    # =========================================================================
+    # Phase 1: 45m ADD ADVISORY Persistence Methods
+    # =========================================================================
+    def insert_add_advisory_45m(self, entry: Dict[str, Any]) -> bool:
+        """45m ADD ADVISORY 레코드 저장 (UNIQUE(stock_code, bar_timestamp) 중복 적재 방지)"""
+        query = """
+            INSERT OR IGNORE INTO add_advisory_45m (
+                trading_date, stock_code, bar_timestamp, evaluated_at,
+                vwap9, vwap26, vwap_state, vwap_cross_state, vwap_cross_age,
+                obv, obv9, obv_state, obv_gap, obv_gap_delta, obv_gap_state,
+                chaikin_value, chaikin_prev, chaikin_delta, chaikin_state,
+                technical_state_reference, add_advisory_state, alert_candidate,
+                reason_codes, data_quality
+            ) VALUES (
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?
+            )
+        """
+        params = (
+            entry.get("trading_date"),
+            entry.get("stock_code"),
+            entry.get("bar_timestamp"),
+            entry.get("evaluated_at"),
+            entry.get("vwap9"),
+            entry.get("vwap26"),
+            entry.get("vwap_state"),
+            entry.get("vwap_cross_state"),
+            entry.get("vwap_cross_age"),
+            entry.get("obv"),
+            entry.get("obv9"),
+            entry.get("obv_state"),
+            entry.get("obv_gap"),
+            entry.get("obv_gap_delta"),
+            entry.get("obv_gap_state"),
+            entry.get("chaikin_value"),
+            entry.get("chaikin_prev"),
+            entry.get("chaikin_delta"),
+            entry.get("chaikin_state"),
+            entry.get("technical_state_reference"),
+            entry.get("add_advisory_state"),
+            entry.get("alert_candidate", 0),
+            entry.get("reason_codes"),
+            entry.get("data_quality")
+        )
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+
+    def get_latest_add_advisory_for_stock(
+        self,
+        stock_code: str,
+        trading_date: Optional[str] = None,
+        max_bar_timestamp: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """특정 종목의 가장 최근 45m ADD ADVISORY 조회 (trading_date 및 max_bar_timestamp 지정 시 Freshness 필터링)"""
+        if trading_date and max_bar_timestamp:
+            query = "SELECT * FROM add_advisory_45m WHERE stock_code = ? AND trading_date = ? AND bar_timestamp <= ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
+            rows = self.execute_query(query, (stock_code, trading_date, max_bar_timestamp))
+        elif trading_date:
+            query = "SELECT * FROM add_advisory_45m WHERE stock_code = ? AND trading_date = ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
+            rows = self.execute_query(query, (stock_code, trading_date))
+        else:
+            query = "SELECT * FROM add_advisory_45m WHERE stock_code = ? ORDER BY id DESC LIMIT 1"
+            rows = self.execute_query(query, (stock_code,))
+        if not rows:
+            return None
+        return dict(rows[0])
+
+    def get_add_advisories_by_date(self, trading_date: str) -> List[Dict[str, Any]]:
+        """특정 거래일의 45m ADD ADVISORY 목록 조회"""
+        query = "SELECT * FROM add_advisory_45m WHERE trading_date = ? ORDER BY id ASC"
         rows = self.execute_query(query, (trading_date,))
         return [dict(r) for r in rows] if rows else []
 

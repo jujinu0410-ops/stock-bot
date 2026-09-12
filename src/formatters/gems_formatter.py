@@ -12,9 +12,9 @@ def render_gems_markdown(dto: ScanResultDTO) -> str:
 
     # 1. 실행 가능 주문 상태 및 Section 3 렌더링
     if dto.technical_action == "BUY_ALLOWED":
-        order_exec_status = "🟢 1차 진입(50%) 주문 승인 (Technical Gate: BUY_ALLOWED 통과)"
+        order_exec_status = "🟢 1차 진입 주문 승인 (Technical Gate: BUY_ALLOWED 통과)"
     elif dto.technical_action == "BUY_ALLOWED_CONDITIONAL":
-        order_exec_status = "🟡 1차 진입(50%) 조건부 승인 (Technical Gate: BUY_ALLOWED_CONDITIONAL)"
+        order_exec_status = "🟡 1차 진입 조건부 승인 (Technical Gate: BUY_ALLOWED_CONDITIONAL)"
     elif dto.technical_action == "BUY_WAIT":
         order_exec_status = "⏸️ 1차 진입 보류/대기 (Technical Gate: BUY_WAIT - 45m 수급 약세)"
     elif dto.technical_action == "BUY_WAIT_DATA":
@@ -24,34 +24,36 @@ def render_gems_markdown(dto: ScanResultDTO) -> str:
     else:
         order_exec_status = "🔴 NONE (현재 매수 금지 / 주문 입력 불가)"
 
+    rebound_str = f"+{dto.buy_rebound_delta:,}원" if dto.buy_rebound_delta else "NOT_AVAILABLE"
+    drop_str = f"-{dto.sell_drop_delta:,}원" if dto.sell_drop_delta else "NOT_AVAILABLE"
+
     if is_buy_on and dto.technical_action in ("BUY_ALLOWED", "BUY_ALLOWED_CONDITIONAL", "BUY_WAIT"):
-        section_3 = f"""3. ⚙️ ATR V4 트레일링 및 3단계 분할매매 시뮬레이션 파라미터 (PREVIEW ONLY)
+        section_3 = f"""3. ⚙️ ATR V4 트레일링 및 분할매매 시뮬레이션 파라미터 (PREVIEW ONLY)
    • 현재 실행 가능 주문: {order_exec_status}
-   ⚠️ 본 수치는 매수 전 시뮬레이션(PREVIEW)이며, 실제 P0/A0/S0 및 2·3차 주문선은 1차 체결 후 확정됩니다.
-   🔹 [3단계 분할매수 가이드 (50% / 30% / 20%)]:
-      - 1차 최초 진입 (50%): 매수 승인 시 진입 (현재가 {dto.candidate_reference_price:,}원 부근)
-      - 2차 추가 매수 (30%): -1.5 ATR 눌림목({dto.candidate_buy_price:,}원) 도달 후 최저가 대비 +{dto.buy_rebound_delta:,}원 반등 시 발동
-      - 3차 상승확인 추매 (20%): P0 또는 주요 고점 회복·돌파 확인 시 발동
-   🔹 [트레일링 익절 설정 (NORMAL 모드 추세추적)]:
-      - 트레일링 활성 기준가: {dto.candidate_target_price:,}원 (+3.0 ATR 도달 시 활성화, 지정가 매도 아님)
-      - 추락 청산 발동 조건: 활성화 후 최고가 대비 -{dto.sell_drop_delta:,}원 하락 이탈 시 전량 트레일링 청산
-      - (참고: 부분 선익절 25~30%는 RISK_LOCK 수동 예외 설정 시에만 적용)
-   🔹 [스탑로스 손절 설정 (초기손절 S0 = Entry - 1.5×A0)]:
-      - 시뮬레이션 초기손절가: {dto.candidate_stop_price:,}원 (1.5 ATR 손절선 이탈 시)
-      - 손절 발동 조건: {dto.candidate_stop_price:,}원 이하로 하락/이탈 시 즉시 발동 (보유 수량 100% 전량 손절)"""
+   ⚠️ 본 수치는 매수 전 시뮬레이션(PREVIEW)이며, 실제 앵커 기준값(P0/A0) 및 주문선은 체결 후 확정됩니다.
+   🔹 [분할매수 감시 가이드]:
+      - 1차 최초 진입: 매수 승인 시 진입 (기준가: {dto.candidate_reference_price:,}원 부근)
+      - 2차 추가 매수: 눌림목 감시가({dto.candidate_buy_price:,}원) 도달 후 최저가 대비 {rebound_str} 반등 시 감시
+      - 3차 상승확인 추매: P0 또는 주요 고점 회복·돌파 확인 시 감시
+   🔹 [트레일링 익절 설정]:
+      - 트레일링 활성 기준가: {dto.candidate_target_price:,}원 (지정가 매도 아님, 활성화 후 추적)
+      - 추락 청산 발동 조건: 활성화 후 최고가 대비 {drop_str} 하락 이탈 시 트레일링 청산
+   🔹 [스탑로스 손절 설정]:
+      - 시뮬레이션 초기손절가: {dto.candidate_stop_price:,}원
+      - 손절 발동 조건: {dto.candidate_stop_price:,}원 이하로 하락/이탈 시 즉시 발동"""
     else:
-        section_3 = f"""3. ⚙️ ATR V4 트레일링 및 3단계 분할매매 시뮬레이션 파라미터 (REFERENCE ONLY / 실제 주문 입력 금지)
+        section_3 = f"""3. ⚙️ ATR V4 트레일링 및 분할매매 시뮬레이션 파라미터 (REFERENCE ONLY / 실제 주문 입력 금지)
    • 현재 실행 가능 주문: {order_exec_status}
    ⚠️ 본 종목은 매수 비승인 또는 진입 대기 상태입니다. 아래 수치는 단순 참고용(REFERENCE ONLY)이며 실제 주문을 설정하지 마십시오.
-   🔹 [3단계 분할매수 가이드 (참고용)]:
-      - 1차 최초 진입 (50%): [실행 불가 / 진입 대기] (참고 기준가: {dto.candidate_reference_price:,}원)
-      - 2차 추가 매수 (30%): [참고선] -1.5 ATR 눌림목({dto.candidate_buy_price:,}원) / 반등폭 +{dto.buy_rebound_delta:,}원
-      - 3차 상승확인 추매 (20%): [참고선] P0 또는 주요 고점 회복·돌파 시
+   🔹 [분할매수 감시 가이드 (참고용)]:
+      - 1차 최초 진입: [실행 불가 / 진입 대기] (참고 기준가: {dto.candidate_reference_price:,}원)
+      - 2차 추가 매수: [참고선] 눌림목 감시가({dto.candidate_buy_price:,}원) / 반등폭 {rebound_str}
+      - 3차 상승확인 추매: [참고선] P0 또는 주요 고점 회복·돌파 시
    🔹 [트레일링 익절 설정 (참고용)]:
-      - 트레일링 활성 기준가: [참고선] {dto.candidate_target_price:,}원 (+3.0 ATR 도달 시 활성화)
-      - 추락 청산 발동 조건: [참고선] 최고가 대비 -{dto.sell_drop_delta:,}원 하락 이탈 시
+      - 트레일링 활성 기준가: [참고선] {dto.candidate_target_price:,}원
+      - 추락 청산 발동 조건: [참고선] 최고가 대비 {drop_str} 하락 이탈 시
    🔹 [스탑로스 손절 설정 (참고용)]:
-      - 시뮬레이션 손절가: [참고선] {dto.candidate_stop_price:,}원 (1.5 ATR 손절선)
+      - 시뮬레이션 손절가: [참고선] {dto.candidate_stop_price:,}원
       - 손절 발동 조건: [참고선] {dto.candidate_stop_price:,}원 이하로 하락/이탈 시"""
 
     # 2. Technical Action 기반 Gemini 질문 프롬프트 자동 분기
@@ -155,9 +157,9 @@ def render_gems_markdown(dto: ScanResultDTO) -> str:
    • 부정적 이벤트 내역 (Negative Events): {dto.negative_events_summary}
 
 6. ⚖️ 100점 만점 가중 종합점수 & 5단계 매수 승인 최종 판정
-   • 가중 종합점수: {dto.final_score:.1f}점 = (F점수 {dto.f_score:.1f} × 0.4) + (T점수 {dto.t_score:.1f} × 0.6)
-   • 신규/추가 매수 승인 여부: {dto.buy_approval}
-   • 5단계 Decision Matrix 최종 대응 전략: [{dto.action_strategy}]
+    • 가중 종합점수: {dto.final_score:.1f}점 (F점수 {dto.f_score:.1f}점, T점수 {dto.t_score:.1f}점)
+    • 신규/추가 매수 승인 여부: {dto.buy_approval}
+    • 5단계 Decision Matrix 최종 대응 전략: [{dto.action_strategy}]
 
 ================================================================================
 {prompt_instruction}

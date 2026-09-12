@@ -166,7 +166,7 @@ class TestMobileRendererV2(unittest.TestCase):
 
         REQUIRED_HTML_STRINGS = [
             'data-render-version="V2"',
-            'V4-PILOT-C 주요 대응 지침',
+            '📊 전체 보유종목 현황',
             'data-held-stock-codes='
         ]
         FORBIDDEN_HTML_STRINGS = [
@@ -194,7 +194,8 @@ class TestMobileRendererV2(unittest.TestCase):
             held_portfolio=FIXTURE_NORMAL,
             disclosures=[]
         )
-        self.assertIn("오늘 특별 대응이 필요한 보유종목 없음 (전 종목 정상 감시 유지)", html_clean)
+        self.assertIn("특이 조치 없음", html_clean)
+        self.assertIn("전 종목 정상 감시 유지", html_clean)
         self.assertNotIn("data-stock-code=", html_clean)
         self.assertIn('data-held-stock-codes="004960"', html_clean)
 
@@ -687,6 +688,198 @@ class TestMobileRendererV2(unittest.TestCase):
                         os.unlink(p)
                     except Exception:
                         pass
+
+    def test_19_freshness_guard_morning_before_first_45m_bar(self):
+        """테스트 19: 08:30~09:49 아침 메일 생성 시 전일 신호 재사용 금지 및 '당일 45분봉 대기' 표시 검증"""
+        from src.notifications.mobile_renderer_v2 import (
+            get_latest_add_advisory_entry,
+            format_advisory_evidence_korean,
+            format_add_advisory_badge_and_action,
+            generate_mobile_html_report_v2
+        )
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f:
+            db_path = db_f.name
+
+        try:
+            db = DatabaseManager(db_path)
+            # 전일(2026-08-27) 15:00 VALID ADD_STRONG 데이터 적재
+            db.insert_add_advisory_45m({
+                "trading_date": "2026-08-27",
+                "stock_code": "004960",
+                "bar_timestamp": "2026-08-27 15:00:00",
+                "evaluated_at": "2026-08-27 15:05:00 KST",
+                "vwap9": 10000.0, "vwap26": 9800.0, "vwap_state": "VWAP_GOLD",
+                "obv": 100000.0, "obv9": 95000.0, "obv_state": "OBV_GOLD",
+                "obv_gap_state": "EXPANDING", "chaikin_state": "CHAIKIN_RISING",
+                "technical_state_reference": "NEUTRAL",
+                "add_advisory_state": "ADD_STRONG",
+                "data_quality": "VALID (40 bars)"
+            })
+
+            # 오늘(2026-08-28) 08:30 메일 생성
+            entry = get_latest_add_advisory_entry(
+                "004960",
+                target_date="2026-08-28",
+                max_bar_timestamp="2026-08-28 08:30:00",
+                db_manager=db
+            )
+            self.assertEqual(entry["add_advisory_state"], "UNKNOWN")
+            badge, action = format_add_advisory_badge_and_action(entry["add_advisory_state"])
+            self.assertEqual(action, "<span style='color:#64748B;'>데이터 확인</span>")
+            evidence = format_advisory_evidence_korean(entry)
+            self.assertEqual(evidence, "당일 45분봉 대기")
+
+            # HTML 리포트 생성 검증
+            html_out = generate_mobile_html_report_v2(
+                date_str="2026-08-28 08:30",
+                total_count=1,
+                caught_signals=[],
+                all_results=[],
+                held_portfolio=FIXTURE_NORMAL,
+                db_manager=db
+            )
+            self.assertIn("당일 45분봉 대기", html_out)
+            self.assertIn("데이터 확인", html_out)
+            self.assertNotIn("추가매수 검토", html_out)
+        finally:
+            if os.path.exists(db_path):
+                try:
+                    os.unlink(db_path)
+                except Exception:
+                    pass
+
+    def test_20_freshness_guard_intraday_progression(self):
+        """테스트 20: 09:50(09:45봉), 10:35(10:30봉), 15:05(15:00봉) 장중 최신 완성봉 순차 반영 검증"""
+        from src.notifications.mobile_renderer_v2 import (
+            get_latest_add_advisory_entry,
+            format_advisory_evidence_korean,
+            parse_date_str_for_freshness
+        )
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f:
+            db_path = db_f.name
+
+        try:
+            db = DatabaseManager(db_path)
+            # 오늘 09:45 봉 적재
+            db.insert_add_advisory_45m({
+                "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 09:45:00",
+                "evaluated_at": "2026-08-28 09:50:00 KST",
+                "vwap_state": "VWAP_GOLD", "obv_state": "OBV_GOLD", "obv_gap_state": "EXPANDING", "chaikin_state": "CHAIKIN_RISING",
+                "add_advisory_state": "ADD_STRONG", "data_quality": "VALID (40 bars)"
+            })
+            # 오늘 10:30 봉 적재
+            db.insert_add_advisory_45m({
+                "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 10:30:00",
+                "evaluated_at": "2026-08-28 10:35:00 KST",
+                "vwap_state": "VWAP_GOLD", "obv_state": "OBV_GOLD", "obv_gap_state": "CONTRACTING", "chaikin_state": "CHAIKIN_FALLING",
+                "add_advisory_state": "ADD_WATCH", "data_quality": "VALID (40 bars)"
+            })
+            # 오늘 15:00 봉 적재
+            db.insert_add_advisory_45m({
+                "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 15:00:00",
+                "evaluated_at": "2026-08-28 15:05:00 KST",
+                "vwap_state": "VWAP_DEAD", "obv_state": "OBV_DEAD", "obv_gap_state": "EXPANDING", "chaikin_state": "CHAIKIN_FALLING",
+                "add_advisory_state": "ADD_BLOCKED", "data_quality": "VALID (40 bars)"
+            })
+
+            # 1) 09:50 시점 -> 09:45 봉 반영
+            t_date, max_ts = parse_date_str_for_freshness("2026-08-28 09:50")
+            e1 = get_latest_add_advisory_entry("004960", target_date=t_date, max_bar_timestamp=max_ts, db_manager=db)
+            self.assertEqual(e1["add_advisory_state"], "ADD_STRONG")
+            self.assertEqual(e1["bar_timestamp"], "2026-08-28 09:45:00")
+            self.assertEqual(format_advisory_evidence_korean(e1), "VWAP 골드 · OBV 골드 · Chaikin↑")
+
+            # 2) 10:35 시점 -> 10:30 봉 반영
+            t_date, max_ts = parse_date_str_for_freshness("2026-08-28 10:35")
+            e2 = get_latest_add_advisory_entry("004960", target_date=t_date, max_bar_timestamp=max_ts, db_manager=db)
+            self.assertEqual(e2["add_advisory_state"], "ADD_WATCH")
+            self.assertEqual(e2["bar_timestamp"], "2026-08-28 10:30:00")
+            self.assertEqual(format_advisory_evidence_korean(e2), "VWAP 골드 · OBV 이격축소 · Chaikin↓")
+
+            # 3) 15:05 시점 -> 15:00 봉 반영
+            t_date, max_ts = parse_date_str_for_freshness("2026-08-28 15:05")
+            e3 = get_latest_add_advisory_entry("004960", target_date=t_date, max_bar_timestamp=max_ts, db_manager=db)
+            self.assertEqual(e3["add_advisory_state"], "ADD_BLOCKED")
+            self.assertEqual(e3["bar_timestamp"], "2026-08-28 15:00:00")
+            self.assertEqual(format_advisory_evidence_korean(e3), "VWAP 데드 · OBV 약화 · Chaikin↓")
+        finally:
+            if os.path.exists(db_path):
+                try:
+                    os.unlink(db_path)
+                except Exception:
+                    pass
+
+    def test_21_freshness_guard_missing_today_data_never_fallback_to_yesterday(self):
+        """테스트 21: 당일 데이터 결측 시 전일 정상 데이터가 있어도 절대 재사용하지 않고 차단 검증"""
+        from src.notifications.mobile_renderer_v2 import get_latest_add_advisory_entry, format_advisory_evidence_korean
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f:
+            db_path = db_f.name
+
+        try:
+            db = DatabaseManager(db_path)
+            # 전일 데이터만 존재
+            db.insert_add_advisory_45m({
+                "trading_date": "2026-08-27", "stock_code": "004960", "bar_timestamp": "2026-08-27 15:00:00",
+                "evaluated_at": "2026-08-27 15:05:00 KST",
+                "add_advisory_state": "ADD_STRONG", "data_quality": "VALID (40 bars)"
+            })
+
+            # 오늘 14:00 조회 시 오늘 데이터가 없음
+            entry = get_latest_add_advisory_entry("004960", target_date="2026-08-28", max_bar_timestamp="2026-08-28 14:00:00", db_manager=db)
+            self.assertEqual(entry["add_advisory_state"], "UNKNOWN")
+            self.assertNotEqual(entry.get("bar_timestamp"), "2026-08-27 15:00:00")
+            self.assertEqual(format_advisory_evidence_korean(entry), "당일 45분봉 대기")
+        finally:
+            if os.path.exists(db_path):
+                try:
+                    os.unlink(db_path)
+                except Exception:
+                    pass
+
+    def test_22_freshness_guard_future_timestamp_blocked(self):
+        """테스트 22: 미래 timestamp 봉 생성 시 현재 시각 기준 초과 봉 차단 검증"""
+        from src.notifications.mobile_renderer_v2 import get_latest_add_advisory_entry, parse_date_str_for_freshness
+        from src.database.db_manager import DatabaseManager
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as db_f:
+            db_path = db_f.name
+
+        try:
+            db = DatabaseManager(db_path)
+            # 오늘 09:45 봉 (과거)
+            db.insert_add_advisory_45m({
+                "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 09:45:00",
+                "evaluated_at": "2026-08-28 09:50:00 KST",
+                "add_advisory_state": "ADD_STRONG", "data_quality": "VALID (40 bars)"
+            })
+            # 미래 11:15 봉 (아직 오지 않은 시각)
+            db.insert_add_advisory_45m({
+                "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 11:15:00",
+                "evaluated_at": "2026-08-28 11:20:00 KST",
+                "add_advisory_state": "ADD_BLOCKED", "data_quality": "VALID (40 bars)"
+            })
+
+            # 10:00 기준 조회 시 11:15 봉은 무시되고 09:45 봉만 조회되어야 함
+            t_date, max_ts = parse_date_str_for_freshness("2026-08-28 10:00")
+            entry = get_latest_add_advisory_entry("004960", target_date=t_date, max_bar_timestamp=max_ts, db_manager=db)
+            self.assertEqual(entry["bar_timestamp"], "2026-08-28 09:45:00")
+            self.assertEqual(entry["add_advisory_state"], "ADD_STRONG")
+        finally:
+            if os.path.exists(db_path):
+                try:
+                    os.unlink(db_path)
+                except Exception:
+                    pass
 
 if __name__ == "__main__":
     unittest.main()

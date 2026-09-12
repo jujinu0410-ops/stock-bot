@@ -14,6 +14,27 @@ from src.database.db_manager import DatabaseManager
 from src.engine.portfolio_manager import PortfolioManager
 from main import verify_pipeline_stock_code_consistency
 
+
+def _normal_intraday_response(base_price: float):
+    """외부 I/O 없이 정상 15분봉 분석 경로를 유지하는 결정적 OHLCV fixture."""
+    index = pd.date_range("2026-08-18 09:00:00", periods=72, freq="15min")
+    closes = [base_price + (i * 10.0) for i in range(len(index))]
+    return (
+        pd.DataFrame(
+            {
+                "Open": closes,
+                "High": [price + 30.0 for price in closes],
+                "Low": [price - 30.0 for price in closes],
+                "Close": closes,
+                "Volume": [1000 + i for i in range(len(index))],
+            },
+            index=index,
+        ),
+        "TEST_FIXTURE_15M",
+        "NONE",
+    )
+
+
 class TestKiwoomOperationalAudit(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -488,7 +509,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
             disclosures=sample_disc
         )
         self.assertIn('data-held-stock-codes="000490"', html)
-        self.assertIn("V4-PILOT-C 주요 대응 지침", html)
+        self.assertIn("전체 보유종목 현황", html)
         self.assertIn("DART 주요 공시 & 브리핑", html)
         self.assertNotIn("undefined", html)
         self.assertNotIn("NaN", html)
@@ -519,7 +540,11 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
             "is_etf": False, "f_score_confirmed": True
         }
 
-        held_status = self.pm.get_held_portfolio_status(engine=mock_engine, live_positions=live_meta_11)
+        with patch(
+            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            return_value=_normal_intraday_response(12000.0),
+        ):
+            held_status = self.pm.get_held_portfolio_status(engine=mock_engine, live_positions=live_meta_11)
         self.assertEqual(len(held_status), 11)
 
         # 모든 종목이 1순위 엔진 가격(12,000원)으로 평가되었는지 확인
@@ -558,7 +583,11 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
             "current_price_source": "KIWOOM_CUR_PRC", "fallback_used": False
         }]
 
-        eval_list = self.pm.get_held_portfolio_status(engine=None, live_positions=live_meta)
+        with patch(
+            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            return_value=_normal_intraday_response(8050.0),
+        ):
+            eval_list = self.pm.get_held_portfolio_status(engine=None, live_positions=live_meta)
         self.assertEqual(len(eval_list), 1)
         item = eval_list[0]
 
@@ -602,7 +631,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         # 필수 포함 항목 검증
         self.assertIn('data-render-version="V2"', html)
         self.assertIn('data-held-stock-codes="000490"', html)
-        self.assertIn("📋 V4-PILOT-C 주요 대응 지침", html)
+        self.assertIn("📊 전체 보유종목 현황", html)
         self.assertIn("📢 DART 주요 공시 & 브리핑", html)
         self.assertIn("※ 본 리포트는 V4-PILOT-C 위험관리 엔진 기준값이며", html)
 
@@ -671,7 +700,11 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
             "current_price_source": "KIWOOM_CUR_PRC", "fallback_used": False
         } for idx, c in enumerate(self.all_11_codes, 1)]
 
-        held_list = self.pm.get_held_portfolio_status(engine=None, live_positions=live_meta)
+        with patch(
+            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            return_value=_normal_intraday_response(8000.0),
+        ):
+            held_list = self.pm.get_held_portfolio_status(engine=None, live_positions=live_meta)
         self.assertEqual(len(held_list), 11)
         raw_sum = sum((item["eval_amount"] / sum(h["eval_amount"] for h in held_list)) * 100.0 for item in held_list)
         self.assertAlmostEqual(raw_sum, 100.0, places=4)

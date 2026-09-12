@@ -104,22 +104,28 @@ class ATRRiskEngine:
 
         # 3. 장마감 후 손절 래칫 (S_new = H_close - 1.5 * At, S_final = max(S_prev, S0, S_new))
         candidate_stop = max(0.0, h_close - (trail_stop_mul * at))
-        valid_prev_stop = float(prev_confirmed_stop) if (0 < float(prev_confirmed_stop) < cp) else 0.0
-        ratchet_stop = max(valid_prev_stop, raw_initial_stop, candidate_stop)
+        prev_stop = float(prev_confirmed_stop) if (prev_confirmed_stop is not None and float(prev_confirmed_stop) > 0) else 0.0
+        ratchet_stop = max(prev_stop, raw_initial_stop, candidate_stop)
 
         kiwoom_stop_tick = adjust_krx_tick_size(ratchet_stop, "down", is_etf=is_etf)
+        if prev_stop > 0 and isinstance(kiwoom_stop_tick, (int, float)) and kiwoom_stop_tick < prev_stop:
+            kiwoom_stop_tick = prev_stop
+
+        is_stop_breached = bool(prev_stop > 0 and cp <= prev_stop)
 
         # 4. 익절 트레일링 활성 및 추적선
         raw_profit_activation = p0 + (profit_act_mul * a0)
         profit_act_status = "ACTIVE" if (h_high >= raw_profit_activation or prev_activation_status == "ACTIVE") else "INACTIVE"
 
         profit_trail_delta = int(round(at * trail_mul))
-        prev_pt = float(prev_profit_trail) if float(prev_profit_trail) > 0 else 0.0
+        prev_pt = float(prev_profit_trail) if (prev_profit_trail is not None and float(prev_profit_trail) > 0) else 0.0
 
         if profit_act_status == "ACTIVE":
             candidate_profit_trail = h_high - (trail_mul * at)
             profit_trail = max(prev_pt, candidate_profit_trail)
             kiwoom_target_tick = adjust_krx_tick_size(profit_trail, "down", is_etf=is_etf)
+            if prev_pt > 0 and isinstance(kiwoom_target_tick, (int, float)) and kiwoom_target_tick < prev_pt:
+                kiwoom_target_tick = prev_pt
         else:
             profit_trail = 0.0
             kiwoom_target_tick = adjust_krx_tick_size(raw_profit_activation, "up", is_etf=is_etf)
@@ -127,6 +133,9 @@ class ATRRiskEngine:
         # 5. 최종 유효 청산선 (Effective Exit Line = max(RatchetStop, ProfitTrail))
         effective_exit_line = max(ratchet_stop, profit_trail)
         kiwoom_exit_tick = adjust_krx_tick_size(effective_exit_line, "down", is_etf=is_etf)
+        if isinstance(kiwoom_stop_tick, (int, float)) and kiwoom_stop_tick > 0:
+            if isinstance(kiwoom_exit_tick, (int, float)) and kiwoom_exit_tick < kiwoom_stop_tick:
+                kiwoom_exit_tick = kiwoom_stop_tick
 
         # 6. 포지션 사이징 및 위험예산
         krx_unit = adjust_krx_tick_size(cp, "down", is_etf=is_etf) - adjust_krx_tick_size(cp - 1, "down", is_etf=is_etf) or 10
@@ -162,10 +171,13 @@ class ATRRiskEngine:
             "candidate_stop": candidate_stop,
             "ratchet_stop": ratchet_stop,
             "kiwoom_stop_tick": kiwoom_stop_tick,
+            "is_stop_breached": is_stop_breached,
             "raw_profit_activation": raw_profit_activation,
+            "profit_activation_price": int(round(raw_profit_activation)),
             "profit_activation_status": profit_act_status,
             "profit_trail_delta": profit_trail_delta,
             "profit_trail": profit_trail,
+            "profit_trail_price": int(round(profit_trail)),
             "kiwoom_target_tick": kiwoom_target_tick,
             "effective_exit_line": effective_exit_line,
             "kiwoom_exit_tick": kiwoom_exit_tick,

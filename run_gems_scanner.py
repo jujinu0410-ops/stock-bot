@@ -4,28 +4,38 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog
 from pathlib import Path
 from datetime import datetime
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 # 프로젝트 루트 경로 추가
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
-from scan_stock_for_gems import scan_stock_dto, scan_stock_for_gems
+# 스캐너 실행 환경 모드 명시 (운영 DB/로그 오염 원천 차단)
+os.environ.setdefault("GEMS_SCANNER_MODE", "1")
+
+from scan_stock_for_gems import scan_stock_dto, scan_stock_for_gems, IsolatedGemsDatabase
 from src.core.dto import ScanResultDTO
+from src.database.db_manager import DatabaseManager
 from src.formatters.gems_formatter import render_multi_gems_markdown, render_multi_gems_json
 from src.utils.logger import logger
 
-def process_stocks_to_dtos(stock_inputs: list) -> List[ScanResultDTO]:
+def process_stocks_to_dtos(stock_inputs: list, db: Optional[DatabaseManager] = None) -> List[ScanResultDTO]:
     """
-    입력된 종목 목록에 대해 순차적으로 시세/재무 수집 및 진단을 수행하고 ScanResultDTO 리스트를 생성합니다.
+    입력된 종목 목록에 대해 격리된 임시 SQLite DB에서 순차적으로 시세/재무 수집 및 진단을 수행하고 ScanResultDTO 리스트를 생성합니다.
     """
+    if db is not None:
+        return _process_stocks_to_dtos_core(stock_inputs, db)
+    with IsolatedGemsDatabase() as isolated_db:
+        return _process_stocks_to_dtos_core(stock_inputs, isolated_db)
+
+def _process_stocks_to_dtos_core(stock_inputs: list, db: DatabaseManager) -> List[ScanResultDTO]:
     dtos = []
     for item in stock_inputs:
         item_str = item.strip()
         if not item_str:
             continue
         try:
-            dto = scan_stock_dto(item_str)
+            dto = scan_stock_dto(item_str, db=db)
             dtos.append(dto)
         except Exception as e:
             logger.error(f"종목 {item_str} 진단 중 오류: {e}")
@@ -37,12 +47,12 @@ def process_stocks_to_dtos(stock_inputs: list) -> List[ScanResultDTO]:
             ))
     return dtos
 
-def process_stocks(stock_inputs: list) -> str:
+def process_stocks(stock_inputs: list, db: Optional[DatabaseManager] = None) -> str:
     """
     종목 목록을 입력받아 DTO 수집 ➔ JSON 구조화 ➔ Markdown Formatter 렌더링을 거쳐
     최종 Gemini Gems 통합 텍스트 리포트를 반환합니다.
     """
-    dtos = process_stocks_to_dtos(stock_inputs)
+    dtos = process_stocks_to_dtos(stock_inputs, db=db)
     
     # 1. DTO ➔ JSON 직렬화 (내부 데이터 구조화 파이프라인)
     _json_dump = render_multi_gems_json(dtos)

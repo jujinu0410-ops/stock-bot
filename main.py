@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import sys
 import os
 import argparse
@@ -23,6 +22,7 @@ from src.engine.portfolio_manager import PortfolioManager
 from src.engine.watchlist_manager import WatchlistManager
 from src.notifications.gmail_notifier import GmailNotifier
 from src.utils.excel_exporter import create_analysis_excel_report
+from src.policy.policy_shadow_store import PolicyShadowReader
 from src.utils.logger import logger
 
 MASTER_STOCK_MAP = {
@@ -98,23 +98,15 @@ def verify_pipeline_stock_code_consistency(
     db_manager: Optional[DatabaseManager] = None,
     disclosures: Optional[List[Dict[str, Any]]] = None
 ) -> None:
+    """
+    발송 직전 파이프라인 전 계층의 종목코드 및 대응카드/DART공시 완전성 전수 검증:
+    """
     target_db = db if db is not None else db_manager
     if target_db is None:
         raise ValueError("DatabaseManager 인스턴스가 제공되어야 합니다.")
     if held_status is None:
         held_status = []
-    """
-    발송 직전 파이프라인 전 계층의 종목코드 및 대응카드/DART공시 완전성 전수 검증:
-    1. 키움 API 연속조회 원본 종목코드 집합 (raw_kiwoom_codes)
-    2. DB portfolio_positions 활성 종목코드 집합 (db_active_codes)
-    3. held_status 평가 리스트 종목코드 집합 (held_status_codes)
-    4. 생성된 XLSX 파일의 보유종목 시트 종목코드 집합 (xlsx_codes)
-    5. 생성된 이메일 HTML 카드의 감사 메타데이터 종목코드 집합 (email_audit_held_codes)
-    6. 당일 실제 대응 필요 종목코드 완전성 (expected_action_codes == rendered_action_codes)
-    7. DART 주요 공시 ID 완전성 (expected_disclosure_ids == rendered_disclosure_ids)
-    
-    하나라도 개수나 코드가 다르면 RuntimeError를 발생시켜 메일 발송 차단 및 GitHub Actions 실패 처리
-    """
+
     import re
     import pandas as pd
     from src.notifications.mobile_renderer_v2 import is_meaningful_action_item
@@ -132,46 +124,125 @@ def verify_pipeline_stock_code_consistency(
     # 3. held_status
     held_status_codes = {str(h["stock_code"]).strip().zfill(6) for h in held_status}
 
-    # 4. XLSX 파일
-    xlsx_codes = set()
-    if excel_path and excel_path.exists():
-        try:
-            def _to_code(val):
-                if val is None or pd.isna(val):
-                    return None
-                s = str(val).strip().replace("A", "").split(".")[0]
-                if s.isdigit() and len(s) <= 6:
-                    return s.zfill(6)
-                return None
+    # 4. XLSX 파일 (Fail-Closed: 절대 fallback 없이 엄격 검증)
+    if excel_path is None:
+        err_msg = (
+            f"🛑 [XLSX 무결성 검증 실패 - 발송 차단] excel_path=None, "
+            f"실패사유=excel_path가 전달되지 않음, expected_held_status_count={len(held_status_codes)}, "
+            f"단계=PATH_SPECIFICATION"
+        )
+        logger.critical(err_msg)
+        raise RuntimeError(err_msg)
 
-            xlsx_df = pd.read_excel(excel_path, sheet_name=0)
-            code_col = None
-            for col in xlsx_df.columns:
-                if "종목코드" in str(col) or "code" in str(col).lower():
-                    code_col = col
+    p_excel = Path(excel_path)
+    if not p_excel.exists():
+        err_msg = (
+            f"🛑 [XLSX 무결성 검증 실패 - 발송 차단] excel_path={p_excel}, "
+            f"실패사유=지정된 XLSX 파일이 디스크에 존재하지 않음, "
+            f"expected_held_status_count={len(held_status_codes)}, 단계=FILE_EXISTENCE"
+        )
+        logger.critical(err_msg)
+        raise RuntimeError(err_msg)
+
+    if not p_excel.is_file():
+        err_msg = (
+            f"🛑 [XLSX 무결성 검증 실패 - 발송 차단] excel_path={p_excel}, "
+            f"실패사유=지정된 경로가 일반 파일이 아님, "
+            f"expected_held_status_count={len(held_status_codes)}, 단계=FILE_TYPE_CHECK"
+        )
+        logger.critical(err_msg)
+        raise RuntimeError(err_msg)
+
+    try:
+        with pd.ExcelFile(p_excel) as xlsx_file:
+            target_sheet = None
+            for s_name in xlsx_file.sheet_names:
+                if "보유" in s_name or "portfolio" in s_name.lower():
+                    target_sheet = s_name
                     break
-            if code_col is None and len(xlsx_df.columns) > 1:
-                code_col = xlsx_df.columns[1]
-            elif code_col is None and len(xlsx_df.columns) > 0:
-                code_col = xlsx_df.columns[0]
+            if target_sheet is None and len(xlsx_file.sheet_names) > 0:
+                target_sheet = xlsx_file.sheet_names[0]
+            elif target_sheet is None:
+                err_msg = (
+                    f"🛑 [XLSX 무결성 검증 실패 - 발송 차단] excel_path={p_excel}, "
+                    f"실패사유=워크북에 시트가 존재하지 않음, "
+                    f"expected_held_status_count={len(held_status_codes)}, 단계=SHEET_LOOKUP"
+                )
+                logger.critical(err_msg)
+                raise RuntimeError(err_msg)
 
-            if code_col is not None:
-                for c in xlsx_df[code_col]:
-                    code_str = _to_code(c)
-                    if code_str:
-                        xlsx_codes.add(code_str)
-        except Exception as e_xlsx:
-            logger.error(f"[무결성 검증] XLSX 파일 읽기 실패: {e_xlsx}")
-            raise RuntimeError(f"XLSX 파일 종목코드 검증 실패: {e_xlsx}")
-    else:
-        xlsx_codes = held_status_codes.copy()
+            try:
+                # 1) header=0 기본 시도
+                xlsx_df = pd.read_excel(xlsx_file, sheet_name=target_sheet, header=0)
+                code_col = None
+                for col in xlsx_df.columns:
+                    if "종목코드" in str(col) or "code" in str(col).lower():
+                        code_col = col
+                        break
+                # 2) header=1 시도 (startrow=1 배너 행 대응)
+                if code_col is None:
+                    xlsx_df_h1 = pd.read_excel(xlsx_file, sheet_name=target_sheet, header=1)
+                    for col in xlsx_df_h1.columns:
+                        if "종목코드" in str(col) or "code" in str(col).lower():
+                            code_col = col
+                            xlsx_df = xlsx_df_h1
+                            break
+            except Exception as e_sheet:
+                err_msg = (
+                    f"🛑 [XLSX 무결성 검증 실패 - 발송 차단] excel_path={p_excel}, "
+                    f"실패사유=시트('{target_sheet}') 로드 실패 ({e_sheet}), "
+                    f"expected_held_status_count={len(held_status_codes)}, 단계=SHEET_LOAD"
+                )
+                logger.critical(err_msg)
+                raise RuntimeError(err_msg)
+    except RuntimeError:
+        raise
+    except Exception as e_open:
+        err_msg = (
+            f"🛑 [XLSX 무결성 검증 실패 - 발송 차단] excel_path={p_excel}, "
+            f"실패사유=XLSX 파일 열기/파싱 실패 ({e_open}), "
+            f"expected_held_status_count={len(held_status_codes)}, 단계=WORKBOOK_OPEN"
+        )
+        logger.critical(err_msg)
+        raise RuntimeError(err_msg)
+
+    if code_col is None:
+        err_msg = (
+            f"🛑 [XLSX 무결성 검증 실패 - 발송 차단] excel_path={p_excel}, "
+            f"실패사유=시트('{target_sheet}')에 '종목코드' 열을 찾을 수 없음 (발견된 열: {list(xlsx_df.columns)}), "
+            f"expected_held_status_count={len(held_status_codes)}, 단계=COLUMN_LOOKUP"
+        )
+        logger.critical(err_msg)
+        raise RuntimeError(err_msg)
+
+    def _to_code(val):
+        if val is None or pd.isna(val):
+            return None
+        s = str(val).strip().replace("A", "").split(".")[0]
+        if s.isdigit() and len(s) <= 6:
+            return s.zfill(6)
+        return None
+
+    xlsx_codes = set()
+    for c in xlsx_df[code_col]:
+        code_str = _to_code(c)
+        if code_str:
+            xlsx_codes.add(code_str)
+
+    if not xlsx_codes:
+        err_msg = (
+            f"🛑 [XLSX 무결성 검증 실패 - 발송 차단] excel_path={p_excel}, "
+            f"실패사유=XLSX '{code_col}' 열에서 유효한 종목코드를 추출할 수 없음 (0건), "
+            f"expected_held_status_count={len(held_status_codes)}, 단계=CODE_EXTRACTION"
+        )
+        logger.critical(err_msg)
+        raise RuntimeError(err_msg)
 
     # 5. 이메일 감사 메타데이터 (V2: data-held-stock-codes="..." 또는 fallback data-stock-code / 괄호 코드)
     held_codes_match = re.search(r'data-held-stock-codes="([^"]*)"', html_report)
     if held_codes_match and held_codes_match.group(1):
         email_audit_held_codes = set(filter(None, held_codes_match.group(1).split(",")))
     else:
-        # data-stock-code 속성이 있으면 그것을 사용하고, 없으면 (123456) 추출
         card_codes_raw = set(re.findall(r'data-stock-code="(\d{6})"', html_report))
         if card_codes_raw:
             email_audit_held_codes = card_codes_raw
@@ -179,9 +250,27 @@ def verify_pipeline_stock_code_consistency(
             raw_v1_codes = set(re.findall(r'\((\d{6})\)', html_report))
             email_audit_held_codes = raw_v1_codes.intersection(held_status_codes) if raw_v1_codes else raw_v1_codes
 
-    # 6. 본문 노출 대응카드 완전성 검증 (expected == rendered)
+    # 6. 본문 노출 대응카드 완전성 및 중복 검증 (expected == rendered)
     expected_action_codes = {str(h["stock_code"]).strip().zfill(6) for h in held_status if is_meaningful_action_item(h)}
-    rendered_action_codes = set(re.findall(r'data-stock-code="(\d{6})"', html_report))
+    rendered_action_list = re.findall(r'data-stock-code="(\d{6})"', html_report)
+    seen_action_cards = set()
+    duplicate_action_cards = set()
+    for c in rendered_action_list:
+        if c in seen_action_cards:
+            duplicate_action_cards.add(c)
+        seen_action_cards.add(c)
+
+    if duplicate_action_cards:
+        err_dup_card = [
+            "🛑 [대응카드 중복 감지 - 발송 차단]",
+            f"  • duplicate_action_cards: {sorted(list(duplicate_action_cards))}",
+            f"  • rendered_action_list ({len(rendered_action_list)}개): {rendered_action_list}"
+        ]
+        err_msg = "\n".join(err_dup_card)
+        logger.critical(err_msg)
+        raise RuntimeError(err_msg)
+
+    rendered_action_codes = set(rendered_action_list)
 
     # 7. 본문 노출 DART 공시 완전성 검증 (expected == rendered)
     if disclosures is not None:
@@ -220,7 +309,7 @@ def verify_pipeline_stock_code_consistency(
     logger.info(f"3. held_status 평가 ({len(held_status_codes)}개): {sorted(list(held_status_codes))}")
     logger.info(f"4. XLSX 보유시트 ({len(xlsx_codes)}개): {sorted(list(xlsx_codes))}")
     logger.info(f"5. 이메일 감사 메타데이터 ({len(email_audit_held_codes)}개): {sorted(list(email_audit_held_codes))}")
-    logger.info(f"6. 기대 대응카드 ({len(expected_action_codes)}개) vs 노출 카드 ({len(rendered_action_codes)}개)")
+    logger.info(f"6. 기대 대응카드 ({len(expected_action_codes)}개) vs 노출 카드 ({len(rendered_action_list)}개)")
     if expected_disclosure_ids is not None:
         logger.info(f"7. 기대 DART 공시 ({len(expected_disclosure_ids)}건) vs 노출 공시 ({len(rendered_disclosure_list)}건)")
     logger.info("=" * 50)
@@ -254,17 +343,72 @@ def verify_pipeline_stock_code_consistency(
     # 대응카드 완전 일치 검증 (expected == rendered)
     missing_action_cards = sorted(list(expected_action_codes - rendered_action_codes))
     unexpected_action_cards = sorted(list(rendered_action_codes - expected_action_codes))
-    if missing_action_cards or unexpected_action_cards:
+    count_mismatch = len(rendered_action_list) != len(expected_action_codes)
+    if missing_action_cards or unexpected_action_cards or count_mismatch:
         err_action = [
             "🛑 [대응카드 완전성 검증 실패 - 발송 차단]",
             f"  • missing_action_cards: {missing_action_cards}",
             f"  • unexpected_action_cards: {unexpected_action_cards}",
+            f"  • count_mismatch: expected {len(expected_action_codes)}개 vs rendered {len(rendered_action_list)}개",
             f"  • expected_action_codes ({len(expected_action_codes)}개): {sorted(list(expected_action_codes))}",
             f"  • rendered_action_codes ({len(rendered_action_codes)}개): {sorted(list(rendered_action_codes))}"
         ]
         err_msg = "\n".join(err_action)
         logger.critical(err_msg)
         raise RuntimeError(err_msg)
+
+    # P0/A0 미설정 기존 보유종목 Fail-Closed 차단
+    # 신규 매수 판별: 이 게이트 도달 시점에 held_status에 포함된 종목 중
+    # quantity > 0이고 p0 <= 0이면 앵커 미설정 기존 보유종목으로 판정
+    # (단, SUSPENDED_HOLD 종목은 P0/A0 불필요하므로 제외)
+    unanchored_existing = []
+    for h in held_status:
+        qty = h.get("quantity", 0)
+        p0 = float(h.get("anchor_price_p0") or 0)
+        a0 = float(h.get("anchor_atr_a0") or 0)
+        cycle_id = h.get("position_cycle_id")
+        code = str(h.get("stock_code", ""))
+        name = h.get("stock_name", code)
+        trade_mode = str(h.get("trade_mode", "NORMAL"))
+        # SUSPENDED_HOLD 종목(자이글 등)은 P0/A0 불필요 -> 차단 제외
+        if trade_mode == "SUSPENDED_HOLD":
+            continue
+        if qty > 0 and (p0 <= 0 or a0 <= 0):
+            unanchored_existing.append((code, name, qty, p0, a0, cycle_id))
+    if unanchored_existing:
+        lines = []
+        for code, name, qty, p0, a0, cycle_id in unanchored_existing:
+            lines.append(f"  {name}({code}): qty={qty} p0={p0} a0={a0} cycle={cycle_id}")
+        err_unanchored = (
+            "기존 보유종목의 V4 앵커 기준이 없습니다.\n"
+            "승인된 기준값 마이그레이션 전 자동 앵커링 및 메일 발송을 차단합니다.\n"
+            f"해당 종목 ({len(unanchored_existing)}개):\n" + "\n".join(lines)
+        )
+        logger.critical(f"🛑 [기존 보유종목 앵커 미설정 - 발송 차단]\n{err_unanchored}")
+        raise RuntimeError(err_unanchored)
+
+    # 손절 래칫 및 익절 추적선 불변성 검증 (Fail-Closed)
+    for h in held_status:
+        stk_code = h.get("stock_code")
+        stk_name = h.get("stock_name", stk_code)
+        is_migrated = h.get("is_migrated_anchor", False)
+
+        cur_stop = h.get("confirmed_stop_price") or h.get("kiwoom_stop_tick_price")
+        prev_stop = h.get("prev_confirmed_stop") or h.get("previous_confirmed_stop")
+        if isinstance(cur_stop, (int, float)) and isinstance(prev_stop, (int, float)):
+            if not is_migrated and prev_stop > 0 and cur_stop < prev_stop:
+                err_stop = f"🛑 [손절선 하향 무결성 위반 - 발송 차단] {stk_name}({stk_code}) 금일 확정 손절가({cur_stop}) < 전일 손절가({prev_stop})"
+                logger.critical(err_stop)
+                raise RuntimeError(err_stop)
+
+        if h.get("profit_activation_status") == "ACTIVE":
+            cur_trail = h.get("profit_trail_price") or h.get("profit_trail")
+            prev_trail = h.get("previous_profit_trail") or h.get("prev_profit_trail")
+            if isinstance(cur_trail, (int, float)) and isinstance(prev_trail, (int, float)):
+                if prev_trail > 0 and cur_trail < prev_trail:
+                    err_trail = f"🛑 [익절 추적선 하향 무결성 위반 - 발송 차단] {stk_name}({stk_code}) 금일 추적선({cur_trail}) < 전일 추적선({prev_trail})"
+                    logger.critical(err_trail)
+                    raise RuntimeError(err_trail)
 
     # DART 공시 완전 일치 검증 (disclosures가 제공된 경우)
     if expected_disclosure_ids is not None:
@@ -286,26 +430,132 @@ def verify_pipeline_stock_code_consistency(
 
     logger.info(f"✅ [무결성 검증 통과] 키움API-DB-held_status-XLSX-이메일 전 계층의 {len(held_status_codes)}개 종목코드 및 대응카드({len(expected_action_codes)}개)/DART공시가 100% 완벽히 일치합니다.")
 
+def _normalize_report_asof(report_asof: Optional[datetime]) -> datetime:
+    """Normalize an injected Cloud report timestamp to KST while retaining local behavior."""
+    if report_asof is None:
+        return datetime.now()
+    if report_asof.tzinfo is None:
+        return report_asof
+    from zoneinfo import ZoneInfo
+    return report_asof.astimezone(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
+
+
+def _resolve_report_session(report_session: Optional[str], report_asof: datetime) -> str:
+    """Use the orchestrator's canonical session when one is explicitly supplied."""
+    if report_session is not None:
+        normalized = str(report_session).strip()
+        if normalized not in {"1120", "1335", "1535"}:
+            raise ValueError(f"Invalid report_session: {report_session!r}")
+        return normalized
+    # Preserve direct/local invocation behavior when no orchestrator session exists.
+    return "1120" if report_asof.hour < 13 else "1535"
+
 
 def _resolve_dispatch_tag(session_code: str) -> str:
+    """Map canonical report session to user-facing dispatch subject tag."""
     if session_code == "1120":
         return "장중 리포트 1 (11:20)"
     elif session_code == "1335":
         return "장중 리포트 2 (13:35)"
     elif session_code == "1535":
         return "장마감 리포트 (15:35)"
-    return f"정밀 리포트({session_code})"
+    return f"장중 리포트({session_code})"
+
+
+def _apply_bb_atr_overlay(
+    held_status: List[Dict[str, Any]],
+    report_asof: datetime,
+    canonical_session: str,
+) -> None:
+    """Attach a display-only BB-ATR advisory without blocking the report."""
+    from src.analysis.bollinger_atr_strategy import (
+        generate_bb_atr_advisory,
+        make_no_advisory,
+    )
+
+    for item in held_status:
+        try:
+            item["bb_atr"] = generate_bb_atr_advisory(
+                item,
+                report_asof,
+                canonical_session,
+            )
+        except Exception as bb_err:
+            logger.error(
+                "[BB-ATR] Overlay failed for %s: %s",
+                item.get("stock_code", "UNKNOWN"),
+                bb_err,
+                exc_info=True,
+            )
+            item["bb_atr"] = make_no_advisory(
+                item,
+                report_asof,
+                canonical_session,
+                "BB_ATR_OVERLAY_ERROR",
+            )
+
+
+def _ensure_report_add_advisories(
+    db: DatabaseManager,
+    held_status: List[Dict[str, Any]],
+    report_asof: datetime,
+    advisory_engine: Any = None,
+) -> int:
+    """Persist missing report-time 45m sidecars without invoking RuntimeScheduler."""
+    from src.analysis.add_advisory_engine import AddAdvisory45mEngine
+    from src.runtime.krx_calendar import KRXCalendar
+
+    completed_bar = KRXCalendar.get_completed_45m_bar(report_asof)
+    if completed_bar is None:
+        logger.info("[Report45m] No completed 45m bar at report as-of; preserving waiting state.")
+        return 0
+
+    _, _, bar_end = completed_bar
+    trading_date = report_asof.strftime("%Y-%m-%d")
+    bar_timestamp = f"{trading_date} {bar_end}:00"
+    engine = advisory_engine or AddAdvisory45mEngine()
+    inserted = 0
+
+    for holding in held_status or []:
+        code = str(holding.get("stock_code", "")).strip().zfill(6)
+        if not code or code == "000000":
+            continue
+        current = db.get_latest_add_advisory_for_stock(
+            code,
+            trading_date=trading_date,
+            max_bar_timestamp=bar_timestamp,
+        )
+        if current and current.get("bar_timestamp") == bar_timestamp and str(current.get("data_quality", "")).startswith("VALID"):
+            continue
+        entry = engine.evaluate_stock_advisory(
+            stock_code=code,
+            trading_date=trading_date,
+            bar_timestamp=bar_timestamp,
+            technical_state_reference=holding.get("technical_state", "UNKNOWN"),
+            latest_previous_advisory=current,
+        )
+        if db.insert_add_advisory_45m(entry):
+            inserted += 1
+    logger.info(f"[Report45m] Completed bar={bar_timestamp}; inserted={inserted}")
+    return inserted
+
 
 def run_post_market_analysis(
     add_code: Optional[str] = None,
     add_name: Optional[str] = None,
     remove_code: Optional[str] = None,
-    force: bool = False
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    force: bool = False,
+    skip_email: bool = False,
+    report_asof: Optional[datetime] = None,
+    report_session: Optional[str] = None,
+    report_run_id: Optional[str] = None,
+) -> Any:
     """
     실시간 계좌 보유 종목 평가 ➔ 관심 종목 스캔 ➔ 이메일 리포트 발송 실행 함수
     """
-    now = datetime.now()
+    now = _normalize_report_asof(report_asof)
+    canonical_session = _resolve_report_session(report_session, now)
+    canonical_run_id = report_run_id or f"{now.strftime('%Y%m%d')}_REPORT_{canonical_session}"
     today_str = now.strftime("%Y-%m-%d %H:%M:%S")
     date_str = now.strftime("%Y%m%d")
 
@@ -319,6 +569,7 @@ def run_post_market_analysis(
     logger.info("=" * 50)
 
     # 1. 초기화
+    current_step = "INITIALIZATION"
     db = DatabaseManager()
     sync_master_stock_info(db)
     kiwoom_client = KiwoomAPIClient()
@@ -335,6 +586,7 @@ def run_post_market_analysis(
         watchlist_mgr.remove_stock(remove_code)
 
     # 2. 내 계좌 보유 종목 키움 API 실시간 동기화
+    current_step = "PORTFOLIO_SYNC"
     raw_kiwoom_positions = None
     try:
         raw_kiwoom_positions = portfolio_mgr.sync_portfolio_from_kiwoom()
@@ -343,27 +595,18 @@ def run_post_market_analysis(
         raise
 
     # 3. 시세 및 재무 데이터 최신화
+    current_step = "MARKET_DATA_UPDATE"
     try:
         update_market_data_stub(db, dart_client, watchlist_mgr)
     except Exception as e:
         logger.error(f"데이터 최신화 오류 (기존 데이터로 진행): {e}", exc_info=True)
 
     # 4. 🔥 [핵심] 내 계좌 보유 종목 정밀 평가
+    current_step = "PORTFOLIO_EVALUATION"
     held_status = []
     try:
         held_status = portfolio_mgr.get_held_portfolio_status(engine, live_positions=raw_kiwoom_positions)
-
-        # --- BB-ATR Phase 2 Overlay Injection ---
-        try:
-            from src.analysis.bollinger_atr_strategy import generate_bb_atr_advisory
-            for item in held_status:
-                item["bb_atr"] = generate_bb_atr_advisory(item, now_dt, session_code)
-        except Exception as bb_err:
-            logger.error(f"BB-ATR Overlay failed: {bb_err}", exc_info=True)
-            for item in held_status:
-                item["bb_atr"] = {"mode": "ERROR", "advisory_msg": "Overlay Error", "actual_order_impact": 0}
-        # ----------------------------------------
-
+        _apply_bb_atr_overlay(held_status, now, canonical_session)
         held_codes = [str(h.get("stock_code")).zfill(6) for h in held_status]
         logger.info(f"[Portfolio Metadata] 키움 전체 보유종목 수: {len(held_status)}개 | 종목코드 목록: {held_codes}")
         if held_status:
@@ -387,7 +630,12 @@ def run_post_market_analysis(
         logger.error(f"보유 종목 평가 중 예외 발생: {e_port}", exc_info=True)
         raise
 
+    # Cloud reports do not run RuntimeScheduler.  Ensure the report's completed
+    # 45m sidecar exists before Policy observation and renderer lookup.
+    _ensure_report_add_advisories(db, held_status, now)
+
     # 5. 관심 종목 스캔 및 신규 매매 신호 추출
+    current_step = "WATCHLIST_SCAN"
     caught_signals = []
     all_results = []
     try:
@@ -433,26 +681,44 @@ def run_post_market_analysis(
                 raise RuntimeError(f"보유종목 평가 실패: DB상 {len(held_db_rows)}개 존재하나 평가 결과 0개 검출")
 
         # 6. 📊 실제 분석 데이터 종합 엑셀파일(.xlsx) 생성 및 지메일 첨부 발송
-        date_str_file = datetime.now().strftime("%Y-%m-%d %H:%M")
+        current_step = "REPORT_EXPORT_AND_DISPATCH"
+        now_dt = now
+        date_str_file = now_dt.strftime("%Y-%m-%d %H:%M")
+        report_timestamp_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # 리포트 시점 Policy Shadow 1회 관측 수행
+        policy_obs_failed = False
+        try:
+            from src.policy.policy_shadow_observer import observe_report_policy_shadow
+            dispatch_id = f"{now_dt.strftime('%Y%m%d')}_{canonical_session}"
+            observe_report_policy_shadow(db, held_status, run_id=dispatch_id, asof_dt=now_dt)
+        except Exception as e_obs:
+            policy_obs_failed = True
+            logger.warning(f"[PolicyShadow] 리포트 시점 관측 중 경고 (V4 리포트 계속 진행): {e_obs}")
+
+        try:
+            if policy_obs_failed:
+                policy_display = {"status": "UNAVAILABLE", "rows": [], "transition_rows": [], "reason": "OBSERVATION_FAILED"}
+            else:
+                policy_display = PolicyShadowReader().build_report_payload(now_dt, held_status)
+        except Exception as e_read:
+            logger.warning(f"[PolicyShadow] 리포트 페이로드 구성 중 오류: {e_read}")
+            policy_display = {"status": "UNAVAILABLE", "rows": [], "transition_rows": [], "reason": str(e_read)}
         
         excel_path = create_analysis_excel_report(
             date_str=date_str_file,
             held_portfolio=held_status,
             all_results=all_results,
-            db_manager=db
+            db_manager=db,
+            policy_display=policy_display
         )
 
         csv_held_path = excel_path.parent / excel_path.name.replace('stock_analysis_', 'portfolio_monitoring_').replace('.xlsx', '.csv')
         csv_summary_path = excel_path.parent / excel_path.name.replace('stock_analysis_', 'stock_summary_').replace('.xlsx', '.csv')
 
-        now_dt = datetime.now()
+        now_dt = now
         hour_now = now_dt.hour
-        if hour_now < 12:
-            session_code = "1120"
-        elif hour_now < 14:
-            session_code = "1335"
-        else:
-            session_code = "1535"
+        session_code = canonical_session
         dispatch_id = f"{now_dt.strftime('%Y%m%d')}_{session_code}"
         dispatch_tag = _resolve_dispatch_tag(session_code)
 
@@ -466,12 +732,13 @@ def run_post_market_analysis(
             logger.warning(f"DART 공시 브리핑 수집 중 오류: {e_disc}")
 
         html_report = notifier.generate_html_report(
-            date_str=date_str,
+            date_str=report_timestamp_str,
             total_count=len(all_results),
             caught_signals=caught_signals,
             all_results=all_results,
             held_portfolio=held_status,
-            disclosures=disclosures
+            disclosures=disclosures,
+            policy_display=policy_display
         )
 
         render_version = getattr(notifier, "render_version", EMAIL_RENDER_VERSION)
@@ -482,9 +749,12 @@ def run_post_market_analysis(
         # 🔥 [발송 전 HTML 구조 게이트]
         REQUIRED_HTML_STRINGS = [
             'data-render-version="V2"',
-            'V4-PILOT-C 주요 대응 지침',
-            'data-held-stock-codes='
+            'data-held-stock-codes=',
+            '전체 보유종목 현황',
+            '45M ADD ADVISORY',
+            'DART 주요 공시'
         ]
+
         FORBIDDEN_HTML_STRINGS = [
             '5단계 매매 대응전략 매트릭스',
             '일봉/45분봉 수급 원자값 연동 표',
@@ -506,7 +776,7 @@ def run_post_market_analysis(
             err_msg = "\n".join(err_gate)
             logger.critical(err_msg)
             raise RuntimeError(err_msg)
-        
+
         # 🔥 [발송 직전 전수 검증] 키움 API 원본 - DB - held_status - XLSX - 이메일 감사 메타데이터 간 종목코드 100% 동일성 검증
         verify_pipeline_stock_code_consistency(raw_kiwoom_positions, db, held_status, excel_path, html_report, disclosures=disclosures)
 
@@ -514,6 +784,24 @@ def run_post_market_analysis(
         balance_signature = "_".join(sorted([f"{h['stock_code']}:{h.get('quantity',0)}:{h.get('current_price',0)}" for h in held_status]))
         dispatch_fingerprint = hashlib.md5(f"{date_str}_{session_code}_{balance_signature}".encode()).hexdigest()[:12]
         fingerprint_id = f"FP_{dispatch_fingerprint}"
+
+        # 🔥 skip_email 모드: CloudRunner 등 외부 오케스트레이터가 발송 제어할 때 사용
+        if skip_email:
+            report_payload = {
+                "excel_path": excel_path,
+                "csv_held_path": csv_held_path,
+                "csv_summary_path": csv_summary_path,
+                "html_report": html_report,
+                "subject": subject,
+                "dispatch_id": dispatch_id,
+                "dispatch_tag": dispatch_tag,
+                "notifier": notifier,
+                "attachments": [excel_path, csv_held_path, csv_summary_path],
+                "render_version": render_version,
+                "policy_display": policy_display,
+                "fingerprint_id": fingerprint_id,
+            }
+            return held_status, caught_signals, report_payload
 
         # 🔥 중복 발송 방지 검사 (동일 날짜/회차 or 동일 잔고 해시 메일 이미 발송 시 건너뛰기)
         if not force and (db.is_dispatch_already_sent(dispatch_id) or db.is_dispatch_already_sent(fingerprint_id)):
@@ -534,6 +822,20 @@ def run_post_market_analysis(
 
     except Exception as e:
         logger.critical(f"시스템 실행 중 예외 발생: {e}", exc_info=True)
+        try:
+            now_dt = datetime.now()
+            session_name = "11:20 장중" if now_dt.hour < 13 else "15:35 장마감"
+            date_korean = f"{now_dt.month}월 {now_dt.day}일"
+            error_reason = str(e)
+            if "notifier" in locals() and notifier is not None:
+                notifier.send_failure_alert(
+                    session_name=session_name,
+                    failed_step=current_step,
+                    error_reason=error_reason,
+                    date_str_korean=date_korean
+                )
+        except Exception as e_fail_alert:
+            logger.error(f"[FAILURE_ALERT_ERROR] 실패 알림 메일 발송 실패: {e_fail_alert}", exc_info=True)
         raise
 
     return held_status, caught_signals

@@ -1,0 +1,45 @@
+# =============================================================================
+# StockBot .gcloudignore - Prevent operational state, logs & secrets from upload
+# =============================================================================
+
+# Version control & environment
+.git
+.github
+.env
+.env.*
+*.pem
+*.key
+*credentials*.json
+*service-account*.json
+*service_account*.json
+
+# Databases and operational state (MUST NOT be uploaded to Cloud Build)
+data/
+data/*.db
+data/*.db-*
+config/portfolio_holdings.json
+state_bootstrap_export/
+
+# Logs and outputs
+logs/
+*.log
+outputs/
+*.xlsx
+!MarketCap_Leadership_Radar.xlsx
+*.csv
+*.html
+!tests/fixtures/v1_baseline_snapshot.html
+
+# Python cache & test artifacts
+__pycache__/
+**/*.pyc
+**/*.pyo
+.pytest_cache/
+
+# Local scripts & scratch files
+scratch/
+scripts/*.ps1
+scripts/*.bat
+*.bat
+*.vbs
+*.ps1

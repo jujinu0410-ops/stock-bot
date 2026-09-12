@@ -1,6 +1,7 @@
 import unittest
 import os
 import shutil
+import tempfile
 from src.analysis.technical_gate import TechnicalGate
 from src.core.dto import ScanResultDTO
 from src.formatters.gems_formatter import render_gems_markdown
@@ -17,13 +18,28 @@ class TestPhase3TechnicalGate(unittest.TestCase):
     - ATR Risk Engine 핵심 파라미터(P0/A0/Sfinal/TrailLine) 불변 검증
     """
 
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp_file = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
+        cls._tmp_file.close()
+        cls._tmp_db_path = cls._tmp_file.name
+        cls.shared_db = DatabaseManager(cls._tmp_db_path)
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            os.unlink(cls._tmp_db_path)
+        except Exception:
+            pass
+
     def setUp(self):
-        self.db = DatabaseManager()
+        self.db = self.__class__.shared_db
         self.pm = PortfolioManager(db_manager=self.db)
         self.pm.clear_all_holdings()
 
     def tearDown(self):
         self.pm.clear_all_holdings()
+
 
     def test_01_ft_off_plus_technical_strong_remains_buy_blocked(self):
         """1. F/T OFF + Technical STRONG ➔ 절대 ON 승격 불가, 여전히 BUY_BLOCKED"""

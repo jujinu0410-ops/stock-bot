@@ -1,7 +1,29 @@
+import socket
+import time
 import requests
+import urllib3
 from typing import Dict, Any, List, Optional
 from config.settings import KIWOOM_APP_KEY, KIWOOM_APP_SECRET, KIWOOM_ACCOUNT_NO, KIWOOM_USE_MOCK
 from src.utils.logger import logger
+
+RETRYABLE_NETWORK_EXCEPTIONS = (
+    socket.gaierror,
+    socket.timeout,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    urllib3.exceptions.NameResolutionError,
+)
+
+def _classify_network_exception(e: Exception) -> str:
+    """네트워크 예외 분류 문자열 반환"""
+    e_str = str(e)
+    if isinstance(e, socket.gaierror) or "getaddrinfo failed" in e_str or "NameResolutionError" in e_str or "Failed to resolve" in e_str:
+        return "DNS_RESOLUTION_ERROR"
+    if isinstance(e, (requests.exceptions.Timeout, socket.timeout)) or "timed out" in e_str.lower() or "Timeout" in type(e).__name__:
+        return "TIMEOUT"
+    if isinstance(e, requests.exceptions.ConnectionError) or "Connection" in e_str or "Max retries exceeded" in e_str:
+        return "CONNECTION_ERROR"
+    return "NETWORK_ERROR"
 
 def parse_kiwoom_price(val: Any) -> int:
     """
@@ -28,6 +50,7 @@ class KiwoomAPIClient:
     계좌 잔고/보유 종목 조회, 일봉 시세 및 수급(외국인/기관) 데이터 수집을 담당합니다.
     """
     BASE_URL = "https://api.kiwoom.com"  # 키움 REST API 정식 엔드포인트
+    RETRY_DELAYS = [0, 2, 5]  # 시도 1: 즉시, 시도 2: 2초 후, 시도 3: 5초 후 (최대 3회)
 
     def __init__(self,
                  app_key: str = KIWOOM_APP_KEY,
@@ -44,7 +67,7 @@ class KiwoomAPIClient:
         return bool(self.app_key and self.app_key != "YOUR_KIWOOM_APP_KEY_HERE" and not self.use_mock)
 
     def get_access_token(self) -> Optional[str]:
-        """키움 REST API OAuth 2.0 접근 토큰 발급"""
+        """키움 REST API OAuth 2.0 접근 토큰 발급 (네트워크 일시 오류 시 최대 3회 재시도)"""
         if not self.is_valid_key():
             return "MOCK_ACCESS_TOKEN"
 
@@ -55,10 +78,40 @@ class KiwoomAPIClient:
             "appkey": self.app_key,
             "secretkey": self.app_secret
         }
-        try:
-            res = requests.post(url, headers=headers, json=body, timeout=10)
+
+        delays = getattr(self, "RETRY_DELAYS", [0, 2, 5])
+        max_attempts = len(delays)
+
+        for attempt_idx in range(max_attempts):
+            attempt_num = attempt_idx + 1
+            delay = delays[attempt_idx]
+            if delay > 0:
+                time.sleep(delay)
+
+            try:
+                res = requests.post(url, headers=headers, json=body, timeout=10)
+            except RETRYABLE_NETWORK_EXCEPTIONS as e_net:
+                reason = _classify_network_exception(e_net)
+                if attempt_num < max_attempts:
+                    logger.warning(f"[KIWOOM_RETRY] attempt={attempt_num + 1}/{max_attempts} reason={reason}")
+                    continue
+                else:
+                    logger.critical(f"[Kiwoom API] 🛑 [KIWOOM_API_UNAVAILABLE] 실계좌 OAuth 접근 토큰 발급 최종 실패 (시도 {max_attempts}/{max_attempts} 초과, reason={reason}): {e_net}")
+                    self.access_token = None
+                    return None
+            except Exception as e_other:
+                logger.error(f"[Kiwoom API] 토큰 요청 중 비재시도 예외 발생: {e_other}", exc_info=True)
+                self.access_token = None
+                return None
+
             if res.status_code == 200:
-                res_data = res.json() if isinstance(res.json(), dict) else {}
+                try:
+                    res_data = res.json() if isinstance(res.json(), dict) else {}
+                except Exception as e_json:
+                    logger.error(f"[Kiwoom API] 토큰 응답 JSON 파싱 실패 (재시도 불가): {e_json}")
+                    self.access_token = None
+                    return None
+
                 token = res_data.get("token") or res_data.get("access_token")
                 return_code = res_data.get("return_code")
                 return_msg = res_data.get("return_msg")
@@ -68,17 +121,16 @@ class KiwoomAPIClient:
                     logger.info(f"[Kiwoom API] OAuth 2.0 실시간 접근 토큰 발급 성공 (만료일시: {res_data.get('expires_dt', 'N/A')})")
                     return self.access_token
                 else:
-                    logger.critical(f"[Kiwoom API] 🛑 OAuth 토큰 응답 실패 (return_code={return_code}, return_msg={return_msg}): {res_data}")
+                    logger.critical(f"[Kiwoom API] 🛑 OAuth 토큰 비즈니스 응답 실패 (return_code={return_code}, return_msg={return_msg}, 재시도 불가): {res_data}")
                     self.access_token = None
                     return None
             else:
-                logger.error(f"[Kiwoom API] 토큰 발급 실패 (상태코드 {res.status_code}): {res.text}")
+                logger.error(f"[Kiwoom API] 토큰 발급 실패 (상태코드 {res.status_code}, 재시도 불가): {res.text}")
                 self.access_token = None
                 return None
-        except Exception as e:
-            logger.error(f"[Kiwoom API] 토큰 요청 중 예외 발생: {e}", exc_info=True)
-            self.access_token = None
-            return None
+
+        self.access_token = None
+        return None
 
     def get_account_positions(self) -> List[Dict[str, Any]]:
         """
@@ -100,8 +152,8 @@ class KiwoomAPIClient:
         token = self.access_token or self.get_access_token()
         if not token or token == "MOCK_ACCESS_TOKEN":
             if is_ci or self.is_valid_key():
-                logger.critical(f"[Kiwoom API] 🛑 [운영 Fallback 금지] Commit: {commit_sha} | Event: {event_name} | 실계좌 접근 토큰 발급에 실패했습니다.")
-                raise RuntimeError("키움 실계좌 OAuth 접근 토큰 발급 실패 (운영 Fallback 금지)")
+                logger.critical(f"[Kiwoom API] 🛑 [운영 Fallback 금지] Commit: {commit_sha} | Event: {event_name} | 실계좌 접근 토큰 발급에 실패했습니다. (KIWOOM_API_UNAVAILABLE)")
+                raise RuntimeError("키움 실계좌 OAuth 접근 토큰 발급 실패 (KIWOOM_API_UNAVAILABLE, 운영 Fallback 금지)")
             logger.warning("[Kiwoom API] 토큰 수집 실패로 포트폴리오 구성 파일 잔고 사용")
             return self._get_mock_account_positions()
 
@@ -132,11 +184,30 @@ class KiwoomAPIClient:
                 headers["cont-yn"] = "Y"
                 headers["next-key"] = next_key
 
-            try:
-                res = requests.post(url, headers=headers, json=body, timeout=10)
-            except Exception as e:
-                logger.error(f"[Kiwoom API] [Data Source: KIWOOM_LIVE] Commit: {commit_sha} | Event: {event_name} | API: kt00018 | Page {page} | 네트워크 예외 발생: {e}")
-                raise RuntimeError(f"[Kiwoom API] 잔고 연속조회 중 네트워크 예외 발생 (페이지 {page}): {e}")
+            delays = getattr(self, "RETRY_DELAYS", [0, 2, 5])
+            max_attempts = len(delays)
+            res = None
+
+            for attempt_idx in range(max_attempts):
+                attempt_num = attempt_idx + 1
+                delay = delays[attempt_idx]
+                if delay > 0:
+                    time.sleep(delay)
+
+                try:
+                    res = requests.post(url, headers=headers, json=body, timeout=10)
+                    break
+                except RETRYABLE_NETWORK_EXCEPTIONS as e_net:
+                    reason = _classify_network_exception(e_net)
+                    if attempt_num < max_attempts:
+                        logger.warning(f"[KIWOOM_RETRY] attempt={attempt_num + 1}/{max_attempts} reason={reason}")
+                        continue
+                    else:
+                        logger.critical(f"[Kiwoom API] 🛑 [KIWOOM_API_UNAVAILABLE] 잔고 조회 최종 네트워크 실패 (페이지 {page}, 시도 {max_attempts}/{max_attempts} 초과, reason={reason}): {e_net}")
+                        raise RuntimeError(f"[Kiwoom API] 잔고 연속조회 중 네트워크 예외 발생 (KIWOOM_API_UNAVAILABLE, 페이지 {page}): {e_net}") from e_net
+                except Exception as e_other:
+                    logger.error(f"[Kiwoom API] [Data Source: KIWOOM_LIVE] Commit: {commit_sha} | Event: {event_name} | API: kt00018 | Page {page} | 비재시도 예외 발생: {e_other}")
+                    raise RuntimeError(f"[Kiwoom API] 잔고 연속조회 중 예외 발생 (페이지 {page}): {e_other}") from e_other
 
             if res.status_code != 200:
                 logger.error(f"[Kiwoom API] [Data Source: KIWOOM_LIVE] Commit: {commit_sha} | Event: {event_name} | API: kt00018 | Page {page} | HTTP {res.status_code} 실패: {res.text}")

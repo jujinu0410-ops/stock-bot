@@ -147,7 +147,8 @@ class TestRuntimeScheduler(unittest.TestCase):
 
     def test_07_intraday_shadow_scan_reserved_window_skip(self):
         """7. 11:20 보호구간 내 스캔 시 SKIPPED_RESERVED_WINDOW 반환 검증"""
-        with patch.object(SchedulerLockManager, "check_reserved_window", return_value=(True, "RESERVED_WINDOW_1120")):
+        with patch.object(KRXCalendar, "is_krx_trading_day", return_value=True), \
+             patch.object(SchedulerLockManager, "check_reserved_window", return_value=(True, "RESERVED_WINDOW_1120")):
             res = self.scheduler.run_task("INTRADAY_SHADOW_SCAN", is_manual=False)
             self.assertEqual(res["status"], "SKIPPED_RESERVED_WINDOW")
 
@@ -187,7 +188,7 @@ class TestRuntimeScheduler(unittest.TestCase):
             "success": True, "stock_code": "267260", "price": 790000.0,
             "quote_source": "KIWOOM_REST_API", "quote_timestamp": "2026-08-18 13:50:00",
             "quote_trading_date": "2026-08-18", "quote_age_seconds": 0, "is_stale": False, "status": "LIVE_VALID"
-        }):
+        }), patch.object(SchedulerLockManager, "is_existing_job_active", return_value=False):
             res = self.scheduler.run_task("INTRADAY_SHADOW_SCAN", is_manual=True)
             self.assertEqual(res["status"], "SUCCESS")
             self.assertTrue(res["stocks_scanned"] >= 1)
@@ -263,15 +264,15 @@ class TestRuntimeScheduler(unittest.TestCase):
     def test_13_detector_does_not_false_positive_on_own_subprocess(self):
         """13. 검사 서브프로세스(PowerShell/cmd) 자체를 active job으로 오인하지 않음 검증"""
         lock_mgr = SchedulerLockManager(self.db)
-        # Directly call is_existing_job_active() - must return False when no real jobs are running
-        self.assertFalse(lock_mgr.is_existing_job_active())
+        with patch.object(lock_mgr, "check_scheduled_task_running", return_value=(False, None)), \
+             patch.object(lock_mgr, "check_process_fallback_running", return_value=(False, None)):
+            self.assertFalse(lock_mgr.is_existing_job_active())
 
     def test_14_detector_ignores_unrelated_python_main(self):
         """14. 다른 프로젝트의 unrelated python main.py를 오인하지 않음 검증"""
         lock_mgr = SchedulerLockManager(self.db)
-        with patch("subprocess.check_output") as mock_sub:
-            # Mock process list with unrelated main.py from another directory
-            mock_sub.return_value = ""
+        with patch.object(lock_mgr, "check_scheduled_task_running", return_value=(False, None)), \
+             patch.object(lock_mgr, "check_process_fallback_running", return_value=(False, None)):
             is_active = lock_mgr.is_existing_job_active()
             self.assertFalse(is_active)
 
@@ -310,11 +311,12 @@ class TestRuntimeScheduler(unittest.TestCase):
 
     def test_19_status_semantics_data_hold_and_degraded(self):
         """19. Live Quote 장애 시 stocks_scanned==0 -> DATA_HOLD 및 일부 실패 -> DEGRADED 기록 검증"""
-        with patch.object(self.scheduler, "_get_active_universe", return_value=[{"stock_code": "005930", "stock_name": "삼성전자"}]):
-            with patch.object(self.scheduler, "_evaluate_stock_shadow", return_value=None):
-                res = self.scheduler._execute_intraday_shadow_scan(is_manual=True)
-                self.assertEqual(res["status"], "DATA_HOLD")
-                self.assertEqual(res["error_code"], "CRITICAL_LIVE_QUOTE_FAILURE")
+        with patch.object(SchedulerLockManager, "is_existing_job_active", return_value=False):
+            with patch.object(self.scheduler, "_get_active_universe", return_value=[{"stock_code": "005930", "stock_name": "삼성전자"}]):
+                with patch.object(self.scheduler, "_evaluate_stock_shadow", return_value=None):
+                    res = self.scheduler._execute_intraday_shadow_scan(is_manual=True)
+                    self.assertEqual(res["status"], "DATA_HOLD")
+                    self.assertEqual(res["error_code"], "CRITICAL_LIVE_QUOTE_FAILURE")
 
 if __name__ == "__main__":
     unittest.main()

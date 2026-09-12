@@ -45,6 +45,8 @@ class TradingEngine:
                 (stock_code,)
             )
             dart_data = dict(dart_rows[0]) if dart_rows else {}
+            dart_data["stock_code"] = stock_code
+            dart_data["stock_name"] = stock_name
 
             # 4. 기술적 및 기본적 분석 엔진 수행
             fa = FundamentalAnalysis(dart_data)

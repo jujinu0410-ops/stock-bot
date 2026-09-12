@@ -1,7 +1,21 @@
 import logging
 import sys
 import os
+import tempfile
+from pathlib import Path
 from config.settings import LOG_FILE_PATH
+
+
+def _get_file_log_path() -> Path:
+    """테스트 모드 및 스캐너 모드에서는 운영 로그와 분리된 전용 경로를 반환합니다."""
+    if os.environ.get("STOCKBOT_TEST_MODE") == "1":
+        test_log_dir = Path(tempfile.gettempdir()) / "stockbot_test_logs"
+        return test_log_dir / f"stock_system_{os.getpid()}.log"
+    if os.environ.get("GEMS_SCANNER_MODE") == "1":
+        scanner_log_dir = Path(tempfile.gettempdir()) / "gems_scanner_logs"
+        return scanner_log_dir / f"gems_scanner_{os.getpid()}.log"
+    return LOG_FILE_PATH
+
 
 def setup_logger(name: str = "stock_system") -> logging.Logger:
     """
@@ -31,9 +45,10 @@ def setup_logger(name: str = "stock_system") -> logging.Logger:
     logger.addHandler(console_handler)
 
     # 파일 핸들러 (디렉토리 자동 생성)
-    log_dir = LOG_FILE_PATH.parent
+    file_log_path = _get_file_log_path()
+    log_dir = file_log_path.parent
     os.makedirs(log_dir, exist_ok=True)
-    file_handler = logging.FileHandler(LOG_FILE_PATH, encoding="utf-8")
+    file_handler = logging.FileHandler(file_log_path, encoding="utf-8")
     file_handler.setFormatter(formatter)
     file_handler.setLevel(logging.INFO)
     logger.addHandler(file_handler)

@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 from pathlib import Path
 import sys
 from unittest.mock import MagicMock, patch
@@ -9,7 +10,46 @@ sys.path.insert(0, str(BASE_DIR))
 
 from src.database.db_manager import DatabaseManager
 from src.engine.portfolio_manager import PortfolioManager
+from tests.fixtures.sample_portfolio_fixture import SAMPLE_HELD_PORTFOLIO_10_CURRENT
 import main
+
+
+def _normal_intraday_response(base_price: float):
+    """외부 I/O 없이 정상 15분봉 분석 경로를 유지하는 결정적 OHLCV fixture."""
+    index = pd.date_range("2026-08-18 09:00:00", periods=72, freq="15min")
+    closes = [base_price + (i * 10.0) for i in range(len(index))]
+    return (
+        pd.DataFrame(
+            {
+                "Open": closes,
+                "High": [price + 30.0 for price in closes],
+                "Low": [price - 30.0 for price in closes],
+                "Close": closes,
+                "Volume": [1000 + i for i in range(len(index))],
+            },
+            index=index,
+        ),
+        "TEST_FIXTURE_15M",
+        "NONE",
+    )
+
+
+def _mock_kiwoom_positions():
+    """동기화 및 코드 정합성 검증용 결정적 10종목 키움 잔고."""
+    return [
+        {
+            "stock_code": item["stock_code"],
+            "stock_name": item["stock_name"],
+            "quantity": item["quantity"],
+            "avg_buy_price": item.get("avg_buy_price", item["current_price"]),
+            "current_price": item["current_price"],
+            "raw_balance_price": item["current_price"],
+            "current_price_source": "TEST_FIXTURE",
+            "fallback_used": False,
+        }
+        for item in SAMPLE_HELD_PORTFOLIO_10_CURRENT
+    ]
+
 
 class TestPortfolioManagerRegression(unittest.TestCase):
     @classmethod
@@ -60,7 +100,11 @@ class TestPortfolioManagerRegression(unittest.TestCase):
             """, (code, d_str, o_p, h_p, l_p, c_p, 100000))
 
         # 평가 수행
-        held_status = self.pm.get_held_portfolio_status()
+        with patch(
+            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            return_value=_normal_intraday_response(70000.0),
+        ):
+            held_status = self.pm.get_held_portfolio_status()
 
         # 1. get_held_portfolio_status가 1개 이상 정상 반환하는지 단언
         self.assertIsInstance(held_status, list)
@@ -83,9 +127,14 @@ class TestPortfolioManagerRegression(unittest.TestCase):
 
     def test_02_held_evaluation_exception_re_raised_in_main(self):
         """회귀검증 2: 보유종목 평가 실패 시 main.py가 예외를 삼키지 않고 상위로 raise하는지 검증"""
-        with patch.object(PortfolioManager, 'get_held_portfolio_status', side_effect=ValueError("인위적 평가 장애")):
-            with self.assertRaises(ValueError):
-                main.run_post_market_analysis()
+        with patch.object(self.pm, 'sync_portfolio_from_kiwoom', return_value=[]):
+            with patch('main.update_market_data_stub'):
+                with patch.object(PortfolioManager, 'get_held_portfolio_status', side_effect=ValueError("인위적 평가 장애")):
+                    with patch('main.DatabaseManager', return_value=self.db):
+                        with patch('main.PortfolioManager', return_value=self.pm):
+                            with patch('src.notifications.gmail_notifier.GmailNotifier.send_failure_alert'):
+                                with self.assertRaises(ValueError):
+                                    main.run_post_market_analysis()
 
     def test_03_db_holdings_exist_but_zero_evaluated_raises_runtime_error(self):
         """회귀검증 3: DB상 보유종목이 존재하나 평가 결과가 0개이면 RuntimeError 발생 검증"""
@@ -94,12 +143,15 @@ class TestPortfolioManagerRegression(unittest.TestCase):
         self.db.execute_non_query("INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)", (code, name))
         self.pm.add_holding(code, name, 10, 70000.0)
 
-        with patch.object(PortfolioManager, 'get_held_portfolio_status', return_value=[]):
-            with patch('main.DatabaseManager', return_value=self.db):
-                with patch('main.PortfolioManager', return_value=self.pm):
-                    with self.assertRaises(RuntimeError) as cm:
-                        main.run_post_market_analysis()
-                    self.assertIn("보유종목 평가 실패", str(cm.exception))
+        with patch.object(self.pm, 'sync_portfolio_from_kiwoom', return_value=[]):
+            with patch('main.update_market_data_stub'):
+                with patch.object(PortfolioManager, 'get_held_portfolio_status', return_value=[]):
+                    with patch('main.DatabaseManager', return_value=self.db):
+                        with patch('main.PortfolioManager', return_value=self.pm):
+                            with patch('src.notifications.gmail_notifier.GmailNotifier.send_failure_alert'):
+                                with self.assertRaises(RuntimeError) as cm:
+                                    main.run_post_market_analysis()
+                                self.assertIn("보유종목 평가 실패", str(cm.exception))
 
     def test_04_email_send_failure_raises_runtime_error(self):
         """회귀검증 4: 지메일 발송 실패 시 RuntimeError 발생 검증 (GitHub Actions RED 보장)"""
@@ -117,12 +169,22 @@ class TestPortfolioManagerRegression(unittest.TestCase):
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (code, d_str, c_p, c_p+100, c_p-100, c_p, 100000))
 
-        with patch('main.DatabaseManager', return_value=self.db):
-            with patch('main.PortfolioManager', return_value=self.pm):
-                with patch('src.notifications.gmail_notifier.GmailNotifier.send_email', return_value=False):
-                    with self.assertRaises(RuntimeError) as cm:
-                        main.run_post_market_analysis(force=True)
-                    self.assertIn("지메일 발송 실패", str(cm.exception))
+        with patch.object(self.pm.kiwoom, 'get_account_positions', return_value=_mock_kiwoom_positions()):
+            with patch('main.DatabaseManager', return_value=self.db):
+                with patch('main.PortfolioManager', return_value=self.pm):
+                    with patch('main.update_market_data_stub'):
+                        with patch('main.DartAPIClient') as mock_dart_client:
+                            mock_dart_client.return_value.get_recent_disclosures_briefing.return_value = []
+                            with patch.object(
+                                self.pm,
+                                'get_held_portfolio_status',
+                                return_value=deepcopy(SAMPLE_HELD_PORTFOLIO_10_CURRENT),
+                            ):
+                                with patch('src.notifications.gmail_notifier.GmailNotifier.send_email', return_value=False):
+                                    with patch('src.notifications.gmail_notifier.GmailNotifier.send_failure_alert'):
+                                        with self.assertRaises(RuntimeError) as cm:
+                                            main.run_post_market_analysis(force=True)
+                                        self.assertIn("지메일 발송 실패", str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()
