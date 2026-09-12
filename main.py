@@ -286,6 +286,16 @@ def verify_pipeline_stock_code_consistency(
 
     logger.info(f"✅ [무결성 검증 통과] 키움API-DB-held_status-XLSX-이메일 전 계층의 {len(held_status_codes)}개 종목코드 및 대응카드({len(expected_action_codes)}개)/DART공시가 100% 완벽히 일치합니다.")
 
+
+def _resolve_dispatch_tag(session_code: str) -> str:
+    if session_code == "1120":
+        return "장중 리포트 1 (11:20)"
+    elif session_code == "1335":
+        return "장중 리포트 2 (13:35)"
+    elif session_code == "1535":
+        return "장마감 리포트 (15:35)"
+    return f"정밀 리포트({session_code})"
+
 def run_post_market_analysis(
     add_code: Optional[str] = None,
     add_name: Optional[str] = None,
@@ -342,6 +352,18 @@ def run_post_market_analysis(
     held_status = []
     try:
         held_status = portfolio_mgr.get_held_portfolio_status(engine, live_positions=raw_kiwoom_positions)
+
+        # --- BB-ATR Phase 2 Overlay Injection ---
+        try:
+            from src.analysis.bollinger_atr_strategy import generate_bb_atr_advisory
+            for item in held_status:
+                item["bb_atr"] = generate_bb_atr_advisory(item, now_dt, session_code)
+        except Exception as bb_err:
+            logger.error(f"BB-ATR Overlay failed: {bb_err}", exc_info=True)
+            for item in held_status:
+                item["bb_atr"] = {"mode": "ERROR", "advisory_msg": "Overlay Error", "actual_order_impact": 0}
+        # ----------------------------------------
+
         held_codes = [str(h.get("stock_code")).zfill(6) for h in held_status]
         logger.info(f"[Portfolio Metadata] 키움 전체 보유종목 수: {len(held_status)}개 | 종목코드 목록: {held_codes}")
         if held_status:
@@ -425,9 +447,14 @@ def run_post_market_analysis(
 
         now_dt = datetime.now()
         hour_now = now_dt.hour
-        session_code = "1120" if hour_now < 13 else "1535"
+        if hour_now < 12:
+            session_code = "1120"
+        elif hour_now < 14:
+            session_code = "1335"
+        else:
+            session_code = "1535"
         dispatch_id = f"{now_dt.strftime('%Y%m%d')}_{session_code}"
-        dispatch_tag = "1차 장중 리포트(11:20)" if hour_now < 13 else "2차 장마감 정밀 리포트(15:35)"
+        dispatch_tag = _resolve_dispatch_tag(session_code)
 
         subject = f"[{dispatch_tag}] {now_dt.month}월 {now_dt.day}일 V4-PILOT-C 주요 대응 및 보유종목 공시"
         

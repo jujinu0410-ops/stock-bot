@@ -359,6 +359,23 @@ def generate_mobile_html_report_v2(
                 cho_chip = f"일봉 {format_cho_chip_v2(daily_cho)} / 45m {format_cho_chip_v2(intra_cho)}"
                 adx_chip = f"{format_adx_chip_v2(di_dom)} <span style='color:#4338CA; font-weight:bold; font-size:10px;'>45m ADX: {adx_45m:.1f}</span>"
 
+            
+            # BB-ATR Advisory String
+            bb_atr_html = ""
+            bb_atr = h.get("bb_atr")
+            if bb_atr:
+                mode = bb_atr.get("mode", "UNKNOWN")
+                msg = bb_atr.get("advisory_msg", "")
+                floor = bb_atr.get("advisory_floor", 0)
+                bb_atr_html = f'''
+                <!-- 6. BB-ATR Advisory -->
+                <div style="font-size:10px; color:#475569; margin-top:6px;">
+                    💠 45M ADD ADVISORY: {msg} ({mode})
+                </div>
+                <div style="font-size:10px; color:#475569; margin-bottom:2px;">
+                    💠 ADVISORY FLOOR: {format_krw(floor)}
+                </div>'''
+
             cur_price_disp = format_krw(cur_price)
             pnl_amt_disp = format_krw(pnl_amt)
             pnl_amt_str = f"+{pnl_amt_disp}" if (isinstance(pnl_amt, (int, float)) and pnl_amt > 0) else pnl_amt_disp
@@ -424,6 +441,7 @@ def generate_mobile_html_report_v2(
                 <div style="font-size:10.5px; color:#475569; line-height:1.45; background:#F8FAFC; padding:5px 8px; border-radius:5px; box-sizing:border-box; width:100%; word-break:break-word; overflow-wrap:anywhere;">
                     <div style="margin-bottom:2px; word-break:break-word; overflow-wrap:anywhere;">• 수급: {obv_chip} | {adx_chip}</div>
                     <div style="word-break:break-word; overflow-wrap:anywhere;">• CHO: {cho_chip}</div>
+                    {bb_atr_html}
                 </div>
             </div>
             """
