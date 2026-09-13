@@ -1,9 +1,15 @@
 import requests
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Dict, Any, List, Optional, Tuple
 from src.database.db_manager import DatabaseManager
 from src.api.dart_api import DartAPIClient
 from src.utils.logger import logger
+
+
+KST = ZoneInfo("Asia/Seoul")
+
 
 class DisclosureCollector:
     """
@@ -27,7 +33,6 @@ class DisclosureCollector:
         ratio = None
         mat_status = "MATERIALITY_UNKNOWN"
 
-        # 억/조 원 단위 패턴 추출
         m_krw = re.search(r"(\d+(?:\.\d+)?)\s*(?:조|억)\s*원", report_name)
         if m_krw:
             val = float(m_krw.group(1))
@@ -37,7 +42,6 @@ class DisclosureCollector:
                 amount = val * 1e8
             mat_status = "MATERIALITY_CONFIRMED"
 
-        # % 비율 추출
         m_pct = re.search(r"(\d+(?:\.\d+)?)\s*%", report_name)
         if m_pct:
             ratio = float(m_pct.group(1))
@@ -45,14 +49,32 @@ class DisclosureCollector:
 
         return amount, ratio, mat_status
 
+    @staticmethod
+    def _is_supply_contract_cancel(report_name: str) -> bool:
+        """수주/판매/공급계약 해제·해지에만 ORDER_CANCEL을 허용한다."""
+        compact = re.sub(r"\s+", "", str(report_name or ""))
+        explicit_patterns = (
+            "단일판매ㆍ공급계약해제ㆍ해지",
+            "단일판매·공급계약해제·해지",
+            "단일판매공급계약해제해지",
+            "공급계약해지",
+            "공급계약해제",
+            "수주계약해지",
+            "수주계약해제",
+            "판매계약해지",
+            "판매계약해제",
+        )
+        return any(pattern in compact for pattern in explicit_patterns)
+
+    @staticmethod
+    def _chain_family(report_name: str) -> str:
+        """정정 접두어만 제거한 보수적 체인 식별자."""
+        nm = re.sub(r"\[(?:기재)?정정\]", "", str(report_name or ""))
+        nm = re.sub(r"정정", "", nm)
+        return re.sub(r"[\s()\[\]ㆍ·_-]+", "", nm).strip()
+
     def _classify_event(self, report_name: str) -> Dict[str, Any]:
-        """
-        공시 보고서명으로부터 세부 속성 추출:
-        event_type, progression_stage, is_negative, entity_scope, subsidiary_name,
-        event_hazard, materiality_level, effective_severity, severity_reason,
-        amount, revenue_ratio, materiality_status,
-        issue_amount, new_shares, existing_shares, dilution_ratio, ratio_to_market_cap
-        """
+        """공시 보고서명으로부터 구조화 이벤트 속성을 추출한다."""
         nm = report_name.strip()
         event_type = "GENERAL_DISCLOSURE"
         progression_stage = "FINAL_CONTRACT"
@@ -71,7 +93,6 @@ class DisclosureCollector:
         dilution_ratio = None
         ratio_to_market_cap = None
 
-        # 1. Entity Scope & Subsidiary Name 추출
         if any(k in nm for k in ["자회사의 주요경영사항", "자회사의주요경영사항", "자회사"]):
             entity_scope = "SUBSIDIARY"
             subsidiary_name = "주요 자회사"
@@ -79,7 +100,6 @@ class DisclosureCollector:
             entity_scope = "SUBSIDIARY"
             subsidiary_name = "주요 종속회사"
 
-        # 2. 진행단계 판별 (MOU / LOI / 확정계약 / 가동 등)
         if any(k in nm for k in ["MOU", "양해각서", "업무협약"]):
             progression_stage = "MOU"
         elif any(k in nm for k in ["LOI", "투자의향서", "기본합의"]):
@@ -88,11 +108,17 @@ class DisclosureCollector:
             progression_stage = "DELIVERY"
         elif any(k in nm for k in ["양산", "착공"]):
             progression_stage = "PRODUCTION"
-        else:
-            progression_stage = "FINAL_CONTRACT"
 
-        # 3. 핵심 Event Type 분류 및 다차원 리스크(Hazard + Materiality -> Effective Severity) 평가
-        if "단일판매ㆍ공급계약해제ㆍ해지" in nm or "계약해지" in nm or "계약해제" in nm:
+        # 구조적으로 구체적인 이벤트를 먼저 판정한다. 특히 주식담보 '계약해제'를
+        # 수주계약 해지로 오분류하지 않도록 최대주주변경을 ORDER_CANCEL보다 우선한다.
+        if "최대주주변경" in nm:
+            event_type = "MAJOR_SHAREHOLDER_CHANGE"
+            event_hazard = "HIGH"
+            materiality_level = "UNKNOWN"
+            effective_severity = "HIGH"
+            severity_reason = "경영권 및 지배구조 변동 가능성"
+
+        elif self._is_supply_contract_cancel(nm):
             event_type = "ORDER_CANCEL"
             is_negative = True
             event_hazard = "HIGH"
@@ -145,7 +171,6 @@ class DisclosureCollector:
                 materiality_level = "UNKNOWN"
                 effective_severity = "MEDIUM"
                 severity_reason = "종속회사 유상증자로 모회사 주주에 대한 직접적인 지분 희석 없음 (차등 적용)"
-
         elif "전환사채" in nm and "발행결정" in nm:
             event_type = "CB"
             is_negative = True
@@ -166,12 +191,6 @@ class DisclosureCollector:
         elif "자기주식취득" in nm or "자기주식처분" in nm:
             event_type = "TREASURY_SHARE"
             severity_reason = "자기주식 취득 또는 처분"
-        elif "최대주주변경" in nm:
-            event_type = "MAJOR_SHAREHOLDER_CHANGE"
-            event_hazard = "HIGH"
-            materiality_level = "UNKNOWN"
-            effective_severity = "HIGH"
-            severity_reason = "경영권 및 지배구조 변동 가능성"
         elif any(k in nm for k in ["의견거절", "부적정", "감사의견 비적정", "감사보고서 미제출"]):
             event_type = "AUDIT_ISSUE"
             is_negative = True
@@ -225,11 +244,16 @@ class DisclosureCollector:
             "ratio_to_market_cap": ratio_to_market_cap
         }
 
-    def collect_disclosures(self, stock_code: str, bgn_de: str = "20240101", end_de: str = "20260817") -> List[Dict[str, Any]]:
-        """
-        OpenDART list.json 호출 및 구조화 이벤트 추출, 정정체인 식별, DB 적재
-        """
+    def collect_disclosures(self, stock_code: str, bgn_de: str = "20240101", end_de: Optional[str] = None) -> List[Dict[str, Any]]:
+        """OpenDART list.json 호출 및 구조화 이벤트 추출, 정정체인 식별, DB 적재."""
         corp_code = self.dart_client.get_corp_code(stock_code)
+        if not corp_code:
+            logger.error(f"[DisclosureCollector] {stock_code} corp_code 미확인 — 기존 공시 DB 보존")
+            return []
+
+        if end_de is None:
+            end_de = datetime.now(KST).strftime("%Y%m%d")
+
         url = f"{self.base_url}/list.json"
         params = {
             "crtfc_key": self.api_key,
@@ -240,92 +264,104 @@ class DisclosureCollector:
             "page_count": "100"
         }
 
-        classified_events = []
+        classified_events: List[Dict[str, Any]] = []
         try:
-            self.db.execute_non_query("DELETE FROM disclosure_events WHERE stock_code = ?", (stock_code,))
+            # 원천 수집 성공을 확인하기 전에는 기존 DB를 지우지 않는다.
             res = requests.get(url, params=params, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                items = data.get("list", [])
-                
-                # 1단계: 이벤트 분류
-                raw_events = []
-                for it in items:
-                    r_nm = it.get("report_nm", "").strip()
-                    r_dt = it.get("rcept_dt", "").strip()
-                    r_no = it.get("rcept_no", "").strip()
+            if res.status_code != 200:
+                logger.error(f"[DisclosureCollector] {stock_code} DART HTTP {res.status_code} — 기존 공시 DB 보존")
+                return []
 
-                    parsed = self._classify_event(r_nm)
-                    ev_type = parsed["event_type"]
-                    is_neg = parsed["is_negative"]
+            data = res.json()
+            if data.get("status") not in ("000",):
+                logger.warning(f"[DisclosureCollector] {stock_code} DART status={data.get('status')} — 기존 공시 DB 보존")
+                return []
 
-                    if ev_type != "GENERAL_DISCLOSURE" or is_neg:
-                        is_amended = any(k in r_nm for k in ["정정", "기재정정"])
-                        raw_events.append({
-                            "stock_code": stock_code,
-                            "event_type": ev_type,
-                            "rcept_no": r_no,
-                            "rcept_date": f"{r_dt[:4]}-{r_dt[4:6]}-{r_dt[6:8]}" if len(r_dt) == 8 else r_dt,
-                            "report_name": r_nm,
-                            "amount": parsed["amount"],
-                            "currency": "KRW",
-                            "counterparty": None,
-                            "contract_start": None,
-                            "contract_end": None,
-                            "revenue_ratio": parsed["revenue_ratio"],
-                            "progression_stage": parsed["progression_stage"],
-                            "entity_scope": parsed["entity_scope"],
-                            "subsidiary_name": parsed["subsidiary_name"],
-                            "original_rcept_no": None,
-                            "amendment_chain_id": None,
-                            "is_amended": is_amended,
-                            "is_latest_version": 1,
-                            "event_hazard": parsed["event_hazard"],
-                            "materiality_level": parsed["materiality_level"],
-                            "effective_severity": parsed["effective_severity"],
-                            "materiality_ratio_revenue": parsed["revenue_ratio"],
-                            "materiality_ratio_backlog": None,
-                            "materiality_status": parsed["materiality_status"],
-                            "issue_amount": parsed["issue_amount"],
-                            "new_shares": parsed["new_shares"],
-                            "existing_shares": parsed["existing_shares"],
-                            "dilution_ratio": parsed["dilution_ratio"],
-                            "ratio_to_market_cap": parsed["ratio_to_market_cap"],
-                            "severity": parsed["effective_severity"],
-                            "severity_reason": parsed["severity_reason"],
-                            "is_negative_event": 1 if is_neg else 0,
-                            "source_quality": "VALID"
-                        })
+            items = data.get("list", [])
+            raw_events: List[Dict[str, Any]] = []
+            for it in items:
+                r_nm = it.get("report_nm", "").strip()
+                r_dt = it.get("rcept_dt", "").strip()
+                r_no = it.get("rcept_no", "").strip()
 
-                # 2단계: 정정 체인별 최신본 식별
-                raw_events.sort(key=lambda x: (x["rcept_date"], x["rcept_no"]))
-                active_chains = {}  # (event_type, entity_scope) -> latest chain_id
-                for ev in raw_events:
-                    key = (ev["event_type"], ev["entity_scope"])
-                    if ev["is_amended"] and key in active_chains:
-                        ev["amendment_chain_id"] = active_chains[key]
-                        ev["original_rcept_no"] = active_chains[key]
-                    else:
-                        ev["amendment_chain_id"] = ev["rcept_no"]
-                        active_chains[key] = ev["rcept_no"]
+                parsed = self._classify_event(r_nm)
+                ev_type = parsed["event_type"]
+                is_neg = parsed["is_negative"]
 
-                # 3단계: 체인별 최신본 판별 (날짜 내림차순 정렬 후 체인당 최초 1건만 is_latest_version = 1)
-                raw_events.sort(key=lambda x: (x["rcept_date"], x["rcept_no"]), reverse=True)
-                seen_chains = set()
-                for ev in raw_events:
-                    cid = ev["amendment_chain_id"]
-                    if cid not in seen_chains:
-                        ev["is_latest_version"] = 1
-                        seen_chains.add(cid)
-                    else:
-                        ev["is_latest_version"] = 0  # 구버전 superseded
+                if ev_type != "GENERAL_DISCLOSURE" or is_neg:
+                    is_amended = any(k in r_nm for k in ["정정", "기재정정"])
+                    raw_events.append({
+                        "stock_code": stock_code,
+                        "event_type": ev_type,
+                        "rcept_no": r_no,
+                        "rcept_date": f"{r_dt[:4]}-{r_dt[4:6]}-{r_dt[6:8]}" if len(r_dt) == 8 else r_dt,
+                        "report_name": r_nm,
+                        "amount": parsed["amount"],
+                        "currency": "KRW",
+                        "counterparty": None,
+                        "contract_start": None,
+                        "contract_end": None,
+                        "revenue_ratio": parsed["revenue_ratio"],
+                        "progression_stage": parsed["progression_stage"],
+                        "entity_scope": parsed["entity_scope"],
+                        "subsidiary_name": parsed["subsidiary_name"],
+                        "original_rcept_no": None,
+                        "amendment_chain_id": None,
+                        "is_amended": is_amended,
+                        "is_latest_version": 1,
+                        "event_hazard": parsed["event_hazard"],
+                        "materiality_level": parsed["materiality_level"],
+                        "effective_severity": parsed["effective_severity"],
+                        "materiality_ratio_revenue": parsed["revenue_ratio"],
+                        "materiality_ratio_backlog": None,
+                        "materiality_status": parsed["materiality_status"],
+                        "issue_amount": parsed["issue_amount"],
+                        "new_shares": parsed["new_shares"],
+                        "existing_shares": parsed["existing_shares"],
+                        "dilution_ratio": parsed["dilution_ratio"],
+                        "ratio_to_market_cap": parsed["ratio_to_market_cap"],
+                        "severity": parsed["effective_severity"],
+                        "severity_reason": parsed["severity_reason"],
+                        "is_negative_event": 1 if is_neg else 0,
+                        "source_quality": "VALID"
+                    })
 
-                    # DB 적재
-                    self.db.upsert_disclosure_event(ev)
-                    classified_events.append(ev)
+            # 정정 체인: 같은 이벤트/법인범위/정규화 제목에 원본이 정확히 하나일 때만 자동 연결.
+            # 여러 원본이 공존하면 잘못된 supersede보다 중복 보존을 택한다(fail-closed).
+            raw_events.sort(key=lambda x: (x["rcept_date"], x["rcept_no"]))
+            active_roots: Dict[Tuple[str, str, str], List[str]] = {}
+            for ev in raw_events:
+                key = (ev["event_type"], ev["entity_scope"], self._chain_family(ev["report_name"]))
+                roots = active_roots.setdefault(key, [])
+                if ev["is_amended"] and len(roots) == 1:
+                    ev["amendment_chain_id"] = roots[0]
+                    ev["original_rcept_no"] = roots[0]
+                else:
+                    ev["amendment_chain_id"] = ev["rcept_no"]
+                    if not ev["is_amended"]:
+                        roots.append(ev["rcept_no"])
+
+            raw_events.sort(key=lambda x: (x["rcept_date"], x["rcept_no"]), reverse=True)
+            seen_chains = set()
+            for ev in raw_events:
+                cid = ev["amendment_chain_id"]
+                if cid not in seen_chains:
+                    ev["is_latest_version"] = 1
+                    seen_chains.add(cid)
+                else:
+                    ev["is_latest_version"] = 0
+
+            # 원천 응답과 분류가 끝난 뒤에만 기존 이벤트를 교체한다.
+            self.db.execute_non_query("DELETE FROM disclosure_events WHERE stock_code = ?", (stock_code,))
+            for ev in raw_events:
+                self.db.upsert_disclosure_event(ev)
+                classified_events.append(ev)
 
         except Exception as e:
             logger.error(f"[DisclosureCollector] {stock_code} 공시 수집 실패: {e}")
 
-        logger.info(f"[DisclosureCollector] {stock_code} 공시 이벤트 {len(classified_events)}건 (최신본 {sum(1 for e in classified_events if e['is_latest_version']==1)}건) 적재 완료")
+        logger.info(
+            f"[DisclosureCollector] {stock_code} 공시 이벤트 {len(classified_events)}건 "
+            f"(최신본 {sum(1 for e in classified_events if e['is_latest_version']==1)}건) 적재 완료"
+        )
         return classified_events
