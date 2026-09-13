@@ -13,7 +13,7 @@ class TestDartDataIntegrity(unittest.TestCase):
         self.assertTrue(is_revenue_account("ifrs-full_Revenue", "매출액"))
         self.assertTrue(is_revenue_account("company_Revenue", "매출액"))
 
-    def test_strict_parser_does_not_let_adjustment_shadow_revenue(self):
+    def test_strict_parser_uses_cumulative_interim_and_rejects_adjustment(self):
         client = DartAPIClient(api_key="TEST")
         items = [
             {
@@ -21,28 +21,36 @@ class TestDartDataIntegrity(unittest.TestCase):
                 "account_id": "dart_AdjustmentsForOtherRevenue",
                 "account_nm": "기타수익조정",
                 "thstrm_amount": "999999999",
+                "thstrm_add_amount": "1999999999",
                 "frmtrm_amount": "999999999",
+                "frmtrm_add_amount": "1999999999",
             },
             {
                 "sj_div": "IS",
                 "account_id": "ifrs-full_Revenue",
                 "account_nm": "매출액",
                 "thstrm_amount": "1000",
+                "thstrm_add_amount": "1900",
                 "frmtrm_amount": "900",
+                "frmtrm_add_amount": "1700",
             },
             {
                 "sj_div": "IS",
                 "account_id": "ifrs-full_OperatingIncomeLoss",
                 "account_nm": "영업이익",
                 "thstrm_amount": "100",
+                "thstrm_add_amount": "180",
                 "frmtrm_amount": "80",
+                "frmtrm_add_amount": "140",
             },
             {
                 "sj_div": "IS",
                 "account_id": "ifrs-full_ProfitLoss",
                 "account_nm": "당기순이익",
                 "thstrm_amount": "80",
+                "thstrm_add_amount": "140",
                 "frmtrm_amount": "60",
+                "frmtrm_add_amount": "110",
             },
             {
                 "sj_div": "CF",
@@ -74,8 +82,11 @@ class TestDartDataIntegrity(unittest.TestCase):
             },
         ]
         parsed = client._parse_all_dart_statement_strict(items, "CFS", 2026, "11012", True)
-        self.assertEqual(parsed["revenue"], 1000.0)
-        self.assertEqual(parsed["prev_revenue"], 900.0)
+        self.assertEqual(parsed["revenue"], 1900.0)
+        self.assertEqual(parsed["prev_revenue"], 1700.0)
+        self.assertEqual(parsed["operating_profit"], 180.0)
+        self.assertEqual(parsed["prev_operating_profit"], 140.0)
+        self.assertEqual(parsed["financial_period_basis"], "CUMULATIVE_INTERIM")
 
     def test_quarterly_parser_uses_same_strict_revenue_rule(self):
         collector = QuarterlyDartCollector.__new__(QuarterlyDartCollector)
@@ -99,15 +110,22 @@ class TestDartDataIntegrity(unittest.TestCase):
         self.assertEqual(parsed["rev_cum"], 1900.0)
         self.assertEqual(parsed["rev_discrete"], 1000.0)
 
-    def test_latest_query_targets_prioritize_current_q2_over_q1(self):
+    def test_latest_query_targets_prioritize_current_q2_over_q1_in_september(self):
         targets = DartAPIClient._build_latest_query_targets(datetime(2026, 9, 13, 12, 0, tzinfo=KST))
-        self.assertEqual(targets[:4], [
-            (2026, "11014", True),
+        self.assertEqual(targets[:3], [
             (2026, "11012", True),
             (2026, "11013", True),
             (2025, "11011", True),
         ])
-        self.assertLess(targets.index((2026, "11012", True)), targets.index((2026, "11013", True)))
+        self.assertNotIn((2026, "11014", True), targets)
+
+    def test_latest_query_targets_include_q3_from_november(self):
+        targets = DartAPIClient._build_latest_query_targets(datetime(2026, 11, 20, 12, 0, tzinfo=KST))
+        self.assertEqual(targets[:3], [
+            (2026, "11014", True),
+            (2026, "11012", True),
+            (2026, "11013", True),
+        ])
 
     def test_unknown_corp_code_is_fail_closed(self):
         client = DartAPIClient(api_key="TEST")
