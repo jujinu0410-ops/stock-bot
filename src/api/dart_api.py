@@ -12,6 +12,7 @@ from src.api.dart_account_utils import is_revenue_account
 
 KST = ZoneInfo("Asia/Seoul")
 KNOWN_ETF_CODES = {"088500", "161510", "371460", "484730", "490590"}
+INTERIM_REPORT_CODES = {"11013", "11012", "11014"}
 
 
 class DartAPIClient:
@@ -23,6 +24,7 @@ class DartAPIClient:
     - 알 수 없는 종목을 임의의 다른 회사 corp_code로 대체하지 않는다.
     - 최신 제출 정기보고서를 우선한다.
     - 매출 계정은 정확 계정/계정명으로만 식별한다.
+    - 분기/반기 손익계산서는 누적(thstrm_add/frmtrm_add) 금액을 우선해 동기간 YoY를 비교한다.
     """
     BASE_URL = "https://opendart.fss.or.kr/api"
 
@@ -81,7 +83,7 @@ class DartAPIClient:
 
     @staticmethod
     def _build_latest_query_targets(asof: Optional[datetime] = None) -> List[Tuple[int, str, bool]]:
-        """DART에 실제 제출된 최신 정기보고서를 찾기 위한 최신순 후보 목록."""
+        """DART에 실제 제출되었을 가능성이 있는 정기보고서를 최신순으로 구성한다."""
         now = asof or datetime.now(KST)
         if now.tzinfo is None:
             now = now.replace(tzinfo=KST)
@@ -89,18 +91,36 @@ class DartAPIClient:
             now = now.astimezone(KST)
         year = now.year
 
-        # 아직 제출 전인 보고서는 OpenDART가 status!=000으로 반환하므로 안전하게 다음 후보로 진행한다.
-        # 동일 연도 내 시간 순서: Q1(11013) -> Q2/반기(11012) -> Q3(11014) -> 연간(11011).
-        return [
-            (year, "11014", True),
-            (year, "11012", True),
-            (year, "11013", True),
+        # 명백히 아직 제출 전인 현년도 보고서를 매 종목마다 불필요하게 조회하지 않는다.
+        # 5월부터 Q1, 8월부터 반기(Q2), 11월부터 Q3를 후보에 올린다.
+        targets: List[Tuple[int, str, bool]] = []
+        if now.month >= 11:
+            targets.append((year, "11014", True))
+        if now.month >= 8:
+            targets.append((year, "11012", True))
+        if now.month >= 5:
+            targets.append((year, "11013", True))
+
+        targets.extend([
             (year - 1, "11011", True),
             (year - 1, "11014", True),
             (year - 1, "11012", True),
             (year - 1, "11013", True),
             (year - 2, "11011", False),
-        ]
+        ])
+        return targets
+
+    @staticmethod
+    def _first_present_amount(*values: Any) -> Any:
+        """DART 숫자 필드에서 None/빈값/'-'를 건너뛰고 첫 실제 값을 선택한다."""
+        for value in values:
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text in {"", "-", "None", "null"}:
+                continue
+            return value
+        return "0"
 
     def _fetch_financial_target(
         self,
@@ -189,17 +209,24 @@ class DartAPIClient:
         """sj_div (IS/BS/CF) 및 표준 account_id 엄격 파싱 및 Sanity Check 수행"""
         thstrm = {}
         frmtrm = {}
+        is_interim = reprt_code in INTERIM_REPORT_CODES
 
         for item in items:
             sj_div = item.get("sj_div", "").strip().upper()
             acc_id = item.get("account_id", "").strip()
             acc_nm = item.get("account_nm", "").strip().replace(" ", "")
 
-            th_str = item.get("thstrm_amount") or item.get("thstrm_add_amount") or "0"
-            fr_str = item.get("frmtrm_amount") or item.get("frmtrm_add_amount") or "0"
+            # OpenDART 전체재무제표 API에서 분/반기 IS/CIS의 thstrm_amount는 3개월,
+            # thstrm_add_amount는 누적값이다. F점수 YoY는 동기간 누적값을 비교한다.
+            if is_interim and sj_div in {"IS", "CIS"}:
+                th_raw = self._first_present_amount(item.get("thstrm_add_amount"), item.get("thstrm_amount"))
+                fr_raw = self._first_present_amount(item.get("frmtrm_add_amount"), item.get("frmtrm_amount"))
+            else:
+                th_raw = self._first_present_amount(item.get("thstrm_amount"), item.get("thstrm_add_amount"))
+                fr_raw = self._first_present_amount(item.get("frmtrm_amount"), item.get("frmtrm_add_amount"))
 
-            th_str = str(th_str).replace(",", "").strip()
-            fr_str = str(fr_str).replace(",", "").strip()
+            th_str = str(th_raw).replace(",", "").strip()
+            fr_str = str(fr_raw).replace(",", "").strip()
 
             try: th_val = float(th_str) if th_str not in ["-", "", "None"] else 0.0
             except ValueError: th_val = 0.0
@@ -222,13 +249,13 @@ class DartAPIClient:
                     if "net_income" not in thstrm:
                         thstrm["net_income"] = th_val; frmtrm["net_income"] = fr_val
 
-            # 2. 현금흐름표 (CF) 계정 파싱
+            # 2. 현금흐름표 (CF)
             elif sj_div == "CF":
                 if any(x in acc_id for x in ["CashFlowsFromUsedInOperatingActivities", "OperatingActivities"]) or "영업활동" in acc_nm:
                     if "operating_cash_flow" not in thstrm:
                         thstrm["operating_cash_flow"] = th_val; frmtrm["operating_cash_flow"] = fr_val
 
-            # 3. 재무상태표 (BS) 계정 파싱
+            # 3. 재무상태표 (BS)
             elif sj_div == "BS":
                 if acc_id == "ifrs-full_Assets" or acc_nm in ["자산총계", "자산"]:
                     if "total_assets" not in thstrm:
@@ -312,12 +339,14 @@ class DartAPIClient:
 
         completeness = 100.0 if sanity_pass else 75.0
         status_str = "정상수집·검증통과" if sanity_pass else "수집성공·이상치검출"
-        sanity_detail_flag = f"[계정: thstrm vs frmtrm | BS: 당기({liab:,.0f}/{eq:,.0f}={debt_ratio:.1f}%) vs 전기({liab_fr:,.0f}/{eq_fr:,.0f}={prev_debt_ratio:.1f}%) | 기간: {reprt_code} | CFS/OFS: {fs_div} | 검증: {'PASS' if sanity_pass else 'FAIL'}]"
+        period_basis = "CUMULATIVE_INTERIM" if is_interim else "ANNUAL_OR_PERIOD_AMOUNT"
+        sanity_detail_flag = f"[계정: strict exact-match | 기간기준: {period_basis} | BS: 당기({liab:,.0f}/{eq:,.0f}={debt_ratio:.1f}%) vs 전기({liab_fr:,.0f}/{eq_fr:,.0f}={prev_debt_ratio:.1f}%) | 기간: {reprt_code} | CFS/OFS: {fs_div} | 검증: {'PASS' if sanity_pass else 'FAIL'}]"
 
         return {
             "fiscal_year": year,
             "quarter_code": reprt_code,
             "fs_div": fs_div,
+            "financial_period_basis": period_basis,
             "revenue": rev_val,
             "prev_revenue": rev_fr,
             "revenue_yoy": rev_yoy,
@@ -372,14 +401,22 @@ class DartAPIClient:
         return self._get_fallback_data(stock_code, "SINGLE_ACCOUNT_FALLBACK_FAILED")
 
     def _parse_dart_statement(self, items: list, fiscal_year: int = 2024, reprt_code: str = "11011") -> Dict[str, Any]:
-        """DART API 주요계정 파싱"""
+        """DART API 주요계정 파싱 (Fallback 결과는 F점수 미확정 처리)."""
         thstrm = {}
         frmtrm = {}
+        is_interim = reprt_code in INTERIM_REPORT_CODES
 
         for item in items:
             nm = item.get("account_nm", "").strip()
-            th_str = str(item.get("thstrm_amount", "0") or "0").replace(",", "")
-            fr_str = str(item.get("frmtrm_amount", "0") or "0").replace(",", "")
+            if is_interim:
+                th_raw = self._first_present_amount(item.get("thstrm_add_amount"), item.get("thstrm_amount"))
+                fr_raw = self._first_present_amount(item.get("frmtrm_add_amount"), item.get("frmtrm_amount"))
+            else:
+                th_raw = self._first_present_amount(item.get("thstrm_amount"), item.get("thstrm_add_amount"))
+                fr_raw = self._first_present_amount(item.get("frmtrm_amount"), item.get("frmtrm_add_amount"))
+
+            th_str = str(th_raw).replace(",", "")
+            fr_str = str(fr_raw).replace(",", "")
 
             try: th_val = float(th_str) if th_str not in ["-", ""] else 0.0
             except ValueError: th_val = 0.0
