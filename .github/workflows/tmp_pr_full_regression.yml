@@ -31,5 +31,5 @@ jobs:
           python -m pip install --disable-pip-version-check -r requirements.txt
           python -m pip install --disable-pip-version-check pytest
 
-      - name: Run full test suite
-        run: python -m pytest -q
+      - name: Run repository test suite
+        run: python -m pytest tests -q
