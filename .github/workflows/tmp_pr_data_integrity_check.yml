@@ -1,0 +1,39 @@
+name: Temporary PR Data Integrity Check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  integrity-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: "true"
+      KIWOOM_USE_MOCK: "true"
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install targeted test dependencies
+        run: python -m pip install --disable-pip-version-check requests pandas numpy
+
+      - name: Compile changed modules
+        run: |
+          python -m py_compile src/api/dart_account_utils.py
+          python -m py_compile src/api/dart_api.py
+          python -m py_compile src/api/disclosure_collector.py
+          python -m py_compile src/api/quarterly_dart_collector.py
+          python -m py_compile src/engine/trading_engine.py
+          python -m py_compile tests/test_dart_data_integrity.py
+
+      - name: Run DART integrity regression tests
+        run: python -m unittest tests.test_dart_data_integrity -v
