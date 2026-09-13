@@ -40,8 +40,23 @@ class TradingEngine:
                 analysis_date = str(df_daily.iloc[-1]['stk_date'])
 
             # 3. DART 재무 데이터 조회
+            # DART 보고서코드는 숫자/문자열 정렬이 시간순이 아니다.
+            # 11013(Q1) < 11012(Q2) < 11014(Q3) < 11011(Q4/연간)의 실제 순서를 CASE로 강제한다.
             dart_rows = self.db.execute_query(
-                "SELECT * FROM dart_financials WHERE stock_code = ? ORDER BY fiscal_year DESC, quarter_code DESC LIMIT 1",
+                """
+                SELECT * FROM dart_financials
+                WHERE stock_code = ?
+                ORDER BY fiscal_year DESC,
+                    CASE quarter_code
+                        WHEN '11011' THEN 4
+                        WHEN '11014' THEN 3
+                        WHEN '11012' THEN 2
+                        WHEN '11013' THEN 1
+                        ELSE 0
+                    END DESC,
+                    collected_at DESC
+                LIMIT 1
+                """,
                 (stock_code,)
             )
             dart_data = dict(dart_rows[0]) if dart_rows else {}
@@ -180,7 +195,7 @@ class TradingEngine:
                 "sell_drop_delta": tech_res.get('sell_drop_delta', 0),
                 "supply_demand_pass": tech_res.get('supply_demand_pass', False),
                 "reason": tech_res['reason'],
-                
+
                 # 일봉 원자값 지표
                 "obv_dead_date": tech_res.get("obv_dead_date", "N/A"),
                 "obv_dead_elapsed_days": tech_res.get("obv_dead_elapsed_days", 0),
