@@ -11,4 +11,6 @@ logs/*.xlsx
 logs/*.csv
 logs/preview/
 scratch/
+artifacts/
+data/policy_shadow.db
 

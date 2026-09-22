@@ -19,6 +19,128 @@ class AddAdvisory45mEngine:
     def __init__(self, intraday_analyzer: Optional[Intraday45mAnalyzer] = None):
         self.intraday_analyzer = intraday_analyzer or Intraday45mAnalyzer()
 
+    @staticmethod
+    def calculate_canonical_45m_indicators(df_45m: pd.DataFrame) -> Dict[str, Any]:
+        """Return the ADD sidecar's canonical raw indicators for prepared 45m bars.
+
+        The caller owns bar-completeness validation.  Keeping the calculation
+        here prevents WMA9 OBV, VWAP and Chaikin definitions from being copied
+        by read-only consumers such as the sell-warning sidecar.
+        """
+        if not isinstance(df_45m, pd.DataFrame) or len(df_45m) < 26:
+            raise ValueError("INSUFFICIENT_COMPLETED_45M_BARS")
+
+        required = {"High", "Low", "Close", "Volume"}
+        if not required.issubset(df_45m.columns):
+            raise ValueError("MALFORMED_45M_OHLCV")
+
+        typical_price = (df_45m["High"] + df_45m["Low"] + df_45m["Close"]) / 3.0
+        tp_vol = typical_price * df_45m["Volume"]
+        vol_sum9 = df_45m["Volume"].rolling(window=9).sum()
+        vol_sum26 = df_45m["Volume"].rolling(window=26).sum()
+        vwap9_series = tp_vol.rolling(window=9).sum() / (vol_sum9 + 1e-9)
+        vwap26_series = tp_vol.rolling(window=26).sum() / (vol_sum26 + 1e-9)
+
+        close = df_45m["Close"]
+        vol = df_45m["Volume"]
+        price_diff = close.diff()
+        obv_direction = np.where(price_diff > 0, 1.0, np.where(price_diff < 0, -1.0, 0.0))
+        obv_series = pd.Series(np.cumsum(obv_direction * vol), index=df_45m.index)
+        wma_weights = np.arange(1, 10, dtype=float)
+        obv9_series = obv_series.rolling(window=9).apply(
+            lambda window: np.dot(window, wma_weights) / wma_weights.sum(), raw=True
+        )
+        obv_gap_series = obv_series - obv9_series
+        obv_gap_delta_series = obv_gap_series.diff()
+
+        high = df_45m["High"]
+        low = df_45m["Low"]
+        hl_diff = high - low
+        mfm = np.where(
+            hl_diff == 0,
+            0.0,
+            ((close - low) - (high - close)) / (hl_diff + 1e-9),
+        )
+        mfv = mfm * vol
+        adl_series = pd.Series(mfv, index=df_45m.index).cumsum()
+        chaikin_series = (
+            adl_series.ewm(span=13, adjust=False).mean()
+            - adl_series.ewm(span=26, adjust=False).mean()
+        )
+        chaikin_delta_series = chaikin_series.diff()
+
+        v9 = float(vwap9_series.iloc[-1])
+        v26 = float(vwap26_series.iloc[-1])
+        is_gold_hist = vwap9_series > vwap26_series
+        is_gold_curr = v9 > v26
+        age = 0
+        if is_gold_curr:
+            vwap_state = "VWAP_GOLD"
+            for k in range(len(is_gold_hist) - 1, 0, -1):
+                if is_gold_hist.iloc[k]:
+                    if not is_gold_hist.iloc[k - 1]:
+                        age = (len(is_gold_hist) - 1) - k
+                        break
+                else:
+                    break
+            vwap_cross_state = "VWAP_GOLD_CROSS" if age == 0 else "VWAP_GOLD"
+        else:
+            vwap_state = "VWAP_DEAD"
+            for k in range(len(is_gold_hist) - 1, 0, -1):
+                if not is_gold_hist.iloc[k]:
+                    if is_gold_hist.iloc[k - 1]:
+                        age = (len(is_gold_hist) - 1) - k
+                        break
+                else:
+                    break
+            vwap_cross_state = "VWAP_DEAD_CROSS" if age == 0 else "VWAP_DEAD"
+
+        obv_val = float(obv_series.iloc[-1])
+        obv9_val = float(obv9_series.iloc[-1])
+        obv_prev_val = float(obv_series.iloc[-2])
+        obv9_prev_val = float(obv9_series.iloc[-2])
+        if obv_val > obv9_val:
+            obv_state = "OBV_GOLD_CROSS" if obv_prev_val <= obv9_prev_val else "OBV_GOLD"
+        else:
+            obv_state = "OBV_DEAD_CROSS" if obv_prev_val >= obv9_prev_val else "OBV_DEAD"
+
+        obv_gap = float(obv_gap_series.iloc[-1])
+        obv_gap_delta = float(obv_gap_delta_series.iloc[-1])
+        if obv_gap_delta > 1e-6:
+            obv_gap_state = "EXPANDING"
+        elif obv_gap_delta < -1e-6:
+            obv_gap_state = "CONTRACTING"
+        else:
+            obv_gap_state = "STABLE"
+
+        chaikin_value = float(chaikin_series.iloc[-1])
+        chaikin_prev = float(chaikin_series.iloc[-2])
+        chaikin_delta = float(chaikin_delta_series.iloc[-1])
+        if chaikin_delta > 1e-6:
+            chaikin_state = "CHAIKIN_RISING"
+        elif chaikin_delta < -1e-6:
+            chaikin_state = "CHAIKIN_FALLING"
+        else:
+            chaikin_state = "CHAIKIN_FLAT"
+
+        return {
+            "vwap9": v9,
+            "vwap26": v26,
+            "vwap_state": vwap_state,
+            "vwap_cross_state": vwap_cross_state,
+            "vwap_cross_age": age,
+            "obv": obv_val,
+            "obv9": obv9_val,
+            "obv_state": obv_state,
+            "obv_gap": obv_gap,
+            "obv_gap_delta": obv_gap_delta,
+            "obv_gap_state": obv_gap_state,
+            "chaikin_value": chaikin_value,
+            "chaikin_prev": chaikin_prev,
+            "chaikin_delta": chaikin_delta,
+            "chaikin_state": chaikin_state,
+        }
+
     def evaluate_stock_advisory(
         self,
         stock_code: str,
@@ -78,102 +200,23 @@ class AddAdvisory45mEngine:
                 default_result["data_quality"] = f"INVALID (INSUFFICIENT_BARS_{len(df_45m)})"
                 return default_result
 
-            # 3. Indicator Calculations
-            # Typical Price & VWAP9 / VWAP26
-            typical_price = (df_45m['High'] + df_45m['Low'] + df_45m['Close']) / 3.0
-            tp_vol = typical_price * df_45m['Volume']
-            vol_sum9 = df_45m['Volume'].rolling(window=9).sum()
-            vol_sum26 = df_45m['Volume'].rolling(window=26).sum()
-
-            vwap9_series = tp_vol.rolling(window=9).sum() / (vol_sum9 + 1e-9)
-            vwap26_series = tp_vol.rolling(window=26).sum() / (vol_sum26 + 1e-9)
-
-            # OBV & OBV9 Signal (WMA9: Weighted Moving Average 9)
-            close = df_45m['Close']
-            vol = df_45m['Volume']
-            price_diff = close.diff()
-            obv_direction = np.where(price_diff > 0, 1.0, np.where(price_diff < 0, -1.0, 0.0))
-            obv_series = pd.Series(np.cumsum(obv_direction * vol), index=df_45m.index)
-            wma_weights = np.arange(1, 10, dtype=float)
-            wma_weight_sum = wma_weights.sum()
-            obv9_series = obv_series.rolling(window=9).apply(
-                lambda w: np.dot(w, wma_weights) / wma_weight_sum, raw=True
-            )
-            obv_gap_series = obv_series - obv9_series
-            obv_gap_delta_series = obv_gap_series.diff()
-
-            # Chaikin Oscillator (13, 26)
-            high = df_45m['High']
-            low = df_45m['Low']
-            hl_diff = high - low
-            mfm = np.where(hl_diff == 0, 0.0, ((close - low) - (high - close)) / (hl_diff + 1e-9))
-            mfv = mfm * vol
-            adl_series = pd.Series(mfv, index=df_45m.index).cumsum()
-            chaikin_series = adl_series.ewm(span=13, adjust=False).mean() - adl_series.ewm(span=26, adjust=False).mean()
-            chaikin_delta_series = chaikin_series.diff()
-
-            # Values at current bar (index -1)
-            v9 = float(vwap9_series.iloc[-1])
-            v26 = float(vwap26_series.iloc[-1])
-            is_gold_curr = (v9 > v26)
-
-            # VWAP State & Age
-            is_gold_hist = vwap9_series > vwap26_series
-            age = 0
-            if is_gold_curr:
-                vwap_state = "VWAP_GOLD"
-                for k in range(len(is_gold_hist) - 1, 0, -1):
-                    if is_gold_hist.iloc[k]:
-                        if not is_gold_hist.iloc[k-1]:
-                            age = (len(is_gold_hist) - 1) - k
-                            break
-                    else:
-                        break
-                vwap_cross_state = "VWAP_GOLD_CROSS" if age == 0 else "VWAP_GOLD"
-                vwap_cross_age = age
-            else:
-                vwap_state = "VWAP_DEAD"
-                for k in range(len(is_gold_hist) - 1, 0, -1):
-                    if not is_gold_hist.iloc[k]:
-                        if is_gold_hist.iloc[k-1]:
-                            age = (len(is_gold_hist) - 1) - k
-                            break
-                    else:
-                        break
-                vwap_cross_state = "VWAP_DEAD_CROSS" if age == 0 else "VWAP_DEAD"
-                vwap_cross_age = age
-
-            # OBV State
-            obv_val = float(obv_series.iloc[-1])
-            obv9_val = float(obv9_series.iloc[-1])
-            obv_prev_val = float(obv_series.iloc[-2])
-            obv9_prev_val = float(obv9_series.iloc[-2])
-
-            if obv_val > obv9_val:
-                obv_state = "OBV_GOLD_CROSS" if obv_prev_val <= obv9_prev_val else "OBV_GOLD"
-            else:
-                obv_state = "OBV_DEAD_CROSS" if obv_prev_val >= obv9_prev_val else "OBV_DEAD"
-
-            obv_gap = float(obv_gap_series.iloc[-1])
-            obv_gap_delta = float(obv_gap_delta_series.iloc[-1])
-            if obv_gap_delta > 1e-6:
-                obv_gap_state = "EXPANDING"
-            elif obv_gap_delta < -1e-6:
-                obv_gap_state = "CONTRACTING"
-            else:
-                obv_gap_state = "STABLE"
-
-            # Chaikin State
-            ch_val = float(chaikin_series.iloc[-1])
-            ch_prev = float(chaikin_series.iloc[-2])
-            ch_delta = float(chaikin_delta_series.iloc[-1])
-
-            if ch_delta > 1e-6:
-                chaikin_state = "CHAIKIN_RISING"
-            elif ch_delta < -1e-6:
-                chaikin_state = "CHAIKIN_FALLING"
-            else:
-                chaikin_state = "CHAIKIN_FLAT"
+            # 3. Indicator Calculations (canonical ADD definitions)
+            metrics = self.calculate_canonical_45m_indicators(df_45m)
+            v9 = metrics["vwap9"]
+            v26 = metrics["vwap26"]
+            vwap_state = metrics["vwap_state"]
+            vwap_cross_state = metrics["vwap_cross_state"]
+            vwap_cross_age = metrics["vwap_cross_age"]
+            obv_val = metrics["obv"]
+            obv9_val = metrics["obv9"]
+            obv_state = metrics["obv_state"]
+            obv_gap = metrics["obv_gap"]
+            obv_gap_delta = metrics["obv_gap_delta"]
+            obv_gap_state = metrics["obv_gap_state"]
+            ch_val = metrics["chaikin_value"]
+            ch_prev = metrics["chaikin_prev"]
+            ch_delta = metrics["chaikin_delta"]
+            chaikin_state = metrics["chaikin_state"]
 
             # ADD ADVISORY State Determination
             reasons = []
