@@ -562,7 +562,7 @@ class CloudRunner:
         }
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="StockBot Cloud Run Job Entrypoint")
     parser.add_argument(
         "--mode", type=str, required=True,
@@ -573,6 +573,11 @@ def main():
     parser.add_argument("--state-dir", type=str, help="State directory")
     parser.add_argument("--bucket", type=str, help="GCS bucket name")
     parser.add_argument("--prefix", type=str, default="stockbot-state", help="GCS prefix")
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     runner = CloudRunner(

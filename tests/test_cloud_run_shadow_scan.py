@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 os.environ["STOCKBOT_TEST_MODE"] = "1"
 
-from cloud_runner import CloudRunner, resolve_session_code, build_run_id
+from cloud_runner import CloudRunner, resolve_session_code, build_run_id, build_parser
 from src.database.db_manager import DatabaseManager
 from src.utils.gcs_state_adapter import GCSStateAdapter, STATE_FILES_TO_BUNDLE, MANIFEST_FILENAME
 
@@ -215,6 +215,80 @@ class TestCloudRunShadowScan(unittest.TestCase):
         self.assertEqual(res["status"], "SKIPPED_NO_NEW_45M_BAR")
         runner.state_adapter.create_and_upload_bundle.assert_not_called()
 
+    # -------------------------------------------------------------------------
+    # 5. CLI Parser & Production DB Migration Regression
+    # -------------------------------------------------------------------------
+    def test_08_cli_parser_accepts_shadow_scan_and_standard_modes(self):
+        """Regression test: CLI parser must accept SHADOW_SCAN and preserve INTRADAY/POSTMARKET."""
+        parser = build_parser()
+
+        # Valid modes must parse without error
+        valid_modes = ["INTRADAY", "POSTMARKET", "SHADOW_SCAN", "intraday", "postmarket", "shadow_scan"]
+        for mode in valid_modes:
+            args = parser.parse_args(["--mode", mode])
+            self.assertEqual(args.mode, mode)
+
+        # Invalid modes must fail-closed with SystemExit (exit code 2)
+        with patch("sys.stderr"):
+            with self.assertRaises(SystemExit) as cm:
+                parser.parse_args(["--mode", "INVALID_MODE"])
+            self.assertEqual(cm.exception.code, 2)
+
+            with self.assertRaises(SystemExit) as cm:
+                parser.parse_args([])
+            self.assertEqual(cm.exception.code, 2)
+
+    def test_09_production_db_migration_creates_sell_warning_45m(self):
+        """Regression test: GCS production DB missing sell_warning_45m automatically creates table on startup."""
+        import sqlite3
+        migration_db_path = self.state_dir / "data" / "test_migration.db"
+        if migration_db_path.exists():
+            migration_db_path.unlink()
+
+        # Create DB with only stock_info (simulating old production DB without sell_warning_45m)
+        conn = sqlite3.connect(str(migration_db_path))
+        conn.execute("CREATE TABLE stock_info (stock_code TEXT PRIMARY KEY, stock_name TEXT);")
+        conn.commit()
+        conn.close()
+
+        # Verify table does not exist yet
+        conn = sqlite3.connect(str(migration_db_path))
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sell_warning_45m'")
+        self.assertIsNone(cur.fetchone())
+        conn.close()
+
+        # Instantiating DatabaseManager runs _init_db() which must create sell_warning_45m
+        db = DatabaseManager(db_path=str(migration_db_path))
+
+        conn = sqlite3.connect(str(migration_db_path))
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sell_warning_45m'")
+        self.assertIsNotNone(cur.fetchone())
+
+        cur.execute("PRAGMA table_info(sell_warning_45m)")
+        cols = [r[1] for r in cur.fetchall()]
+        self.assertIn("sell_confirmed", cols)
+        self.assertIn("stock_code", cols)
+        self.assertIn("bar_timestamp", cols)
+        conn.close()
+
+        # Verify insert_sell_warning_45m succeeds
+        entry = {
+            "trading_date": "2026-09-23",
+            "stock_code": "004960",
+            "bar_timestamp": "2026-09-23 09:45:00",
+            "evaluated_at": "2026-09-23 09:50:00",
+            "engine_version": "V1.0",
+            "sell_warning_state": "SELL_WARNING",
+            "sell_confirmed": 0,
+            "data_quality": "VALID",
+            "reason_codes": "BEAR_TREND",
+            "bearish_axes_count": 2,
+        }
+        self.assertTrue(db.insert_sell_warning_45m(entry))
+
 
 if __name__ == "__main__":
     unittest.main()
+
