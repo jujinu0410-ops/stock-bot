@@ -147,8 +147,9 @@ class CloudRunner:
         state_dir: Optional[Path] = None,
         storage_client: Any = None,
         force: bool = False,
+        asof_dt: Optional[datetime] = None,
     ):
-        self.kst_now = get_current_kst_time()
+        self.kst_now = asof_dt or get_current_kst_time()
         self.report_mode = self._resolve_report_mode(report_mode)
         self.session_code = resolve_session_code(self.kst_now, self.report_mode)
         self.run_id = build_run_id(self.kst_now, self.report_mode)
@@ -468,6 +469,21 @@ class CloudRunner:
         logger.info(f"  KST Time: {self.kst_now.strftime('%Y-%m-%d %H:%M:%S KST')}")
         logger.info(f"  State Dir: {self.state_dir}")
         logger.info("=" * 60)
+
+        # Non-trading day early guard (Weekends & KRX Holidays)
+        if not self.force:
+            from src.runtime.krx_calendar import KRXCalendar
+            if not KRXCalendar.is_krx_trading_day(self.kst_now):
+                logger.info(
+                    f"[CloudRunner] Today {self.kst_now.strftime('%Y-%m-%d')} is not a KRX trading day. "
+                    "Skipping execution (Gmail=0, Kakao=0, Orders=0, StateBundle=0)."
+                )
+                return {
+                    "status": "SKIPPED_NON_TRADING_DAY",
+                    "run_id": self.run_id,
+                    "dispatch_id": self.dispatch_id,
+                    "message": f"Execution skipped on non-trading day ({self.kst_now.strftime('%Y-%m-%d')}).",
+                }
 
         initial_state = self._detect_state()
 

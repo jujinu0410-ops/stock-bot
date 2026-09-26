@@ -24,6 +24,7 @@ os.environ["STOCKBOT_TEST_MODE"] = "1"
 from cloud_runner import CloudRunner, resolve_session_code, build_run_id, build_parser
 from src.database.db_manager import DatabaseManager
 from src.utils.gcs_state_adapter import GCSStateAdapter, STATE_FILES_TO_BUNDLE, MANIFEST_FILENAME
+from src.runtime.krx_calendar import KRXCalendar
 
 
 class TestCloudRunShadowScan(unittest.TestCase):
@@ -287,6 +288,44 @@ class TestCloudRunShadowScan(unittest.TestCase):
             "bearish_axes_count": 2,
         }
         self.assertTrue(db.insert_sell_warning_45m(entry))
+
+    # -------------------------------------------------------------------------
+    # 8. KRX Trading Day Early Guard
+    # -------------------------------------------------------------------------
+    def test_11_shadow_scan_non_trading_day_skips_immediately(self):
+        """On KRX holidays (2026-09-24 Chuseok & 2026-09-28 Chuseok substitute holiday), SHADOW_SCAN halts at CloudRunner.run() before GCS download."""
+        for holiday_str in ("2026-09-24", "2026-09-28"):
+            holiday_dt = datetime.strptime(f"{holiday_str} 09:50:00", "%Y-%m-%d %H:%M:%S")
+            self.assertFalse(KRXCalendar.is_krx_trading_day(holiday_dt))
+            runner = CloudRunner(
+                report_mode="SHADOW_SCAN",
+                bucket_name="test-bucket",
+                storage_client=self.mock_client,
+                state_dir=self.state_dir,
+                asof_dt=holiday_dt,
+            )
+            with patch.object(runner.state_adapter, "download_current_state") as mock_download:
+                res = runner.run()
+                self.assertEqual(res["status"], "SKIPPED_NON_TRADING_DAY")
+                mock_download.assert_not_called()
+
+    def test_12_shadow_scan_trading_day_tuesday_executes_normally(self):
+        """On first post-Chuseok trading day (2026-09-29 Tuesday), SHADOW_SCAN proceeds normally."""
+        tuesday_dt = datetime(2026, 9, 29, 9, 50, 0)
+        self.assertTrue(KRXCalendar.is_krx_trading_day(tuesday_dt))
+        runner = CloudRunner(
+            report_mode="SHADOW_SCAN",
+            bucket_name="test-bucket",
+            storage_client=self.mock_client,
+            state_dir=self.state_dir,
+            asof_dt=tuesday_dt,
+        )
+        fake_manifest = {"bundle_path": "test.zip"}
+        with patch.object(runner.state_adapter, "download_current_state", return_value=(fake_manifest, 1)):
+            with patch("src.runtime.runtime_scheduler.RuntimeScheduler._execute_intraday_shadow_scan", return_value={"status": "SKIPPED_NO_NEW_45M_BAR"}) as mock_scan:
+                res = runner.run()
+                self.assertEqual(res["status"], "SKIPPED_NO_NEW_45M_BAR")
+                mock_scan.assert_called_once()
 
 
 if __name__ == "__main__":

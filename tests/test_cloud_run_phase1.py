@@ -60,6 +60,7 @@ from cloud_runner import (
     _SM_RESUME,
     _SM_FRESH,
 )
+from src.runtime.krx_calendar import KRXCalendar
 
 
 class MockBlob:
@@ -159,8 +160,11 @@ class TestCloudRunPhase1(unittest.TestCase):
             state_dir=self.state_dir,
             storage_client=self.mock_client,
         )
+        self._krx_patcher = patch.object(KRXCalendar, "is_krx_trading_day", return_value=True)
+        self._krx_patcher.start()
 
     def tearDown(self):
+        self._krx_patcher.stop()
         os.environ.clear()
         os.environ.update(self._orig_env)
         try:
@@ -670,8 +674,11 @@ class TestCloudRunPhase1StateMachine(unittest.TestCase):
             storage_client=self.mock_client,
         )
         self.adapter.create_and_upload_bundle(run_id="BOOTSTRAP_SM")
+        self._krx_patcher = patch.object(KRXCalendar, "is_krx_trading_day", return_value=True)
+        self._krx_patcher.start()
 
     def tearDown(self):
+        self._krx_patcher.stop()
         os.environ.clear()
         os.environ.update(self._orig_env)
         shutil.rmtree(self.test_dir, ignore_errors=True)
@@ -1081,6 +1088,114 @@ class TestCloudRunPhase1StateMachine(unittest.TestCase):
         self.assertTrue((restore_dir / "data" / "stock_system.db").exists())
         self.assertTrue((restore_dir / "data" / "policy_shadow.db").exists())
         self.assertTrue((restore_dir / "config" / "portfolio_holdings.json").exists())
+
+    # =========================================================================
+    # Group 8: KRX Trading Day Early Guard (Tests 52-55)
+    # =========================================================================
+
+    def test_52_non_trading_day_skips_intraday(self):
+        """52. On KRX holiday (e.g. 2026-09-24 Chuseok), INTRADAY run halts before download/analysis."""
+        self._krx_patcher.stop()
+        try:
+            chuseok_dt = datetime(2026, 9, 24, 11, 20)
+            runner = CloudRunner(
+                report_mode="INTRADAY",
+                bucket_name="test-bucket",
+                storage_client=self.mock_client,
+                state_dir=self.state_dir,
+                asof_dt=chuseok_dt,
+            )
+            with patch("main.run_post_market_analysis") as mock_v4:
+                res = runner.run()
+                self.assertEqual(res["status"], "SKIPPED_NON_TRADING_DAY")
+                mock_v4.assert_not_called()
+                self.assertFalse(self.adapter.has_dispatch_receipt(runner.run_id))
+                self.assertEqual(self.adapter.get_committed_run_id(), "BOOTSTRAP_SM")
+        finally:
+            self._krx_patcher.start()
+
+    def test_53_non_trading_day_skips_postmarket(self):
+        """53. On KRX holiday (e.g. 2026-09-25 Chuseok), POSTMARKET run halts before download/analysis."""
+        self._krx_patcher.stop()
+        try:
+            chuseok_dt = datetime(2026, 9, 25, 15, 35)
+            runner = CloudRunner(
+                report_mode="POSTMARKET",
+                bucket_name="test-bucket",
+                storage_client=self.mock_client,
+                state_dir=self.state_dir,
+                asof_dt=chuseok_dt,
+            )
+            with patch("main.run_post_market_analysis") as mock_v4:
+                res = runner.run()
+                self.assertEqual(res["status"], "SKIPPED_NON_TRADING_DAY")
+                mock_v4.assert_not_called()
+                self.assertFalse(self.adapter.has_dispatch_receipt(runner.run_id))
+        finally:
+            self._krx_patcher.start()
+
+    def test_54_non_trading_day_force_bypasses_guard(self):
+        """54. If force=True, non-trading day guard is bypassed and execution proceeds."""
+        self._krx_patcher.stop()
+        try:
+            chuseok_dt = datetime(2026, 9, 24, 11, 20)
+            runner = CloudRunner(
+                report_mode="INTRADAY",
+                bucket_name="test-bucket",
+                storage_client=self.mock_client,
+                state_dir=self.state_dir,
+                force=True,
+                asof_dt=chuseok_dt,
+            )
+            fake_held = [{"stock_code": "005930", "stock_name": "삼성전자", "quantity": 10, "avg_buy_price": 70000}]
+            mock_notifier = self._make_mock_notifier()
+            fake_payload = self._fresh_report_payload(mock_notifier)
+            with patch("main.run_post_market_analysis", return_value=(fake_held, [], fake_payload)) as mock_v4:
+                res = runner.run()
+                self.assertEqual(res["status"], "SUCCESS")
+                mock_v4.assert_called_once()
+        finally:
+            self._krx_patcher.start()
+
+    def test_55_chuseok_substitute_holiday_skip_and_first_trading_day_normal_execution(self):
+        """55. 2026-09-28 Monday (Chuseok substitute holiday) is safely skipped; 2026-09-29 Tuesday executes normally."""
+        self._krx_patcher.stop()
+        try:
+            # 1. 2026-09-28 Monday: Chuseok substitute holiday (대체공휴일) -> SKIPPED_NON_TRADING_DAY
+            monday_dt = datetime(2026, 9, 28, 11, 20)
+            self.assertFalse(KRXCalendar.is_krx_trading_day(monday_dt))
+            runner_mon = CloudRunner(
+                report_mode="INTRADAY",
+                bucket_name="test-bucket",
+                storage_client=self.mock_client,
+                state_dir=self.state_dir,
+                asof_dt=monday_dt,
+            )
+            with patch("main.run_post_market_analysis") as mock_v4:
+                res_mon = runner_mon.run()
+                self.assertEqual(res_mon["status"], "SKIPPED_NON_TRADING_DAY")
+                mock_v4.assert_not_called()
+
+            # 2. 2026-09-29 Tuesday: First trading day after Chuseok -> SUCCESS
+            tuesday_dt = datetime(2026, 9, 29, 11, 20)
+            self.assertTrue(KRXCalendar.is_krx_trading_day(tuesday_dt))
+
+            runner_tue = CloudRunner(
+                report_mode="INTRADAY",
+                bucket_name="test-bucket",
+                storage_client=self.mock_client,
+                state_dir=self.state_dir,
+                asof_dt=tuesday_dt,
+            )
+            fake_held = [{"stock_code": "005930", "stock_name": "삼성전자", "quantity": 10, "avg_buy_price": 70000}]
+            mock_notifier = self._make_mock_notifier()
+            fake_payload = self._fresh_report_payload(mock_notifier)
+            with patch("main.run_post_market_analysis", return_value=(fake_held, [], fake_payload)) as mock_v4:
+                res_tue = runner_tue.run()
+                self.assertEqual(res_tue["status"], "SUCCESS")
+                mock_v4.assert_called_once()
+        finally:
+            self._krx_patcher.start()
 
 
 if __name__ == "__main__":
