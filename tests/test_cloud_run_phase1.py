@@ -1157,13 +1157,29 @@ class TestCloudRunPhase1StateMachine(unittest.TestCase):
         finally:
             self._krx_patcher.start()
 
-    def test_55_chuseok_substitute_holiday_skip_and_first_trading_day_normal_execution(self):
-        """55. 2026-09-28 Monday (Chuseok substitute holiday) is safely skipped; 2026-09-29 Tuesday executes normally."""
+    def test_55_chuseok_holiday_skip_and_trading_days_normal_execution(self):
+        """55. 2026-09-25 Friday (Chuseok holiday) is safely skipped; 2026-09-28 and 2026-09-29 execute normally."""
         self._krx_patcher.stop()
         try:
-            # 1. 2026-09-28 Monday: Chuseok substitute holiday (대체공휴일) -> SKIPPED_NON_TRADING_DAY
+            # 1. 2026-09-25 Friday: Chuseok holiday (추석 연휴) -> SKIPPED_NON_TRADING_DAY
+            friday_dt = datetime(2026, 9, 25, 11, 20)
+            self.assertFalse(KRXCalendar.is_krx_trading_day(friday_dt))
+            runner_fri = CloudRunner(
+                report_mode="INTRADAY",
+                bucket_name="test-bucket",
+                storage_client=self.mock_client,
+                state_dir=self.state_dir,
+                asof_dt=friday_dt,
+            )
+            with patch("main.run_post_market_analysis") as mock_v4:
+                res_fri = runner_fri.run()
+                self.assertEqual(res_fri["status"], "SKIPPED_NON_TRADING_DAY")
+                mock_v4.assert_not_called()
+
+            # 2. 2026-09-28 Monday: Regular KRX trading day -> SUCCESS
             monday_dt = datetime(2026, 9, 28, 11, 20)
-            self.assertFalse(KRXCalendar.is_krx_trading_day(monday_dt))
+            self.assertTrue(KRXCalendar.is_krx_trading_day(monday_dt))
+
             runner_mon = CloudRunner(
                 report_mode="INTRADAY",
                 bucket_name="test-bucket",
@@ -1171,12 +1187,15 @@ class TestCloudRunPhase1StateMachine(unittest.TestCase):
                 state_dir=self.state_dir,
                 asof_dt=monday_dt,
             )
-            with patch("main.run_post_market_analysis") as mock_v4:
+            fake_held = [{"stock_code": "005930", "stock_name": "삼성전자", "quantity": 10, "avg_buy_price": 70000}]
+            mock_notifier = self._make_mock_notifier()
+            fake_payload = self._fresh_report_payload(mock_notifier)
+            with patch("main.run_post_market_analysis", return_value=(fake_held, [], fake_payload)) as mock_v4:
                 res_mon = runner_mon.run()
-                self.assertEqual(res_mon["status"], "SKIPPED_NON_TRADING_DAY")
-                mock_v4.assert_not_called()
+                self.assertEqual(res_mon["status"], "SUCCESS")
+                mock_v4.assert_called_once()
 
-            # 2. 2026-09-29 Tuesday: First trading day after Chuseok -> SUCCESS
+            # 3. 2026-09-29 Tuesday: Regular KRX trading day -> SUCCESS
             tuesday_dt = datetime(2026, 9, 29, 11, 20)
             self.assertTrue(KRXCalendar.is_krx_trading_day(tuesday_dt))
 
@@ -1187,9 +1206,6 @@ class TestCloudRunPhase1StateMachine(unittest.TestCase):
                 state_dir=self.state_dir,
                 asof_dt=tuesday_dt,
             )
-            fake_held = [{"stock_code": "005930", "stock_name": "삼성전자", "quantity": 10, "avg_buy_price": 70000}]
-            mock_notifier = self._make_mock_notifier()
-            fake_payload = self._fresh_report_payload(mock_notifier)
             with patch("main.run_post_market_analysis", return_value=(fake_held, [], fake_payload)) as mock_v4:
                 res_tue = runner_tue.run()
                 self.assertEqual(res_tue["status"], "SUCCESS")
