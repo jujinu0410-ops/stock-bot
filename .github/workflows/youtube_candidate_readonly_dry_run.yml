@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/youtube_candidate_readonly_dry_run.yml'
       - 'scripts/youtube_candidate_integrated_dry_run.py'
+      - 'scripts/youtube_candidate_integrated_dry_run_fast.py'
       - 'scripts/youtube_candidate_dry_run.py'
       - 'src/analysis/youtube_candidate_ingest.py'
       - 'src/analysis/youtube_candidate_signal.py'
@@ -20,7 +21,7 @@ permissions:
 jobs:
   readonly-dry-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Checkout feature branch
         uses: actions/checkout@v4
@@ -51,7 +52,7 @@ jobs:
           TZ: Asia/Seoul
         run: |
           mkdir -p logs
-          python scripts/youtube_candidate_integrated_dry_run.py \
+          python scripts/youtube_candidate_integrated_dry_run_fast.py \
             --days 35 \
             --as-of 2026-09-30 \
             --json-out logs/youtube_candidate_integrated_dry_run.json
