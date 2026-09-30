@@ -40,7 +40,7 @@ ACTIVE 30 · 정상수집 30
         result = parse_and_resolve_mail(
             "[경제 Intelligence] 9월30일 | AI·반도체",
             body,
-            # Intentionally incomplete registry.  Explicit codes printed in the
+            # Intentionally incomplete registry. Explicit codes printed in the
             # report are authoritative candidate identity.
             [{"stock_code": "009150", "stock_name": "삼성전기", "market_type": "KOSPI"}],
         )
@@ -84,6 +84,28 @@ SK하이닉스 (000660)
             [],
         )
         self.assertEqual([x.ticker for x in result.resolved], ["005930", "000660"])
+
+    def test_explicit_no_new_candidates_is_valid_empty_event(self):
+        body = """Economic Intelligence V2 · TREND
+분석 기준일: 2026-09-28 (TREND)
+
+📌 오늘 언급·주목 종목 (V8 분석 후보군)
+※ 매수추천이 아닌 후속 분석 후보 제시 목적
+
+오늘 신규 주목 종목 없음
+
+📺 채널 수집 감사
+ACTIVE 30 · 정상수집 30
+"""
+        result = parse_and_resolve_mail(
+            "[경제 Intelligence] 9월28일 | 금리·통화정책 · AI·반도체",
+            body,
+            [],
+        )
+        self.assertEqual(result.report_date, date(2026, 9, 28))
+        self.assertEqual(result.raw_mentions, tuple())
+        self.assertEqual(result.resolved, tuple())
+        self.assertEqual(result.unresolved, tuple())
 
     def test_legacy_heading_falls_back_to_core(self):
         body = """분석 기준일: 2026-09-30
