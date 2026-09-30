@@ -1,0 +1,64 @@
+name: YouTube Candidate Readonly Integrated Dry Run
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/youtube-candidate-ingest-v0-20260930
+    paths:
+      - '.github/workflows/youtube_candidate_readonly_dry_run.yml'
+      - 'scripts/youtube_candidate_integrated_dry_run.py'
+      - 'scripts/youtube_candidate_dry_run.py'
+      - 'src/analysis/youtube_candidate_ingest.py'
+      - 'src/analysis/youtube_candidate_signal.py'
+      - 'tests/test_youtube_candidate_ingest.py'
+      - 'tests/test_youtube_candidate_signal.py'
+
+permissions:
+  contents: read
+
+jobs:
+  readonly-dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run YouTube candidate unit tests
+        run: |
+          python -m unittest discover -s tests -p 'test_youtube_candidate_*.py' -v
+
+      - name: Run integrated read-only dry run
+        env:
+          GMAIL_SENDER_EMAIL: ${{ secrets.GMAIL_SENDER_EMAIL }}
+          GMAIL_USER: ${{ secrets.GMAIL_SENDER_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          KIWOOM_APP_KEY: ${{ secrets.KIWOOM_APP_KEY }}
+          KIWOOM_APP_SECRET: ${{ secrets.KIWOOM_APP_SECRET }}
+          TZ: Asia/Seoul
+        run: |
+          mkdir -p logs
+          python scripts/youtube_candidate_integrated_dry_run.py \
+            --days 35 \
+            --as-of 2026-09-30 \
+            --json-out logs/youtube_candidate_integrated_dry_run.json
+
+      - name: Upload dry-run evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-candidate-readonly-${{ github.run_number }}
+          path: logs/youtube_candidate_integrated_dry_run.json
+          if-no-files-found: warn
