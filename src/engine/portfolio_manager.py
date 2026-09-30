@@ -248,6 +248,7 @@ class PortfolioManager:
             kiwoom_source = live_meta.get("current_price_source", "UNAVAILABLE") if live_meta else "UNAVAILABLE"
 
             daily_df = self.db.get_daily_prices(code)
+            market_close_p = float(daily_df.iloc[-1]["close_price"]) if not daily_df.empty else 0.0
             if daily_df.empty or len(daily_df) < 14:
                 try:
                     from src.api.real_market_api import RealMarketAPIClient
@@ -256,8 +257,6 @@ class PortfolioManager:
                         daily_df = pd.DataFrame(candles)
                 except Exception as e_candle:
                     logger.debug(f"[{code}] 일봉 시세 수집 fallback 실패: {e_candle}")
-            market_close_p = float(daily_df.iloc[-1]["close_price"]) if not daily_df.empty else 0.0
-
             # 완성 일봉(1D_COMPLETED: 당일 장중 미완성봉 제외) 슬라이스 추출
             today_ymd = datetime.now().strftime("%Y%m%d")
             completed_df = pd.DataFrame()
