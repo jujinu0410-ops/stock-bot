@@ -23,6 +23,10 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from config.settings import KIWOOM_APP_KEY, KIWOOM_APP_SECRET
+from scripts.youtube_candidate_registered_ip_validated_dry_run import (
+    _Retry429Session,
+    _rate_limit_events,
+)
 from src.analysis.youtube_candidate_review import (
     KiwoomAfterCloseMarketRegimeReader,
     MarketRegimeSnapshot,
@@ -107,9 +111,10 @@ def run(input_json: Path, db_path: Path, with_market: bool) -> Dict[str, Any]:
     market_cache: Dict[str, MarketRegimeSnapshot] = {}
     market_errors: Dict[str, str] = {}
     token_status = "NOT_REQUESTED"
+    _rate_limit_events.clear()
 
     if with_market and interesting:
-        session = requests.Session()
+        session = _Retry429Session(requests.Session())
         try:
             token = get_token(session)
             token_status = "AVAILABLE_REGISTERED_IP"
@@ -156,6 +161,10 @@ def run(input_json: Path, db_path: Path, with_market: bool) -> Dict[str, Any]:
         "source_json": str(input_json),
         "with_market_regime": with_market,
         "kiwoom_token_status": token_status,
+        "kiwoom_http_429_retry_count": len(_rate_limit_events),
+        "kiwoom_http_429_retry_wait_seconds": sum(
+            float(x.get("delay_seconds") or 0) for x in _rate_limit_events
+        ),
         "review_count": len(reviews),
         "reviews": reviews,
         "safety": {
