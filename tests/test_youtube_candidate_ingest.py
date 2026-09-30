@@ -126,6 +126,26 @@ class YouTubeCandidateIngestTests(unittest.TestCase):
         self.assertEqual(pool[0].mention_count_30d, 1)
         self.assertEqual(pool[0].last_seen_date, date(2026, 9, 30))
 
+    def test_rolling_rebuild_preserves_existing_expired_history(self):
+        existing = CandidateRecord(
+            ticker="005930",
+            name="삼성전자",
+            first_seen_date=date(2026, 7, 1),
+            last_seen_date=date(2026, 8, 1),
+            mention_count_30d=4,
+            source_subject_latest="old mail",
+            expires_at=date(2026, 8, 31),
+        )
+        pool = aggregate_candidate_pool(
+            [],
+            as_of_date=date(2026, 9, 30),
+            existing_by_ticker={"005930": existing},
+        )
+        self.assertEqual(len(pool), 1)
+        self.assertEqual(pool[0].candidate_status, "EXPIRED")
+        self.assertEqual(pool[0].mention_count_30d, 0)
+        self.assertEqual(pool[0].first_seen_date, date(2026, 7, 1))
+
     def test_duplicate_same_day_is_idempotent(self):
         body = "분석 기준일: 2026-09-29\n언급종목\n- 삼성전자"
         result = parse_and_resolve_mail("[경제 Intelligence] 9월29일", body, STOCK_ROWS)
