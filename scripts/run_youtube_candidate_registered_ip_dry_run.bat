@@ -118,6 +118,14 @@ echo Exact JSON : %JSON_OUT%
 echo Review JSON: %REVIEW_JSON%
 echo Review TXT : %REVIEW_TXT%
 echo.
+
+if "%PREVIEW_EXIT%"=="0" if exist "%REVIEW_TXT%" (
+  echo ================= REVIEW PREVIEW =================
+  "%PYTHON_EXE%" -c "from pathlib import Path; print(Path(r'%REVIEW_TXT%').read_text(encoding='utf-8'))"
+  echo ==================================================
+  echo.
+)
+
 echo Safety: READ-ONLY validation only. No Sheet write, no email send, no order.
 echo.
 
