@@ -7,13 +7,9 @@ on:
       - feat/youtube-candidate-ingest-v0-20260930
     paths:
       - '.github/workflows/youtube_candidate_readonly_dry_run.yml'
-      - 'scripts/youtube_candidate_integrated_dry_run.py'
-      - 'scripts/youtube_candidate_integrated_dry_run_fast.py'
-      - 'scripts/youtube_candidate_dry_run.py'
-      - 'src/analysis/youtube_candidate_ingest.py'
-      - 'src/analysis/youtube_candidate_signal.py'
-      - 'tests/test_youtube_candidate_ingest.py'
-      - 'tests/test_youtube_candidate_signal.py'
+      - 'scripts/youtube_candidate_*.py'
+      - 'src/analysis/youtube_candidate_*.py'
+      - 'tests/test_youtube_candidate_*.py'
 
 permissions:
   contents: read
