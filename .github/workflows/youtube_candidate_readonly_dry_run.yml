@@ -52,7 +52,7 @@ jobs:
           TZ: Asia/Seoul
         run: |
           mkdir -p logs
-          python scripts/youtube_candidate_integrated_dry_run_fast.py \
+          python -m scripts.youtube_candidate_integrated_dry_run_fast \
             --days 35 \
             --as-of 2026-09-30 \
             --json-out logs/youtube_candidate_integrated_dry_run.json
