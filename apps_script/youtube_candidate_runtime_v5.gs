@@ -12,6 +12,7 @@
  * - weekdays only
  * - 09:00~15:30 Asia/Seoul
  * - every 5 minutes via bootstrap trigger
+ * - fail closed unless Naver reports the Korean market as OPEN
  *
  * Manual refresh/monitor entry points remain available separately and are not
  * blocked by these schedule guards.
@@ -26,6 +27,7 @@ const YCV5 = Object.freeze({
   COLLECTED_DATE_KEY: 'YOUTUBE_MAIL_COLLECTED_DATE',
   COLLECTED_AT_KEY: 'YOUTUBE_MAIL_COLLECTED_AT',
   COLLECTED_SUBJECT_KEY: 'YOUTUBE_MAIL_COLLECTED_SUBJECT',
+  MARKET_PROBE_CODE: '005930',
 });
 
 function seoulNowPartsV5_(now) {
@@ -84,10 +86,22 @@ function markTodayCollectionDoneV5_(mailInfo) {
   }, false);
 }
 
-/*
- * Scheduled 30-minute candidate-mail collector.
- * Returns a short status string for execution logs/debugging.
- */
+function isKrMarketOpenV5_() {
+  try {
+    const res = UrlFetchApp.fetch(YCI.NAVER_BASIC + YCV5.MARKET_PROBE_CODE + '/basic', {
+      method: 'get',
+      muteHttpExceptions: true,
+      headers: {'User-Agent': 'Mozilla/5.0'},
+    });
+    if (res.getResponseCode() !== 200) return false;
+    const data = JSON.parse(res.getContentText() || '{}');
+    return String(data.marketStatus || '').trim().toUpperCase() === 'OPEN';
+  } catch (e) {
+    return false;
+  }
+}
+
+/* Scheduled 30-minute candidate-mail collector. */
 function scheduledCandidateRefreshV5() {
   const now = new Date();
   const parts = seoulNowPartsV5_(now);
@@ -107,10 +121,6 @@ function scheduledCandidateRefreshV5() {
   const before = String(props.getProperty('LAST_CANDIDATE_REFRESH_AT') || '');
   refreshYouTubeCandidatePoolV2();
   const after = String(props.getProperty('LAST_CANDIDATE_REFRESH_AT') || '');
-
-  // refreshYouTubeCandidatePoolV2 can legitimately return early if another
-  // runtime holds the script lock.  Do not mark the day complete unless the
-  // successful-refresh timestamp actually advanced.
   if (!after || after === before) return 'RETRY_REFRESH_NOT_CONFIRMED';
 
   markTodayCollectionDoneV5_(mailInfo);
@@ -118,8 +128,7 @@ function scheduledCandidateRefreshV5() {
 }
 
 /* Manual refresh: always run immediately. If today's mail is present and the
- * refresh succeeds, count it as today's completed collection so the scheduled
- * collector stops for the day.
+ * refresh succeeds, count it as today's completed collection.
  */
 function manualCandidateRefreshV5() {
   const props = PropertiesService.getScriptProperties();
@@ -138,6 +147,7 @@ function scheduledCandidateMonitorV5() {
   if (!isWithinMinuteWindowV5_(parts, YCV5.MONITOR_START_MINUTE, YCV5.MONITOR_END_MINUTE)) {
     return 'SKIP_OUTSIDE_MARKET_WINDOW';
   }
+  if (!isKrMarketOpenV5_()) return 'SKIP_MARKET_NOT_OPEN';
   monitorYouTubeCandidatesV2();
   return 'MONITORED';
 }
