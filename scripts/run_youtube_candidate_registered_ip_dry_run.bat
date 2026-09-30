@@ -42,6 +42,10 @@ if not exist "scripts\youtube_candidate_registered_ip_validated_dry_run.py" (
   echo [ERROR] validated dry-run module not found on the validated ref.
   exit /b 4
 )
+if not exist "scripts\youtube_candidate_review_preview.py" (
+  echo [ERROR] review preview module not found on the validated ref.
+  exit /b 4
+)
 
 set "PYTHON_EXE=C:\Users\jooji\AppData\Local\Programs\Python\Python312\python.exe"
 set "ENV_FILE=C:\Users\jooji\.env"
@@ -66,6 +70,8 @@ if not defined TIMESTAMP set "TIMESTAMP=UNKNOWN"
 
 set "JSON_OUT=logs\youtube_candidate_registered_ip_dry_run_%TIMESTAMP%.json"
 set "LOG_OUT=logs\youtube_candidate_registered_ip_dry_run_%TIMESTAMP%.log"
+set "REVIEW_JSON=logs\youtube_candidate_review_preview_%TIMESTAMP%.json"
+set "REVIEW_TXT=logs\youtube_candidate_review_preview_%TIMESTAMP%.txt"
 set "PYTHONUNBUFFERED=1"
 set "TZ=Asia/Seoul"
 
@@ -77,6 +83,8 @@ echo HEAD: %CURRENT_HEAD% >> "%LOG_OUT%"
 echo WorkingDirectory: %CD% >> "%LOG_OUT%"
 echo SourceDB: %SOURCE_DB% >> "%LOG_OUT%"
 echo JSON: %JSON_OUT% >> "%LOG_OUT%"
+echo ReviewJSON: %REVIEW_JSON% >> "%LOG_OUT%"
+echo ReviewTXT: %REVIEW_TXT% >> "%LOG_OUT%"
 echo KiwoomCredentialsSource=config.settings local .env bootstrap >> "%LOG_OUT%"
 echo Safety: SheetWrite=NO EmailSend=NO PortfolioMutation=NO OrderAPI=NO >> "%LOG_OUT%"
 echo ================================================== >> "%LOG_OUT%"
@@ -87,14 +95,28 @@ echo ================================================== >> "%LOG_OUT%"
   --json-out "%JSON_OUT%" >> "%LOG_OUT%" 2>&1
 set "EXIT_CODE=%ERRORLEVEL%"
 
+set "PREVIEW_EXIT=SKIPPED"
+if "%EXIT_CODE%"=="0" (
+  "%PYTHON_EXE%" -m scripts.youtube_candidate_review_preview ^
+    --input-json "%JSON_OUT%" ^
+    --db "%SOURCE_DB%" ^
+    --with-market ^
+    --json-out "%REVIEW_JSON%" ^
+    --text-out "%REVIEW_TXT%" >> "%LOG_OUT%" 2>&1
+  set "PREVIEW_EXIT=%ERRORLEVEL%"
+)
+
 echo ================================================== >> "%LOG_OUT%"
-echo Finished: %date% %time% ExitCode=%EXIT_CODE% >> "%LOG_OUT%"
+echo Finished: %date% %time% ExitCode=%EXIT_CODE% PreviewExit=%PREVIEW_EXIT% >> "%LOG_OUT%"
 echo ================================================== >> "%LOG_OUT%"
 
 echo.
 echo [YouTube Candidate Dry Run] ExitCode=%EXIT_CODE%
-echo Log : %LOG_OUT%
-echo JSON: %JSON_OUT%
+echo [Review Preview] ExitCode=%PREVIEW_EXIT%
+echo Log        : %LOG_OUT%
+echo Exact JSON : %JSON_OUT%
+echo Review JSON: %REVIEW_JSON%
+echo Review TXT : %REVIEW_TXT%
 echo.
 echo Safety: READ-ONLY validation only. No Sheet write, no email send, no order.
 echo.
