@@ -12,6 +12,20 @@ if errorlevel 1 (
   exit /b 2
 )
 
+REM Never switch branches automatically: protect unrelated local work.
+for /f "delims=" %%B in ('git branch --show-current 2^>nul') do set CURRENT_BRANCH=%%B
+if /I not "%CURRENT_BRANCH%"=="feat/youtube-candidate-ingest-v0-20260930" (
+  echo [BLOCKED] Current branch is "%CURRENT_BRANCH%".
+  echo [BLOCKED] This dry run is allowed only on feat/youtube-candidate-ingest-v0-20260930.
+  echo [BLOCKED] No branch was changed automatically.
+  exit /b 3
+)
+
+if not exist "scripts\youtube_candidate_registered_ip_validated_dry_run.py" (
+  echo [ERROR] validated dry-run module not found on the current branch.
+  exit /b 4
+)
+
 if not exist "logs" mkdir logs
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set TIMESTAMP=%%I
 if not defined TIMESTAMP set TIMESTAMP=UNKNOWN
@@ -25,6 +39,7 @@ set TZ=Asia/Seoul
 echo ================================================== > "%LOG_OUT%"
 echo [YouTube Candidate READ-ONLY exact-flow dry run] >> "%LOG_OUT%"
 echo Started: %date% %time% >> "%LOG_OUT%"
+echo Branch: %CURRENT_BRANCH% >> "%LOG_OUT%"
 echo WorkingDirectory: %CD% >> "%LOG_OUT%"
 echo JSON: %JSON_OUT% >> "%LOG_OUT%"
 echo Safety: SheetWrite=NO EmailSend=NO PortfolioMutation=NO OrderAPI=NO >> "%LOG_OUT%"
