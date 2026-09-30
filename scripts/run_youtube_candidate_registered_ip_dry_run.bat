@@ -15,16 +15,27 @@ if errorlevel 1 (
 )
 
 REM Never switch branches automatically: protect unrelated local work.
+set "EXPECTED_BRANCH=feat/youtube-candidate-ingest-v0-20260930"
+set "CURRENT_BRANCH="
 for /f "delims=" %%B in ('git branch --show-current 2^>nul') do set "CURRENT_BRANCH=%%B"
-if /I not "%CURRENT_BRANCH%"=="feat/youtube-candidate-ingest-v0-20260930" (
+for /f "delims=" %%H in ('git rev-parse HEAD 2^>nul') do set "CURRENT_HEAD=%%H"
+for /f "delims=" %%H in ('git rev-parse origin/%EXPECTED_BRANCH% 2^>nul') do set "EXPECTED_HEAD=%%H"
+
+set "REF_OK=NO"
+if /I "%CURRENT_BRANCH%"=="%EXPECTED_BRANCH%" set "REF_OK=YES"
+if not defined CURRENT_BRANCH if defined CURRENT_HEAD if defined EXPECTED_HEAD if /I "%CURRENT_HEAD%"=="%EXPECTED_HEAD%" set "REF_OK=YES"
+
+if /I not "%REF_OK%"=="YES" (
   echo [BLOCKED] Current branch is "%CURRENT_BRANCH%".
-  echo [BLOCKED] This dry run is allowed only on feat/youtube-candidate-ingest-v0-20260930.
+  echo [BLOCKED] Current HEAD   : %CURRENT_HEAD%
+  echo [BLOCKED] Expected HEAD : %EXPECTED_HEAD%
+  echo [BLOCKED] Allowed only on %EXPECTED_BRANCH% or detached HEAD exactly matching origin/%EXPECTED_BRANCH%.
   echo [BLOCKED] No branch was changed automatically.
   exit /b 3
 )
 
 if not exist "scripts\youtube_candidate_registered_ip_validated_dry_run.py" (
-  echo [ERROR] validated dry-run module not found on the current branch.
+  echo [ERROR] validated dry-run module not found on the validated ref.
   exit /b 4
 )
 
@@ -71,6 +82,7 @@ echo ================================================== > "%LOG_OUT%"
 echo [YouTube Candidate READ-ONLY exact-flow dry run] >> "%LOG_OUT%"
 echo Started: %date% %time% >> "%LOG_OUT%"
 echo Branch: %CURRENT_BRANCH% >> "%LOG_OUT%"
+echo HEAD: %CURRENT_HEAD% >> "%LOG_OUT%"
 echo WorkingDirectory: %CD% >> "%LOG_OUT%"
 echo SourceDB: %SOURCE_DB% >> "%LOG_OUT%"
 echo JSON: %JSON_OUT% >> "%LOG_OUT%"
