@@ -593,9 +593,15 @@ def build_all_holdings_strategy_table_html(
         pnl_sign = "+" if pnl_pct > 0 else ""
 
         # 2. Strategy Badge & Left Accent Border
+        strat_st = str(h.get("strategy_status") or "").upper()
+        strat_warn = str(h.get("strategy_warning") or "").strip()
+
         if trade_mode == "SUSPENDED_HOLD" or code == "234920" or (p and p.get("is_suspended")):
             strategy_badge = '<span style="background:#F1F5F9; border:1px solid #94A3B8; color:#475569; font-weight:bold; font-size:10px; padding:2px 6px; border-radius:4px;">⚫ 거래정지 HOLD / 주문 금지</span>'
             accent_border = "#94A3B8"
+        elif strat_st == "REVIEW_REQUIRED":
+            strategy_badge = '<span style="background:#FFFBEB; border:1px solid #FCD34D; color:#B45309; font-weight:bold; font-size:10px; padding:2px 6px; border-radius:4px;">🟠 전략 재검토 필요</span>'
+            accent_border = "#F59E0B"
         elif user_override_flag:
             strategy_badge = '<span style="background:#FFFBEB; border:1px solid #FCD34D; color:#B45309; font-weight:bold; font-size:10px; padding:2px 6px; border-radius:4px;">⚠️ DART 미확정 [수동감시]</span>'
             accent_border = "#F59E0B"
@@ -709,11 +715,42 @@ def build_all_holdings_strategy_table_html(
                 • <b>BB-ATR FLOOR:</b> {format_krw(bb_floor) if bb_floor else '-'}
             </div>"""
 
+        # ATR14 & Trailing Reference Distances
+        atr_text = h.get("atr_text")
+        if not atr_text:
+            atr_val = h.get("atr_14") or h.get("current_completed_atr")
+            if trade_mode == "SUSPENDED_HOLD" or code == "234920":
+                atr_text = "ATR - (거래정지)"
+            elif isinstance(atr_val, (int, float)) and atr_val > 0:
+                atr_text = f"ATR14 {int(round(atr_val)):,}원"
+            else:
+                atr_text = "ATR -"
+
+        buy_dist = h.get("buy_trailing_dist")
+        sell_dist = h.get("sell_trailing_dist")
+        if buy_dist is None or sell_dist is None:
+            atr_val = h.get("atr_14") or h.get("current_completed_atr")
+            if isinstance(atr_val, (int, float)) and atr_val > 0 and trade_mode != "SUSPENDED_HOLD" and code != "234920":
+                buy_dist = int(round(atr_val * 0.6))
+                sell_dist = int(round(atr_val * 0.4))
+
+        trailing_line_html = ""
+        if buy_dist is not None and sell_dist is not None:
+            trailing_line_html = f"""
+            <div style="font-size:10.5px; color:#334155; margin-bottom:2px;">
+                • <b>트레일링 기준:</b> 0.6ATR +{buy_dist:,}원 (추적매수) · 0.4ATR -{sell_dist:,}원 (최고가 트레일링)
+            </div>"""
+        elif trade_mode == "SUSPENDED_HOLD" or code == "234920":
+            trailing_line_html = """
+            <div style="font-size:10.5px; color:#334155; margin-bottom:2px;">
+                • <b>트레일링 기준:</b> - (거래정지)
+            </div>"""
+
         rows_html.append(f"""
         <div data-overview-code="{code}"{action_audit_attr} style="background:#FFFFFF; border:1px solid #E2E8F0; border-left:3px solid {accent_border}; border-radius:6px; padding:7px 9px; margin-bottom:6px; box-sizing:border-box; width:100%;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
                 <div style="font-size:12.5px; font-weight:bold; color:#0F172A; word-break:break-word;">
-                    {name} <span style="font-size:10.5px; color:#64748B; font-weight:normal;">({code})</span>
+                    {name} <span style="font-size:10.5px; color:#64748B; font-weight:normal;">({code}) · {atr_text}</span>
                 </div>
                 <div style="font-size:12px; font-weight:bold; color:{pnl_color}; text-align:right; flex-shrink:0;">
                     {cur_price_disp} <span style="font-size:10.5px;">({daily_sign}{daily_chg:.1f}%)</span>
@@ -727,13 +764,16 @@ def build_all_holdings_strategy_table_html(
             </div>
             <div style="font-size:10.5px; color:#334155; margin-bottom:2px;">
                 • 손절가 {stop_disp} | 익절 목표가 {target_disp}
-            </div>
+            </div>{f'''
+            <div style="font-size:10.5px; color:#B45309; background:#FEF3C7; border:1px solid #FCD34D; border-radius:4px; padding:3px 6px; margin:4px 0 3px 0;">
+                ⚠️ <b>상태:</b> 전략 재검토 필요 | <b>사유:</b> {html.escape(strat_warn or '포지션 변경 후 전략 재검증 필요')}
+            </div>''' if (strat_st == "REVIEW_REQUIRED" or strat_warn) else ""}
             <div style="font-size:10.5px; color:#334155; margin-bottom:2px;">
                 • 익절 trailing 하락폭 {trail_disp}
             </div>
             <div style="font-size:10.5px; color:#334155; margin-bottom:2px;">
                 • 추매 감시가 {buy_watch_disp} | 반등확인 {rebound_disp}
-            </div>
+            </div>{trailing_line_html}
             {bb_atr_html}
             <div style="font-size:10px; color:#64748B;">
                 • {policy_compact_str}
