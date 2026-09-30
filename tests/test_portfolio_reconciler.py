@@ -305,27 +305,27 @@ class TestPortfolioReconciler(unittest.TestCase):
             {"stock_code": "010140", "stock_name": "삼성중공업", "quantity": 1013, "avg_buy_price": 20119.0, "current_price": 19850}
         ]
         atr_map = {
-            "010140": {"atr_14": 880.6, "base_date": "2026-09-30"}
+            "010140": {"atr_14": 893.38, "base_date": "2026-09-29"}
         }
 
         result = self.reconciler.reconcile(live_positions, atr_map=atr_map, sync_to_sheet=True)
         self.assertEqual(result["sync_status"], "SUCCESS")
 
         p = result["positions"][0]
-        self.assertEqual(p["atr_round"], 881)
-        self.assertEqual(p["buy_trailing_dist"], 528)
-        self.assertEqual(p["sell_trailing_dist"], 352)
-        self.assertEqual(p["atr_text"], "ATR14 881원")
-        self.assertEqual(p["atr_detail_text"], "0.6ATR 528원 · 0.4ATR 352원")
+        self.assertEqual(p["atr_round"], 893)
+        self.assertEqual(p["buy_trailing_dist"], 536)
+        self.assertEqual(p["sell_trailing_dist"], 357)
+        self.assertEqual(p["atr_text"], "ATR14 893원")
+        self.assertEqual(p["atr_detail_text"], "0.6ATR 536원 · 0.4ATR 357원")
 
         written_rows = mock_write.call_args[0][0]
         self.assertEqual(len(written_rows), 1)
         row = written_rows[0]
         self.assertEqual(len(row), 20)
-        self.assertEqual(row[16], 881)   # ATR14
-        self.assertEqual(row[17], 528)   # BUY_TRAILING_DIST
-        self.assertEqual(row[18], 352)   # SELL_TRAILING_DIST
-        self.assertEqual(row[19], "2026-09-30")  # ATR_BASE_DATE
+        self.assertEqual(row[16], 893)   # ATR14
+        self.assertEqual(row[17], 536)   # BUY_TRAILING_DIST
+        self.assertEqual(row[18], 357)   # SELL_TRAILING_DIST
+        self.assertEqual(row[19], "2026-09-29")  # ATR_BASE_DATE
 
 
 if __name__ == "__main__":

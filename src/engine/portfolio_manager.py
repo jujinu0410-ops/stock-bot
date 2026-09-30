@@ -248,7 +248,26 @@ class PortfolioManager:
             kiwoom_source = live_meta.get("current_price_source", "UNAVAILABLE") if live_meta else "UNAVAILABLE"
 
             daily_df = self.db.get_daily_prices(code)
+            if daily_df.empty or len(daily_df) < 14:
+                try:
+                    from src.api.real_market_api import RealMarketAPIClient
+                    candles = RealMarketAPIClient().get_real_daily_candles(code, count=60)
+                    if candles:
+                        daily_df = pd.DataFrame(candles)
+                except Exception as e_candle:
+                    logger.debug(f"[{code}] 일봉 시세 수집 fallback 실패: {e_candle}")
             market_close_p = float(daily_df.iloc[-1]["close_price"]) if not daily_df.empty else 0.0
+
+            # 완성 일봉(1D_COMPLETED: 당일 장중 미완성봉 제외) 슬라이스 추출
+            today_ymd = datetime.now().strftime("%Y%m%d")
+            completed_df = pd.DataFrame()
+            completed_base_date = ""
+            if not daily_df.empty and "stk_date" in daily_df.columns:
+                clean_dates = daily_df["stk_date"].astype(str).str.replace("-", "").str.strip()
+                completed_df = daily_df[clean_dates < today_ymd]
+                if not completed_df.empty:
+                    raw_d = str(completed_df.iloc[-1]["stk_date"]).replace("-", "").strip()
+                    completed_base_date = f"{raw_d[:4]}-{raw_d[4:6]}-{raw_d[6:8]}" if len(raw_d) == 8 else raw_d
 
             # 1. 기술적 지표 및 기본 분석 데이터 추출
             tech_eval = {}
@@ -273,8 +292,9 @@ class PortfolioManager:
                 except Exception as e_an:
                     logger.error(f"[{code}] 종목 분석 중 예외: {e_an}")
 
-            if not daily_df.empty and len(daily_df) >= 5:
-                ta = TechnicalAnalysis(daily_df, is_etf=is_etf)
+            analysis_df = completed_df if not completed_df.empty and len(completed_df) >= 5 else daily_df
+            if not analysis_df.empty and len(analysis_df) >= 5:
+                ta = TechnicalAnalysis(analysis_df, is_etf=is_etf)
                 tech_eval = ta.evaluate_signals()
             elif analysis:
                 tech_eval = analysis
@@ -346,7 +366,9 @@ class PortfolioManager:
                 "tech_eval": tech_eval,
                 "analysis": analysis,
                 "row": dict(r),
-                "daily_df": daily_df
+                "daily_df": daily_df,
+                "completed_df": completed_df,
+                "completed_base_date": completed_base_date
             })
 
         # 동일한 최종 적용 가격 기준으로 계좌 총 평가금액 산출 (분모)
@@ -419,7 +441,10 @@ class PortfolioManager:
                     if not suspension_reason:
                         suspension_reason = "연속 5봉 거래량 0 (매매거래 정지 의심)"
 
-            # 2. 직전 완료봉 Wilder ATR14 (At) 및 NATR(%) 산출
+            # 2. 직전 완료봉 Wilder ATR14 (At) 및 NATR(%) 산출 (1D_COMPLETED 원칙: 장중 미완성봉 제외)
+            completed_df = h.get("completed_df", pd.DataFrame())
+            completed_base_date = h.get("completed_base_date", "")
+
             if is_suspended:
                 at = 0.0
                 natr_pct = 0.0
@@ -430,25 +455,36 @@ class PortfolioManager:
                 is_migrated_anchor = False
 
                 last_valid_atr = None
-                last_valid_date = None
-                if not daily_df.empty and len(daily_df) >= 1:
+                last_valid_date = completed_base_date or None
+                target_df = completed_df if not completed_df.empty else daily_df
+                if not target_df.empty and len(target_df) >= 1:
                     try:
-                        atr_series = calculate_wilder_atr(daily_df, period=14)
+                        atr_series = calculate_wilder_atr(target_df, period=14)
                         if not atr_series.empty and atr_series.iloc[-1] > 0:
                             last_valid_atr = float(atr_series.iloc[-1])
-                            last_valid_date = str(daily_df.iloc[-1].get("stk_date", ""))
+                            if not last_valid_date:
+                                raw_d = str(target_df.iloc[-1].get("stk_date", "")).replace("-", "").strip()
+                                last_valid_date = f"{raw_d[:4]}-{raw_d[4:6]}-{raw_d[6:8]}" if len(raw_d) == 8 else raw_d
                     except Exception:
                         pass
                 from src.engine.portfolio_reconciler import compute_atr_metrics
                 atr_bundle = compute_atr_metrics(last_valid_atr, base_date=last_valid_date, is_suspended=True, is_etf=is_etf)
             else:
-                at = float(tech_eval.get("atr_14", current_price * 0.03) or (current_price * 0.03))
+                target_df = completed_df if not completed_df.empty else daily_df
+                if not target_df.empty and len(target_df) >= 1:
+                    atr_series = calculate_wilder_atr(target_df, period=14)
+                    if not atr_series.empty and atr_series.iloc[-1] > 0:
+                        at = float(atr_series.iloc[-1])
+                    else:
+                        at = float(tech_eval.get("atr_14", current_price * 0.03) or (current_price * 0.03))
+                else:
+                    at = float(tech_eval.get("atr_14", current_price * 0.03) or (current_price * 0.03))
+
                 if at <= 0:
                     at = current_price * 0.03
                 natr_pct = round((at / (current_price + 1e-9)) * 100.0, 2)
-                today_kst_date = datetime.now().strftime("%Y-%m-%d")
                 from src.engine.portfolio_reconciler import compute_atr_metrics
-                atr_bundle = compute_atr_metrics(at, base_date=today_kst_date, is_suspended=False, is_etf=is_etf)
+                atr_bundle = compute_atr_metrics(at, base_date=completed_base_date, is_suspended=False, is_etf=is_etf)
 
                 # 3. 🔥 P0(감시개시 기준가격) & A0(기준 ATR) 동결 및 포지션 사이클 영속 관리
                 p0 = safe_float(p_row.get("anchor_price_p0"))

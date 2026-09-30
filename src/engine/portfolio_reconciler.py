@@ -404,28 +404,28 @@ class PortfolioReconciler:
     ) -> Dict[str, Any]:
         """Resolves ATR14 and computes trailing reference metrics with fallback cascade."""
         atr_candidate = None
-        base_date = today_date
+        base_date = None
 
         # 1. Check explicit atr_map passed by caller
         if atr_map and code in atr_map:
             m = atr_map[code]
             if isinstance(m, dict):
                 atr_candidate = m.get("atr_14") or m.get("current_completed_atr") or m.get("atr")
-                base_date = m.get("base_date") or m.get("atr_base_date") or today_date
+                base_date = m.get("base_date") or m.get("atr_base_date")
             elif isinstance(m, (int, float)):
                 atr_candidate = m
 
         # 2. Check live position dict
         if atr_candidate is None:
             atr_candidate = live.get("atr_14") or live.get("current_completed_atr") or live.get("atr")
-            if live.get("atr_base_date"):
-                base_date = live.get("atr_base_date")
+        if not base_date and live.get("atr_base_date"):
+            base_date = live.get("atr_base_date")
 
         # 3. Check existing strategy config from Google Sheet
         if atr_candidate is None and strat.get("atr14"):
             atr_candidate = parse_price(strat.get("atr14"))
-            if strat.get("atr_base_date"):
-                base_date = str(strat.get("atr_base_date")).strip()
+        if not base_date and strat.get("atr_base_date"):
+            base_date = str(strat.get("atr_base_date")).strip()
 
         # 4. Check SQLite DB portfolio_positions if available
         if atr_candidate is None:
@@ -447,12 +447,24 @@ class PortfolioReconciler:
             except Exception as e_db:
                 logger.debug(f"[PortfolioReconciler] DB ATR lookup skipped: {e_db}")
 
-        # 5. For suspended stocks without specific base date, check strat base date
-        if is_suspended and (not base_date or base_date == today_date):
-            if strat.get("atr_base_date"):
-                base_date = str(strat.get("atr_base_date")).strip()
-            elif strat.get("base_date"):
-                base_date = str(strat.get("base_date")).strip()
+        # 5. Fallback for base_date: if missing or set to today_date during trading hours,
+        # resolve to last completed trading day (1D_COMPLETED principle)
+        if not base_date or base_date == today_date:
+            try:
+                from src.api.real_market_api import RealMarketAPIClient
+                today_clean = today_date.replace("-", "").strip()
+                candles = RealMarketAPIClient().get_real_daily_candles(code, count=5)
+                if candles:
+                    comp_candles = [c for c in candles if str(c.get("stk_date", "")).replace("-", "").strip() < today_clean]
+                    if comp_candles:
+                        raw_d = str(comp_candles[-1].get("stk_date", "")).replace("-", "").strip()
+                        if len(raw_d) == 8:
+                            base_date = f"{raw_d[:4]}-{raw_d[4:6]}-{raw_d[6:8]}"
+            except Exception:
+                pass
+
+        if not base_date:
+            base_date = strat.get("base_date") or today_date
 
         is_etf = code in {"490590", "161510", "371460", "484730", "088500"}
         return compute_atr_metrics(atr_candidate, base_date=base_date, is_suspended=is_suspended, is_etf=is_etf)
