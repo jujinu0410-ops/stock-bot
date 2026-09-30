@@ -5,7 +5,7 @@
  */
 
 const YCB = Object.freeze({
-  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/20956b1f29e874178fd3cbe39304306790214ea9/apps_script/',
+  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/7daa60bd3aaad53e4c9bd103e315a6373ec3e03d/apps_script/',
   FILES: [
     'youtube_candidate_monitor.gs',
     'youtube_candidate_ingest.gs',
@@ -44,7 +44,6 @@ function ycLoadRuntimeAndRun_(entryFunction) {
   return eval(source);
 }
 
-/* Manual actions: run immediately regardless of schedule. */
 function ycRefreshNow() {
   return ycLoadRuntimeAndRun_('manualCandidateRefreshV5');
 }
@@ -53,7 +52,6 @@ function ycMonitorNow() {
   return ycLoadRuntimeAndRun_('manualCandidateMonitorV5');
 }
 
-/* Scheduled wrappers used by installable triggers. */
 function ycScheduledRefresh() {
   return ycLoadRuntimeAndRun_('scheduledCandidateRefreshV5');
 }
