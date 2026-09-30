@@ -30,7 +30,7 @@ function Ensure-Secret([string]$SecretName, [string]$Value) {
     }
     $tmp = [System.IO.Path]::GetTempFileName()
     try {
-        [System.IO.File]::WriteAllText($tmp, $Value, [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText($tmp, $Value, (New-Object System.Text.UTF8Encoding($false)))
         & gcloud secrets versions add $SecretName --data-file=$tmp --project $Project | Out-Null
     }
     finally {
@@ -43,7 +43,8 @@ function Ensure-ApiToken {
     if (-not [string]::IsNullOrWhiteSpace($token)) { return $token }
 
     $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     $token = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
     Add-Content -LiteralPath $EnvFile -Value "`nYOUTUBE_SIGNAL_API_TOKEN=$token"
     return $token
@@ -53,12 +54,12 @@ Write-Host "=== YouTube Signal Service: Cloud Run + Static Egress ==="
 Write-Host "Project=$Project Region=$Region Service=$Service"
 
 & gcloud config set project $Project | Out-Null
-& gcloud services enable run.googleapis.com compute.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com --project $Project | Out-Null
+& gcloud services enable run.googleapis.com compute.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com iam.googleapis.com --project $Project | Out-Null
 
 # Artifact Registry repository (existing stockbot-repo is reused when present).
-& gcloud artifacts repositories describe $Repository --location=$Region --project=$Project *> $null
+& gcloud artifacts repositories describe $Repository --location=$Region --project $Project *> $null
 if ($LASTEXITCODE -ne 0) {
-    & gcloud artifacts repositories create $Repository --repository-format=docker --location=$Region --project=$Project | Out-Null
+    & gcloud artifacts repositories create $Repository --repository-format=docker --location=$Region --project $Project | Out-Null
 }
 
 # Static outbound IP + Cloud NAT. Cloud Run Direct VPC egress uses the default VPC/subnet.
@@ -110,6 +111,19 @@ Ensure-Secret "youtube-kiwoom-app-secret" $KiwoomSecret
 Ensure-Secret "youtube-gmail-app-password" $GmailPassword
 Ensure-Secret "youtube-signal-api-token" $ApiToken
 
+# Dedicated runtime service account; it only needs Secret Manager read access.
+$ServiceAccountName = "youtube-signal-sa"
+$ServiceAccountEmail = "$ServiceAccountName@$Project.iam.gserviceaccount.com"
+& gcloud iam service-accounts describe $ServiceAccountEmail --project $Project *> $null
+if ($LASTEXITCODE -ne 0) {
+    & gcloud iam service-accounts create $ServiceAccountName --display-name="YouTube Signal Service" --project $Project | Out-Null
+}
+& gcloud projects add-iam-policy-binding $Project `
+    --member="serviceAccount:$ServiceAccountEmail" `
+    --role="roles/secretmanager.secretAccessor" `
+    --condition=None `
+    --quiet | Out-Null
+
 $Image = "$Region-docker.pkg.dev/$Project/$Repository/youtube-signal-service:latest"
 Write-Host "Building image..."
 & gcloud builds submit . `
@@ -124,16 +138,18 @@ Write-Host "Deploying Cloud Run service..."
     --region=$Region `
     --platform=managed `
     --allow-unauthenticated `
+    --service-account=$ServiceAccountEmail `
     --network=default `
     --subnet=default `
     --vpc-egress=all-traffic `
     --set-env-vars="STOCKBOT_CLOUD_MODE=1,GMAIL_USER=$GmailUser,GMAIL_SENDER_EMAIL=$GmailUser,RECIPIENT_GMAIL=$GmailUser,TZ=Asia/Seoul" `
     --set-secrets="KIWOOM_APP_KEY=youtube-kiwoom-app-key:latest,KIWOOM_APP_SECRET=youtube-kiwoom-app-secret:latest,GMAIL_APP_PASSWORD=youtube-gmail-app-password:latest,YOUTUBE_SIGNAL_API_TOKEN=youtube-signal-api-token:latest" `
-    --min=0 `
-    --max=2 `
+    --min-instances=0 `
+    --max-instances=2 `
     --memory=512Mi `
     --cpu=1 `
     --timeout=60 `
+    --quiet `
     --project=$Project
 if ($LASTEXITCODE -ne 0) { throw "Cloud Run deploy failed." }
 
