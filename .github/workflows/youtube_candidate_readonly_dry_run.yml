@@ -1,4 +1,4 @@
-name: YouTube Candidate Readonly Integrated Dry Run
+name: YouTube Candidate Readonly Exact-Flow Validation
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ permissions:
 jobs:
   readonly-dry-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - name: Checkout feature branch
         uses: actions/checkout@v4
@@ -32,13 +32,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pykrx
 
       - name: Run YouTube candidate unit tests
         run: |
           python -m unittest discover -s tests -p 'test_youtube_candidate_*.py' -v
 
-      - name: Run integrated read-only dry run
+      - name: Run identity-gated exact-flow read-only validation
         env:
           GMAIL_SENDER_EMAIL: ${{ secrets.GMAIL_SENDER_EMAIL }}
           GMAIL_USER: ${{ secrets.GMAIL_SENDER_EMAIL }}
@@ -48,15 +47,25 @@ jobs:
           TZ: Asia/Seoul
         run: |
           mkdir -p logs
-          python -m scripts.youtube_candidate_integrated_dry_run_fast \
+          set +e
+          python -m scripts.youtube_candidate_registered_ip_validated_dry_run \
             --days 35 \
             --as-of 2026-09-30 \
-            --json-out logs/youtube_candidate_integrated_dry_run.json
+            --json-out logs/youtube_candidate_exact_flow_validation.json
+          DRY_RUN_EXIT=$?
+          set -e
+          echo "dry_run_exit_code=${DRY_RUN_EXIT}"
+          # Exit 2 means the read-only pipeline completed but exact alert readiness is
+          # intentionally blocked (e.g. Kiwoom 8050 unregistered GitHub runner IP or
+          # a quarantined source identity). Preserve the evidence instead of hiding it.
+          if [ "${DRY_RUN_EXIT}" -ne 0 ] && [ "${DRY_RUN_EXIT}" -ne 2 ]; then
+            exit "${DRY_RUN_EXIT}"
+          fi
 
       - name: Upload dry-run evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: youtube-candidate-readonly-${{ github.run_number }}
-          path: logs/youtube_candidate_integrated_dry_run.json
+          name: youtube-candidate-exact-flow-validation-${{ github.run_number }}
+          path: logs/youtube_candidate_exact_flow_validation.json
           if-no-files-found: warn
