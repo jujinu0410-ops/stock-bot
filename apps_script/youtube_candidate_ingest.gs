@@ -1,18 +1,17 @@
 /*
- * YouTube Intelligence -> CANDIDATES 자동 동기화
+ * YouTube Intelligence -> CANDIDATES ingest
  *
- * - Gmail의 [경제 Intelligence] 최근 35일 메일에서
- *   '📌 오늘 언급·주목 종목 (V8 분석 후보군)' 섹션만 파싱한다.
- * - 같은 종목/같은 날짜 중복 메일은 1회로 집계한다.
- * - Naver basic API로 종목명/시장(KOSPI/KOSDAQ)을 확인한다.
- * - Naver 일봉으로 하루 1회 MA20/MA60/ATR14/RSI14/pullback 기준을 갱신한다.
- * - 장중 현재가는 CANDIDATES!H의 GOOGLEFINANCE가 담당한다.
- * - Kiwoom은 여기서 호출하지 않는다. BUY_CANDIDATE 발생 시 monitor 파일이 호출한다.
+ * Apps Script is the lightweight radar:
+ * - read recent [경제 Intelligence] Gmail reports
+ * - parse ONLY the dedicated candidate-card section with explicit six-digit codes
+ * - verify name/market with Naver
+ * - refresh daily technical inputs used by the Sheet formulas
+ *
+ * Kiwoom is NOT called here. It is called only after a Sheet BUY_CANDIDATE signal.
  */
 
 const YCI = Object.freeze({
   SUBJECT_PREFIX: '[경제 Intelligence]',
-  SECTION_MARKER: '📌 오늘 언급·주목 종목 (V8 분석 후보군)',
   LOOKBACK_DAYS: 35,
   TTL_DAYS: 30,
   MAX_THREADS: 100,
@@ -20,166 +19,155 @@ const YCI = Object.freeze({
   NAVER_FCHART: 'https://fchart.stock.naver.com/sise.nhn',
 });
 
+/* Legacy entry point kept for compatibility. */
 function refreshYouTubeCandidatePool() {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) return;
-  const started = Date.now();
-  try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = ss.getSheetByName(YC.CANDIDATE_SHEET);
-    if (!sheet) throw new Error('CANDIDATES sheet not found');
-
-    const pool = collectIntelligenceCandidates_();
-    const existing = existingCandidateRows_(sheet);
-    const today = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd');
-    const activeCodes = new Set();
-
-    Object.keys(pool).sort().forEach(code => {
-      const item = pool[code];
-      const identity = resolveNaverIdentity_(code, item.name);
-
-      if (identity.verified && identity.name && normalizeName_(identity.name) !== normalizeName_(item.name)) {
-        appendDispatchLog_(ss, {
-          ticker: code,
-          name: item.name,
-          tech: 'IDENTITY_QUARANTINE',
-          http: '',
-          finalSignal: '',
-          flowStatus: '',
-          detail: 'Naver=' + identity.name,
-          triggerKey: '',
-          elapsedMs: Date.now() - started,
-          error: 'SOURCE_NAME_CODE_MISMATCH',
-          source: 'GMAIL_INGEST',
-        });
-        return;
-      }
-
-      const prior = existing[code] || null;
-      const rowNumber = prior ? prior.row : nextCandidateRow_(sheet);
-      const market = identity.market || (prior ? prior.market : '');
-      if (!market) {
-        appendDispatchLog_(ss, {
-          ticker: code,
-          name: item.name,
-          tech: 'IDENTITY_PENDING',
-          http: '',
-          finalSignal: '',
-          flowStatus: '',
-          detail: '',
-          triggerKey: '',
-          elapsedMs: Date.now() - started,
-          error: 'MARKET_UNRESOLVED',
-          source: 'GMAIL_INGEST',
-        });
-        return;
-      }
-
-      const canonicalName = identity.name || item.name;
-      const ticker = (market === 'KOSDAQ' ? 'KOSDAQ:' : 'KRX:') + code;
-      const lastSeen = parseYmd_(item.lastSeen);
-      const expiry = new Date(lastSeen.getTime());
-      expiry.setDate(expiry.getDate() + YCI.TTL_DAYS);
-
-      // A:G만 갱신. H와 P:T는 미리 깔아둔 Sheet 수식이다.
-      sheet.getRange(rowNumber, 1, 1, 7).setValues([[
-        'Y', canonicalName, market, code, ticker, lastSeen, expiry,
-      ]]);
-      sheet.getRange(rowNumber, 4).setNumberFormat('@');
-      sheet.getRange(rowNumber, 6, 1, 2).setNumberFormat('yyyy-mm-dd');
-      activeCodes.add(code);
-
-      const note = String(sheet.getRange(rowNumber, 26).getDisplayValue() || '');
-      const needsTech = note.indexOf('TECH_ASOF=' + today) < 0;
-      if (needsTech) {
-        try {
-          const tech = fetchDailyTechnicalSnapshot_(code);
-          if (tech.staleDays > 4) throw new Error('STALE_DAILY_BAR_' + tech.staleDays);
-          // I:O = ReferenceLow, ATR14, MA20, MA60, MA20Slope5D, RSI14, PullbackReady
-          sheet.getRange(rowNumber, 9, 1, 7).setValues([[
-            tech.referenceLow,
-            tech.atr14,
-            tech.ma20,
-            tech.ma60,
-            tech.ma20Slope5d,
-            tech.rsi14,
-            tech.pullbackReady,
-          ]]);
-          sheet.getRange(rowNumber, 26).setValue(
-            'TECH_ASOF=' + today + '; LAST_BAR=' + tech.lastDate + '; MENTION_DAYS=' + item.mentionDays
-          );
-        } catch (err) {
-          // 기존 값은 지우지 않는다. 다음 30분 동기화에서 재시도한다.
-          sheet.getRange(rowNumber, 26).setValue(
-            'TECH_REFRESH_ERROR=' + String(err && err.message ? err.message : err)
-          );
-        }
-      }
-    });
-
-    // 30일 pool에서 빠진 기존 행은 비활성화한다. 이력(U:Y)은 보존한다.
-    Object.keys(existing).forEach(code => {
-      if (!activeCodes.has(code)) {
-        sheet.getRange(existing[code].row, 1).setValue('N');
-      }
-    });
-
-    SpreadsheetApp.flush();
-    PropertiesService.getScriptProperties().setProperty('LAST_CANDIDATE_REFRESH_AT', new Date().toISOString());
-  } finally {
-    lock.releaseLock();
-  }
+  return refreshYouTubeCandidatePoolV2();
 }
 
 function collectIntelligenceCandidates_() {
-  const query = 'subject:"' + YCI.SUBJECT_PREFIX + '" newer_than:' + YCI.LOOKBACK_DAYS + 'd -in:trash -in:spam';
+  // Gmail search is intentionally broader than the exact bracketed subject so
+  // Apps Script/Gmail search tokenization cannot silently return zero threads.
+  const query = 'subject:"경제 Intelligence" newer_than:' + YCI.LOOKBACK_DAYS + 'd -in:trash -in:spam';
   const threads = GmailApp.search(query, 0, YCI.MAX_THREADS);
   const byCode = {};
+  let structuredMailCount = 0;
+  let parsedCardCount = 0;
 
-  threads.forEach(thread => {
-    thread.getMessages().forEach(message => {
+  threads.forEach(function(thread) {
+    thread.getMessages().forEach(function(message) {
       const subject = String(message.getSubject() || '');
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
-      const body = String(message.getPlainBody() || '');
-      const markerPos = body.indexOf(YCI.SECTION_MARKER);
-      if (markerPos < 0) return;
 
-      const section = body.substring(markerPos);
+      const body = String(message.getPlainBody() || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/\u00a0/g, ' ')
+        .replace(/\u200b/g, '');
+
+      // Current live reports use headings such as:
+      // 📌 오늘 언급·주목 종목 (V8 분석 후보군)
+      // Keep the matcher flexible so harmless heading wording changes do not
+      // deactivate the whole rolling pool.
+      const headingRe = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:📌\s*)?(?:(?:오늘(?:의)?|주요|핵심|최종)\s*)?언급\s*(?:(?:[·ㆍ\/&+]\s*)?주목\s*)?종목(?:\s*(?:목록|리스트))?(?:\s*\([^\n)]{1,80}\))?[^\n]*/gi;
+      let headingMatch = null;
+      let m;
+      while ((m = headingRe.exec(body)) !== null) headingMatch = m;
+      if (!headingMatch) return;
+
+      structuredMailCount += 1;
+      const section = body.substring(headingMatch.index + headingMatch[0].length);
+      const lines = section.split('\n').map(function(v) {
+        return String(v || '').replace(/^\s*[-*+•▪◦‣▶▷►]+\s*/, '').replace(/\*\*|__|`/g, '').trim();
+      });
       const dateKey = Utilities.formatDate(message.getDate(), 'Asia/Seoul', 'yyyy-MM-dd');
-      const regex = /^([^\n\r]{1,50})\s*[\r\n]+\((\d{6})\)\s*[\r\n]+\[(직접 언급|관련 수혜주)\]/gm;
-      let match;
       const seenThisMessage = new Set();
-      while ((match = regex.exec(section)) !== null) {
-        const name = String(match[1] || '').trim();
-        const code = normalizeCode_(match[2]);
-        if (!name || !code || seenThisMessage.has(code)) continue;
-        seenThisMessage.add(code);
 
-        if (!byCode[code]) {
-          byCode[code] = {name: name, dates: new Set(), lastSeen: dateKey};
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+
+        // Stop at common report-footer headings. The candidate block is near the end.
+        if (/^(?:📺|🧾|📝|🔚|Generated\s+by|본\s*리포트는|분석\s*기준\s*:)/i.test(line)) break;
+
+        // Same-line form: 삼성전기 (009150)
+        let same = line.match(/^(.{2,50}?)\s*[\[(]\s*(\d{6})\s*[\])]\s*$/);
+        if (same) {
+          const name = cleanCandidateName_(same[1]);
+          const code = normalizeCandidateCode_(same[2]);
+          const tag = nextNonEmptyLine_(lines, i + 1, 4);
+          if (name && code && /^\[(직접 언급|관련 수혜주)\]$/.test(tag) && !seenThisMessage.has(code)) {
+            addCandidateMention_(byCode, seenThisMessage, code, name, dateKey);
+            parsedCardCount += 1;
+          }
+          continue;
         }
-        byCode[code].dates.add(dateKey);
-        if (dateKey >= byCode[code].lastSeen) {
-          byCode[code].lastSeen = dateKey;
-          byCode[code].name = name;
-        }
+
+        // Vertical-card form used by current mails:
+        // 삼성전기
+        // (009150)
+        // [직접 언급]
+        if (!plausibleCandidateName_(line)) continue;
+        const codeInfo = nextNonEmptyLineWithIndex_(lines, i + 1, 3);
+        if (!codeInfo) continue;
+        const cm = codeInfo.value.match(/^\(?\s*(\d{6})\s*\)?$/);
+        if (!cm) continue;
+        const tagInfo = nextNonEmptyLineWithIndex_(lines, codeInfo.index + 1, 3);
+        if (!tagInfo || !/^\[(직접 언급|관련 수혜주)\]$/.test(tagInfo.value)) continue;
+
+        const code = normalizeCandidateCode_(cm[1]);
+        const name = cleanCandidateName_(line);
+        if (!code || !name || seenThisMessage.has(code)) continue;
+        addCandidateMention_(byCode, seenThisMessage, code, name, dateKey);
+        parsedCardCount += 1;
       }
     });
   });
+
+  // Fail closed: a recognized structured candidate section must never silently
+  // produce an empty pool and deactivate every existing candidate.
+  if (structuredMailCount > 0 && parsedCardCount === 0) {
+    throw new Error('CANDIDATE_PARSE_EMPTY_WITH_STRUCTURED_MAILS_' + structuredMailCount);
+  }
 
   const cutoff = new Date();
   cutoff.setHours(0, 0, 0, 0);
   cutoff.setDate(cutoff.getDate() - (YCI.TTL_DAYS - 1));
   const cutoffKey = Utilities.formatDate(cutoff, 'Asia/Seoul', 'yyyy-MM-dd');
 
-  Object.keys(byCode).forEach(code => {
+  Object.keys(byCode).forEach(function(code) {
     if (byCode[code].lastSeen < cutoffKey) {
       delete byCode[code];
     } else {
       byCode[code].mentionDays = byCode[code].dates.size;
     }
   });
+
   return byCode;
+}
+
+function addCandidateMention_(byCode, seenThisMessage, code, name, dateKey) {
+  seenThisMessage.add(code);
+  if (!byCode[code]) byCode[code] = {name: name, dates: new Set(), lastSeen: dateKey};
+  byCode[code].dates.add(dateKey);
+  if (dateKey >= byCode[code].lastSeen) {
+    byCode[code].lastSeen = dateKey;
+    byCode[code].name = name;
+  }
+}
+
+function normalizeCandidateCode_(value) {
+  const s = String(value || '').replace(/\D/g, '');
+  return /^\d{6}$/.test(s) ? s : '';
+}
+
+function cleanCandidateName_(value) {
+  const s = String(value || '').replace(/^\s*[-*+•▪◦‣▶▷►]+\s*/, '').replace(/\*\*|__|`/g, '').trim();
+  return plausibleCandidateName_(s) ? s : '';
+}
+
+function plausibleCandidateName_(value) {
+  const s = String(value || '').trim();
+  if (s.length < 2 || s.length > 50) return false;
+  if (/^(?:이유|근거|방향|종목명|언급\s*맥락|핵심\s*모멘텀|매수\s*추천|투자\s*판단|\d+\s*개\s*채널)/i.test(s)) return false;
+  if (/^\[[^\]]+\]$/.test(s)) return false;
+  if (/^\(?\d{6}\)?$/.test(s)) return false;
+  if (/https?:\/\//i.test(s)) return false;
+  if (/[.!?。]/.test(s)) return false;
+  if (s.split(/\s+/).length > 5) return false;
+  return /[A-Za-z가-힣]/.test(s);
+}
+
+function nextNonEmptyLine_(lines, start, maxLookahead) {
+  const info = nextNonEmptyLineWithIndex_(lines, start, maxLookahead);
+  return info ? info.value : '';
+}
+
+function nextNonEmptyLineWithIndex_(lines, start, maxLookahead) {
+  const end = Math.min(lines.length, start + maxLookahead + 1);
+  for (let i = start; i < end; i++) {
+    if (String(lines[i] || '').trim()) return {index: i, value: String(lines[i]).trim()};
+  }
+  return null;
 }
 
 function existingCandidateRows_(sheet) {
@@ -187,16 +175,15 @@ function existingCandidateRows_(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < YC.DATA_START_ROW) return out;
   const rows = sheet.getRange(YC.DATA_START_ROW, 1, lastRow - 1, 5).getDisplayValues();
-  rows.forEach((r, idx) => {
-    const code = normalizeCode_(r[3]);
+  rows.forEach(function(r, idx) {
+    const code = normalizeCandidateCode_(r[3]);
     if (code) out[code] = {row: idx + YC.DATA_START_ROW, market: String(r[2] || '').trim()};
   });
   return out;
 }
 
 function nextCandidateRow_(sheet) {
-  const lastRow = Math.max(sheet.getLastRow(), YC.HEADER_ROW);
-  return lastRow + 1;
+  return Math.max(sheet.getLastRow(), YC.HEADER_ROW) + 1;
 }
 
 function resolveNaverIdentity_(code, sourceName) {
@@ -211,8 +198,8 @@ function resolveNaverIdentity_(code, sourceName) {
     const name = String(data.stockName || data.itemName || data.name || '').trim();
     const exchangeText = JSON.stringify(data.stockExchangeType || data.marketType || data.market || data.exchange || '').toUpperCase();
     let market = '';
-    if (exchangeText.indexOf('KOSDAQ') >= 0 || exchangeText.indexOf('코스닥') >= 0) market = 'KOSDAQ';
-    if (!market && (exchangeText.indexOf('KOSPI') >= 0 || exchangeText.indexOf('유가') >= 0)) market = 'KOSPI';
+    if (exchangeText.indexOf('KOSDAQ') >= 0 || exchangeText.indexOf('코스닥') >= 0 || exchangeText.indexOf('KQ') >= 0) market = 'KOSDAQ';
+    if (!market && (exchangeText.indexOf('KOSPI') >= 0 || exchangeText.indexOf('유가') >= 0 || exchangeText.indexOf('KS') >= 0)) market = 'KOSPI';
     return {verified: Boolean(name), name: name || sourceName, market: market};
   } catch (e) {
     return {verified: false, name: sourceName, market: ''};
@@ -230,46 +217,35 @@ function fetchDailyTechnicalSnapshot_(code) {
 
   const xml = XmlService.parse(res.getContentText());
   const items = xml.getRootElement().getDescendants()
-    .filter(x => x.getType && x.getType() === XmlService.ContentTypes.ELEMENT)
-    .map(x => x.asElement())
-    .filter(el => el.getName() === 'item');
+    .filter(function(x) { return x.getType && x.getType() === XmlService.ContentTypes.ELEMENT; })
+    .map(function(x) { return x.asElement(); })
+    .filter(function(el) { return el.getName() === 'item'; });
 
   const bars = [];
-  items.forEach(el => {
+  items.forEach(function(el) {
     const attr = el.getAttribute('data');
     if (!attr) return;
     const p = String(attr.getValue() || '').split('|');
     if (p.length < 6) return;
-    const bar = {
-      date: p[0],
-      open: Number(p[1]),
-      high: Number(p[2]),
-      low: Number(p[3]),
-      close: Number(p[4]),
-      volume: Number(p[5]),
-    };
+    const bar = {date: p[0], open: Number(p[1]), high: Number(p[2]), low: Number(p[3]), close: Number(p[4]), volume: Number(p[5])};
     if (isFinite(bar.close) && isFinite(bar.high) && isFinite(bar.low)) bars.push(bar);
   });
-  bars.sort((a, b) => a.date.localeCompare(b.date));
+  bars.sort(function(a, b) { return a.date.localeCompare(b.date); });
   if (bars.length < 65) throw new Error('NAVER_BARS_INSUFFICIENT_' + bars.length);
 
   const n = bars.length;
-  const closes = bars.map(b => b.close);
-  const maAt = (endIndex, period) => {
+  const closes = bars.map(function(b) { return b.close; });
+  function maAt(endIndex, period) {
     const start = endIndex - period + 1;
     if (start < 0) return null;
     let sum = 0;
     for (let i = start; i <= endIndex; i++) sum += closes[i];
     return sum / period;
-  };
+  }
 
   const tr = new Array(n).fill(null);
   for (let i = 1; i < n; i++) {
-    tr[i] = Math.max(
-      bars[i].high - bars[i].low,
-      Math.abs(bars[i].high - bars[i - 1].close),
-      Math.abs(bars[i].low - bars[i - 1].close)
-    );
+    tr[i] = Math.max(bars[i].high - bars[i].low, Math.abs(bars[i].high - bars[i - 1].close), Math.abs(bars[i].low - bars[i - 1].close));
   }
 
   const atr = new Array(n).fill(null);
@@ -302,20 +278,16 @@ function fetchDailyTechnicalSnapshot_(code) {
   const ma20Prev5 = maAt(last - 5, 20);
   const atr14 = atr[last];
   const rsi14 = rsi[last];
-  if (![ma20, ma60, ma20Prev5, atr14, rsi14].every(x => typeof x === 'number' && isFinite(x))) {
-    throw new Error('TECHNICAL_NAN');
-  }
+  if (![ma20, ma60, ma20Prev5, atr14, rsi14].every(function(x) { return typeof x === 'number' && isFinite(x); })) throw new Error('TECHNICAL_NAN');
 
   let firstPullback = -1;
   for (let i = Math.max(0, last - 4); i <= last; i++) {
     const mi20 = maAt(i, 20);
     const mi60 = maAt(i, 60);
     if (mi20 == null || mi60 == null || atr[i] == null) continue;
-    if (bars[i].low <= mi20 + 0.3 * atr[i] && bars[i].close >= mi60) {
-      firstPullback = i;
-      break;
-    }
+    if (bars[i].low <= mi20 + 0.3 * atr[i] && bars[i].close >= mi60) { firstPullback = i; break; }
   }
+
   const pullbackReady = firstPullback >= 0;
   const refStart = pullbackReady ? firstPullback : Math.max(0, last - 4);
   let referenceLow = Infinity;
@@ -351,15 +323,6 @@ function parseYmd_(ymd) {
   return new Date(p[0], p[1] - 1, p[2]);
 }
 
-/* 최초 1회: 후보 동기화 30분 + 장중 감시 5분 트리거 설치 */
 function installYouTubeWatchTriggers() {
-  const handlers = new Set(['monitorYouTubeCandidates', 'refreshYouTubeCandidatePool']);
-  ScriptApp.getProjectTriggers().forEach(t => {
-    if (handlers.has(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);
-  });
-
-  ScriptApp.newTrigger('monitorYouTubeCandidates')
-    .timeBased().everyMinutes(5).create();
-  ScriptApp.newTrigger('refreshYouTubeCandidatePool')
-    .timeBased().everyMinutes(30).create();
+  if (typeof installYouTubeWatchTriggersV2 === 'function') return installYouTubeWatchTriggersV2();
 }
