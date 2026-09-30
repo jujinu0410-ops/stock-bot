@@ -2,11 +2,14 @@
 """Fast validation wrapper for the first YouTube Candidate Watch integrated dry run.
 
 This wrapper keeps the core evaluator unchanged but adapts the current Economic
-Intelligence V8 mail layout and removes two expensive auxiliary operations:
+Intelligence V8 mail layout and removes expensive/unreliable auxiliary operations:
 1) no full-market public stock-master download; explicit six-digit codes in the
    report remain canonical candidate identity,
 2) Gmail IMAP is server-filtered by the ASCII subject token "Intelligence" before
-   BODY.PEEK[] so unrelated Inbox mail is never downloaded.
+   BODY.PEEK[] so unrelated Inbox mail is never downloaded,
+3) when GitHub's dynamic IP is rejected by Kiwoom, the validation-only flow source
+   is Naver's daily foreign/institution net volume converted to an estimated amount
+   (net volume x close).  It is explicitly labelled NAVER_ESTIMATE, never Kiwoom.
 
 FAILED/DEGRADED status notifications are not candidate reports and are excluded.
 All access remains read-only.
@@ -22,6 +25,7 @@ from typing import Any, Dict, List
 import scripts.youtube_candidate_dry_run as mailmod
 import scripts.youtube_candidate_integrated_dry_run as runner
 from src.analysis import youtube_candidate_mail_adapter as live_adapter
+from src.analysis.youtube_candidate_naver_flow import fetch_naver_flow
 
 
 def _no_public_registry():
@@ -49,8 +53,6 @@ def _fast_fetch_intelligence_mails(days: int, as_of_date) -> List[Dict[str, Any]
         if typ != "OK":
             raise RuntimeError("Gmail INBOX could not be opened read-only")
 
-        # ASCII token is deliberate: IMAP search remains portable while shrinking
-        # the fetch set from the whole Inbox to the Economic Intelligence reports.
         typ, data = imap.search(None, "SINCE", since_arg, "SUBJECT", '"Intelligence"')
         if typ != "OK":
             raise RuntimeError("Gmail filtered search failed")
@@ -87,9 +89,23 @@ def _fast_fetch_intelligence_mails(days: int, as_of_date) -> List[Dict[str, Any]
     return rows
 
 
+def _naver_flow_fallback(code: str, as_of_date) -> List[Dict[str, Any]]:
+    return fetch_naver_flow(code, as_of_date, pages=2, exclude_as_of_date=True)
+
+
+_original_flow_dict = runner.flow_dict
+
+def _label_flow_source(flow, source: str):
+    if source == "PYKRX_KRX_FALLBACK":
+        source = "NAVER_NET_VOLUME_X_CLOSE_ESTIMATE"
+    return _original_flow_dict(flow, source)
+
+
 runner.fetch_public_registry = _no_public_registry
 runner.fetch_intelligence_mails = _fast_fetch_intelligence_mails
 runner.parse_and_resolve_mail = live_adapter.parse_and_resolve_mail
+runner.fetch_pykrx_flow = _naver_flow_fallback
+runner.flow_dict = _label_flow_source
 
 if __name__ == "__main__":
     raise SystemExit(runner.main())
