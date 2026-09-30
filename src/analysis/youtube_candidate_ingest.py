@@ -15,7 +15,7 @@ Explicit non-goals:
 - No technical BUY_ALERT judgement.
 - No Google Sheet or Gmail writes.
 
-Canonical ticker in this ingestion layer is the 6-digit stock code. Market-specific
+Canonical ticker in this ingestion layer is the 6-digit stock code.  Market-specific
 GoogleFinance symbols are intentionally deferred to the market-data layer so a KOSDAQ
 classification error can never corrupt candidate identity.
 """
@@ -41,7 +41,7 @@ class RawMention:
 
 @dataclass(frozen=True)
 class ResolvedMention:
-    ticker: str
+    ticker: str  # canonical 6-digit stock code
     name: str
     raw_text: str
     market_type: Optional[str] = None
@@ -73,8 +73,11 @@ class ParseResult:
     raw_mentions: Tuple[RawMention, ...]
     resolved: Tuple[ResolvedMention, ...]
     unresolved: Tuple[UnresolvedMention, ...]
+    source_subject: str = ""
 
 
+# The handover document says the source is the *last* 언급종목 section.
+# Be permissive about decorations but strict about the semantic heading.
 _MENTION_HEADING_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:[📌🔎🏢📈📊⭐✅▶▷►•·*-]\s*)*"
     r"(?:(?:오늘의|주요|핵심|최종)\s*)?언급\s*종목"
@@ -88,11 +91,14 @@ _SUBJECT_MD_RE = re.compile(r"(?<!\d)(\d{1,2})월\s*(\d{1,2})일")
 _CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^\)]+\)")
 
+# Footer/next-section markers.  Because the source section should be last, these are
+# only a safety brake for accidental template additions after it.
 _STOP_LINE_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:※|주의|면책|Disclaimer|Generated\s+by|데이터\s*출처|끝\s*$)",
     re.IGNORECASE,
 )
 
+# Labels that may appear inside a mentions section but are not stock names.
 _INLINE_LABEL_RE = re.compile(
     r"^\s*(?:종목|언급종목|주요\s*종목|관련\s*종목|기업|언급\s*기업)\s*[:：]\s*",
     re.IGNORECASE,
@@ -101,6 +107,7 @@ _INLINE_LABEL_RE = re.compile(
 _SPLIT_RE = re.compile(r"\s*(?:,|，|;|；|·|ㆍ|/|\||→|▶|►)\s*")
 _BULLET_RE = re.compile(r"^\s*(?:[-*+•▪◦‣▶▷►]+|\d{1,2}[.)]|\(\d{1,2}\))\s*")
 
+# Things that should never become a raw stock candidate by themselves.
 _GENERIC_TOKENS = {
     "종목", "없음", "해당없음", "해당 없음", "n/a", "na", "없습니다", "미확인",
     "반도체", "ai", "금리", "통화정책", "외국인수급", "외국인 수급", "시장",
@@ -115,6 +122,7 @@ def _clean_text(text: str) -> str:
 
 
 def parse_report_date(subject: str, body: str, fallback: Optional[date] = None) -> date:
+    """Resolve the report date, preferring the explicit body date over subject text."""
     body = _clean_text(body)
     m = _REPORT_DATE_RE.search(body)
     if m:
@@ -132,7 +140,12 @@ def parse_report_date(subject: str, body: str, fallback: Optional[date] = None) 
 
 
 def extract_mentions_section(body: str) -> str:
-    """Return only the final mentions section; missing/blank sections fail closed."""
+    """
+    Return only the final mentions section.
+
+    Fail-closed rule: if the section heading is absent or the resulting section is blank,
+    raise CandidateParseError.  Never interpret that as "0 candidates".
+    """
     body = _clean_text(body)
     lines = body.split("\n")
     matches: List[Tuple[int, str]] = []
@@ -140,6 +153,7 @@ def extract_mentions_section(body: str) -> str:
         m = _MENTION_HEADING_RE.match(line)
         if m:
             tail = (m.group("tail") or "").strip()
+            # Strip a pure separator after the heading, while preserving inline names.
             tail = re.sub(r"^[\s:：\-–—]+", "", tail).strip()
             matches.append((idx, tail))
 
@@ -154,6 +168,7 @@ def extract_mentions_section(body: str) -> str:
     for line in lines[start_idx + 1 :]:
         if _STOP_LINE_RE.match(line):
             break
+        # A new major Markdown heading after the mentions section is a safe stop.
         if re.match(r"^\s*#{1,6}\s+\S", line):
             break
         out.append(line)
@@ -170,12 +185,14 @@ def _strip_markup(token: str) -> str:
     token = token.replace("**", "").replace("__", "").replace("`", "")
     token = _BULLET_RE.sub("", token).strip()
     token = _INLINE_LABEL_RE.sub("", token).strip()
+    # remove common annotations while keeping an explicit 6-digit code available
     token = re.sub(r"\s*\[(?:KOSPI|KOSDAQ|KRX)\]\s*", " ", token, flags=re.I)
     token = re.sub(r"\s+(?:상승|하락|강세|약세|수혜|관련주|관심)$", "", token).strip()
     return token.strip(" \t-–—:：·•|/")
 
 
 def _candidate_name_from_token(token: str) -> str:
+    # Remove an explicit stock code and surrounding brackets/parentheses.
     name = _CODE_RE.sub("", token)
     name = re.sub(r"[\(\)\[\]{}]", " ", name)
     name = re.sub(r"\s+", " ", name).strip(" -–—:：")
@@ -183,6 +200,7 @@ def _candidate_name_from_token(token: str) -> str:
 
 
 def extract_raw_mentions(section: str) -> List[RawMention]:
+    """Extract conservative mention tokens from the already-isolated section."""
     section = _clean_text(section)
     results: List[RawMention] = []
 
@@ -192,12 +210,17 @@ def extract_raw_mentions(section: str) -> List[RawMention]:
             continue
         if re.fullmatch(r"[:|\-–—\s]+", line):
             continue
+        # Markdown table delimiter row.
         if re.fullmatch(r"(?:\s*:?-{3,}:?\s*\|?)+", line):
             continue
 
+        # If an explanatory colon exists, prefer the left side when it looks like a
+        # compact stock token; otherwise retain the whole line and let resolution fail.
         colon_parts = re.split(r"[:：]", line, maxsplit=1)
         if len(colon_parts) == 2 and 1 <= len(colon_parts[0].strip()) <= 30:
             left = colon_parts[0].strip()
+            # "관련 종목: A, B" was already stripped by _INLINE_LABEL_RE.  For an actual
+            # stock line such as "삼성전자: HBM", keep only the stock token.
             if left and left.lower() not in _GENERIC_TOKENS:
                 line = left
 
@@ -216,6 +239,8 @@ def extract_raw_mentions(section: str) -> List[RawMention]:
             if generic_key in _GENERIC_TOKENS and not explicit:
                 continue
             if not explicit:
+                # Too long usually means prose, not a stock token.  Resolution will be
+                # strict later, but filtering obvious prose reduces noise.
                 if len(name) < 2 or len(name) > 40:
                     continue
                 if len(name.split()) > 5:
@@ -240,6 +265,12 @@ def _norm_code(value: Any) -> str:
 
 
 def build_stock_registry(stock_rows: Iterable[Mapping[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """
+    Build code/name indexes from rows shaped like stock_info.
+
+    Required fields: stock_code, stock_name.  market_type is optional and is carried only
+    as metadata; it is not used to construct the canonical candidate identity.
+    """
     by_code: Dict[str, Dict[str, Any]] = {}
     by_name: Dict[str, Dict[str, Any]] = {}
     ambiguous_names = set()
@@ -272,6 +303,7 @@ def resolve_mentions(
     raw_mentions: Sequence[RawMention],
     stock_rows: Iterable[Mapping[str, Any]],
 ) -> Tuple[List[ResolvedMention], List[UnresolvedMention]]:
+    """Resolve and dedupe mentions by canonical six-digit stock code."""
     by_code, by_name = build_stock_registry(stock_rows)
     resolved_by_code: Dict[str, ResolvedMention] = {}
     unresolved: List[UnresolvedMention] = []
@@ -315,6 +347,8 @@ def parse_and_resolve_mail(
     raw_mentions = extract_raw_mentions(section)
     resolved, unresolved = resolve_mentions(raw_mentions, stock_rows)
 
+    # Fail-closed: a parse that produced text but resolved absolutely nothing is not a
+    # valid "zero candidates" run.  Callers should surface this as a data-quality error.
     if not resolved:
         raise CandidateParseError("candidate tokens found but none resolved to stock codes")
 
@@ -323,7 +357,72 @@ def parse_and_resolve_mail(
         raw_mentions=tuple(raw_mentions),
         resolved=tuple(resolved),
         unresolved=tuple(unresolved),
+        source_subject=subject,
     )
+
+
+def aggregate_candidate_pool(
+    parse_results: Sequence[ParseResult],
+    as_of_date: date,
+    held_tickers: Optional[Iterable[str]] = None,
+    ttl_days: int = 30,
+    existing_by_ticker: Optional[Mapping[str, CandidateRecord]] = None,
+) -> List[CandidateRecord]:
+    """
+    Rebuild the active candidate pool from the rolling mail window.
+
+    This is the preferred V0 operation because it is naturally idempotent:
+    - duplicate copies of one report day count once per ticker/day,
+    - missed scheduler runs are healed on the next rebuild,
+    - mention_count_30d is a real rolling count rather than an ever-growing counter.
+    """
+    if ttl_days <= 0:
+        raise ValueError("ttl_days must be positive")
+
+    held = {_norm_code(x) for x in (held_tickers or []) if _norm_code(x)}
+    existing_by_ticker = dict(existing_by_ticker or {})
+    window_start = as_of_date - timedelta(days=ttl_days - 1)
+
+    # ticker -> report_date -> (mention, subject)
+    events: Dict[str, Dict[date, Tuple[ResolvedMention, str]]] = {}
+    for result in parse_results:
+        if result.report_date > as_of_date or result.report_date < window_start:
+            continue
+        for mention in result.resolved:
+            events.setdefault(mention.ticker, {})[result.report_date] = (mention, result.source_subject)
+
+    rows: List[CandidateRecord] = []
+    for ticker in sorted(events):
+        dated = events[ticker]
+        dates = sorted(dated)
+        first_in_window = dates[0]
+        last_seen = dates[-1]
+        latest_mention, latest_subject = dated[last_seen]
+        existing = existing_by_ticker.get(ticker)
+
+        first_seen = first_in_window
+        last_signal_at = None
+        if existing is not None:
+            first_seen = min(existing.first_seen_date, first_in_window)
+            last_signal_at = existing.last_signal_at
+
+        holding_status = "HELD" if ticker in held else "NOT_HELD"
+        rows.append(
+            CandidateRecord(
+                ticker=ticker,
+                name=latest_mention.name,
+                first_seen_date=first_seen,
+                last_seen_date=last_seen,
+                mention_count_30d=len(dates),
+                source_subject_latest=latest_subject,
+                expires_at=last_seen + timedelta(days=ttl_days),
+                holding_status=holding_status,
+                candidate_status="HELD" if holding_status == "HELD" else "ACTIVE",
+                last_signal_at=last_signal_at,
+            )
+        )
+
+    return rows
 
 
 def upsert_candidate_record(
@@ -334,7 +433,13 @@ def upsert_candidate_record(
     ttl_days: int = 30,
     holding_status: str = "NOT_HELD",
 ) -> CandidateRecord:
-    """Build the next candidate record without mutating external state."""
+    """
+    Build the next candidate record without mutating external state.
+
+    Idempotency rule: repeated copies of the same daily report do not increment the
+    mention counter again when last_seen_date == seen_date.  This is important because
+    duplicate Intelligence emails can occur.
+    """
     if ttl_days <= 0:
         raise ValueError("ttl_days must be positive")
 
