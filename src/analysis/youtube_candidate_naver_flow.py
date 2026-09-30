@@ -27,6 +27,7 @@ import requests
 
 MOBILE_TREND_URL = "https://m.stock.naver.com/front-api/stock/domestic/trend"
 MOBILE_INTEGRATION_URL = "https://m.stock.naver.com/api/stock/{code}/integration"
+LEGACY_TREND_URL = "https://m.stock.naver.com/api/item/getTrendList.nhn"
 FCHART_URL = "https://fchart.stock.naver.com/sise.nhn"
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
@@ -89,15 +90,40 @@ def _deal_rows(payload: Any) -> List[Mapping[str, Any]]:
     return [r for r in rows if isinstance(r, Mapping)]
 
 
+def _legacy_rows(payload: Any) -> List[Mapping[str, Any]]:
+    if not isinstance(payload, dict):
+        raise NaverFlowError("NAVER_FLOW_LEGACY_SCHEMA")
+    result_code = str(payload.get("resultCode") or "success").lower()
+    if result_code not in {"success", "0"}:
+        raise NaverFlowError(f"NAVER_FLOW_LEGACY_ERROR_{result_code}")
+    rows = payload.get("result")
+    if not isinstance(rows, list):
+        raise NaverFlowError("NAVER_FLOW_LEGACY_RESULT_MISSING")
+    return [r for r in rows if isinstance(r, Mapping)]
+
+
 def _normalize_deal_rows(rows: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize both current camelCase and older snake_case mobile trend rows."""
     out: Dict[str, Dict[str, Any]] = {}
     for r in rows:
         dt = str(r.get("bizdate") or r.get("localDate") or r.get("date") or "").replace("-", "").replace(".", "").strip()
         if not (len(dt) == 8 and dt.isdigit()):
             continue
-        foreign_qty = _num(r.get("foreignerPureBuyQuant"))
-        institution_qty = _num(r.get("organPureBuyQuant"))
-        close = _num(r.get("closePrice"))
+        foreign_qty = _num(
+            r.get("foreignerPureBuyQuant")
+            if r.get("foreignerPureBuyQuant") is not None
+            else r.get("frgn_pure_buy_quant")
+        )
+        institution_qty = _num(
+            r.get("organPureBuyQuant")
+            if r.get("organPureBuyQuant") is not None
+            else r.get("organ_pure_buy_quant")
+        )
+        close = _num(
+            r.get("closePrice")
+            if r.get("closePrice") is not None
+            else r.get("close_val")
+        )
         if foreign_qty is None or institution_qty is None:
             continue
         out[dt] = {
@@ -122,10 +148,30 @@ def _fetch_json(session: Any, url: str, *, params: Optional[Dict[str, str]] = No
         raise NaverFlowError(f"NAVER_FLOW_JSON_DECODE: {preview}") from exc
 
 
-def _fetch_mobile_trend(session: Any, ticker: str) -> List[Dict[str, Any]]:
+def _fetch_mobile_trend(session: Any, ticker: str, required_days: int = 20) -> List[Dict[str, Any]]:
+    """Fetch enough investor history for the 20-day direction filter.
+
+    The current front/integration endpoints expose only about five recent sessions.
+    The trend-list endpoint accepts an explicit size and is therefore attempted first
+    for validation. Current endpoints remain as conservative fallbacks/augmenters.
+    """
     referer = f"https://m.stock.naver.com/domestic/stock/{ticker}/total"
     collected: List[Mapping[str, Any]] = []
     errors: List[str] = []
+
+    try:
+        payload = _fetch_json(
+            session,
+            LEGACY_TREND_URL,
+            params={"code": ticker, "size": str(max(required_days + 5, 30))},
+            referer=referer,
+        )
+        collected.extend(_legacy_rows(payload))
+        normalized = _normalize_deal_rows(collected)
+        if len(normalized) >= required_days:
+            return normalized
+    except Exception as exc:
+        errors.append(f"trend_list={exc}")
 
     try:
         payload = _fetch_json(
@@ -135,6 +181,9 @@ def _fetch_mobile_trend(session: Any, ticker: str) -> List[Dict[str, Any]]:
             referer=referer,
         )
         collected.extend(_deal_rows(payload))
+        normalized = _normalize_deal_rows(collected)
+        if len(normalized) >= required_days:
+            return normalized
     except Exception as exc:
         errors.append(f"front={exc}")
 
@@ -197,7 +246,7 @@ def fetch_naver_flow(
     ticker = _ticker(code)
     sess = session or requests.Session()
 
-    trend = _fetch_mobile_trend(sess, ticker)
+    trend = _fetch_mobile_trend(sess, ticker, required_days=20)
     prices = _fetch_fchart(sess, ticker)
     cutoff = as_of.strftime("%Y%m%d")
 
