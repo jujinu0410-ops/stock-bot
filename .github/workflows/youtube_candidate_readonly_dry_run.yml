@@ -9,7 +9,11 @@ on:
       - '.github/workflows/youtube_candidate_readonly_dry_run.yml'
       - 'scripts/youtube_candidate_*.py'
       - 'src/analysis/youtube_candidate_*.py'
-      - 'tests/test_youtube_candidate_*.py'
+      - 'services/youtube_signal_service.py'
+      - 'apps_script/youtube_candidate_monitor.gs'
+      - 'requirements-youtube-signal.txt'
+      - 'Dockerfile.youtube-signal'
+      - 'tests/test_youtube_*.py'
 
 permissions:
   contents: read
@@ -31,11 +35,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-youtube-signal.txt
 
-      - name: Run YouTube candidate unit tests
+      - name: Run YouTube candidate and signal-service unit tests
         run: |
-          python -m unittest discover -s tests -p 'test_youtube_candidate_*.py' -v
+          python -m unittest discover -s tests -p 'test_youtube_*.py' -v
+
+      - name: Compile signal service
+        run: |
+          python -m py_compile services/youtube_signal_service.py
 
       - name: Run identity-gated exact-flow read-only validation
         env:
