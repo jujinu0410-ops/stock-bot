@@ -10,7 +10,7 @@ on:
       - 'scripts/youtube_candidate_*.py'
       - 'src/analysis/youtube_candidate_*.py'
       - 'services/youtube_signal_service.py'
-      - 'apps_script/youtube_candidate_monitor.gs'
+      - 'apps_script/*.gs'
       - 'requirements-youtube-signal.txt'
       - 'Dockerfile.youtube-signal'
       - 'tests/test_youtube_*.py'
@@ -44,6 +44,13 @@ jobs:
       - name: Compile signal service
         run: |
           python -m py_compile services/youtube_signal_service.py
+
+      - name: Syntax-check Apps Script files
+        run: |
+          for f in apps_script/*.gs; do
+            cp "$f" /tmp/youtube_apps_script_check.js
+            node --check /tmp/youtube_apps_script_check.js
+          done
 
       - name: Run identity-gated exact-flow read-only validation
         env:
