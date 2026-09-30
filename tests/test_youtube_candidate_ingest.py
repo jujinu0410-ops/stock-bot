@@ -5,6 +5,7 @@ from datetime import date
 from src.analysis.youtube_candidate_ingest import (
     CandidateParseError,
     CandidateRecord,
+    aggregate_candidate_pool,
     extract_mentions_section,
     extract_raw_mentions,
     parse_and_resolve_mail,
@@ -96,6 +97,34 @@ class YouTubeCandidateIngestTests(unittest.TestCase):
         body = "분석 기준일: 2026-09-30\n언급종목\n- 가짜기업A\n- 가짜기업B"
         with self.assertRaises(CandidateParseError):
             parse_and_resolve_mail("[경제 Intelligence] 9월30일", body, STOCK_ROWS)
+
+    def test_rolling_rebuild_dedupes_duplicate_mail_and_counts_distinct_days(self):
+        body_29 = "분석 기준일: 2026-09-29\n언급종목\n- 삼성전자\n- 삼성전기"
+        body_30 = "분석 기준일: 2026-09-30\n언급종목\n- 삼성전자"
+        r29a = parse_and_resolve_mail("[경제 Intelligence] 9월29일 A", body_29, STOCK_ROWS)
+        r29b = parse_and_resolve_mail("[경제 Intelligence] 9월29일 duplicate", body_29, STOCK_ROWS)
+        r30 = parse_and_resolve_mail("[경제 Intelligence] 9월30일", body_30, STOCK_ROWS)
+        pool = aggregate_candidate_pool([r29a, r29b, r30], as_of_date=date(2026, 9, 30))
+        by_code = {x.ticker: x for x in pool}
+        self.assertEqual(by_code["005930"].mention_count_30d, 2)
+        self.assertEqual(by_code["009150"].mention_count_30d, 1)
+        self.assertEqual(by_code["005930"].last_seen_date, date(2026, 9, 30))
+        self.assertEqual(by_code["005930"].expires_at, date(2026, 10, 30))
+
+    def test_rolling_rebuild_excludes_events_outside_30_day_window(self):
+        old = parse_and_resolve_mail(
+            "[경제 Intelligence] old",
+            "분석 기준일: 2026-08-31\n언급종목\n- 삼성전자",
+            STOCK_ROWS,
+        )
+        recent = parse_and_resolve_mail(
+            "[경제 Intelligence] recent",
+            "분석 기준일: 2026-09-30\n언급종목\n- 삼성전자",
+            STOCK_ROWS,
+        )
+        pool = aggregate_candidate_pool([old, recent], as_of_date=date(2026, 9, 30))
+        self.assertEqual(pool[0].mention_count_30d, 1)
+        self.assertEqual(pool[0].last_seen_date, date(2026, 9, 30))
 
     def test_duplicate_same_day_is_idempotent(self):
         body = "분석 기준일: 2026-09-29\n언급종목\n- 삼성전자"
