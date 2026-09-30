@@ -8,7 +8,7 @@ and renders a preview without sending mail.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional
 import time
 
 from src.analysis.youtube_candidate_signal import (
@@ -240,8 +240,16 @@ def render_candidate_preview(candidate: Mapping[str, Any], market: Optional[Mark
     flow = candidate.get("flow") or {}
     final = candidate.get("final") or {}
     signal = str(final.get("signal") or "NO_ALERT")
-    market_status = market.status if market else str(final.get("market_regime") or REGIME_UNAVAILABLE)
     flow_text = describe_flow(flow)
+
+    if market:
+        market_line = (
+            f"시장수급: {market.status} ({market.market}) / "
+            f"외국인 {market.foreign_amount:+,.0f} / 기관 {market.institution_amount:+,.0f} / "
+            f"source={market.source} rows={market.row_count}"
+        )
+    else:
+        market_line = f"시장수급: {str(final.get('market_regime') or REGIME_UNAVAILABLE)}"
 
     lines = [
         f"[{signal}] {candidate.get('name')} {candidate.get('ticker')}",
@@ -249,7 +257,7 @@ def render_candidate_preview(candidate: Mapping[str, Any], market: Optional[Mark
         f"가격: {tech.get('current_price')} / ATR14={tech.get('atr14')}",
         f"0.5ATR: {tech.get('buy_trigger_05')} / 0.6ATR: {tech.get('confirm_trigger_06')}",
         f"수급: {flow.get('status')} — {flow_text}",
-        f"시장수급: {market_status}" + (f" ({market.market})" if market else ""),
+        market_line,
         f"최근 YouTube 언급: {candidate.get('last_seen_date')} / 30일 언급 {candidate.get('mention_count_30d')}회",
         "자동매수 지시가 아니라 매수 검토용 preview다.",
     ]
