@@ -8,8 +8,10 @@ Intelligence V8 mail layout and removes expensive/unreliable auxiliary operation
 2) Gmail IMAP is server-filtered by the ASCII subject token "Intelligence" before
    BODY.PEEK[] so unrelated Inbox mail is never downloaded,
 3) when GitHub's dynamic IP is rejected by Kiwoom, the validation-only flow source
-   is Naver's daily foreign/institution net volume converted to an estimated amount
-   (net volume x close).  It is explicitly labelled NAVER_ESTIMATE, never Kiwoom.
+   uses Naver foreign/institution net share volume converted to an estimated amount
+   (net volume x close). Mobile JSON is attempted first and the page-based Naver PC
+   table supplies older sessions when the mobile endpoints expose only ~5 sessions.
+   It is explicitly labelled NAVER_ESTIMATE, never Kiwoom exact flow.
 
 FAILED/DEGRADED status notifications are not candidate reports and are excluded.
 All access remains read-only.
@@ -26,6 +28,7 @@ import scripts.youtube_candidate_dry_run as mailmod
 import scripts.youtube_candidate_integrated_dry_run as runner
 from src.analysis import youtube_candidate_mail_adapter as live_adapter
 from src.analysis.youtube_candidate_naver_flow import fetch_naver_flow
+from src.analysis.youtube_candidate_naver_pc_flow import fetch_naver_pc_flow
 
 
 def _no_public_registry():
@@ -90,7 +93,28 @@ def _fast_fetch_intelligence_mails(days: int, as_of_date) -> List[Dict[str, Any]
 
 
 def _naver_flow_fallback(code: str, as_of_date) -> List[Dict[str, Any]]:
-    return fetch_naver_flow(code, as_of_date, pages=2, exclude_as_of_date=True)
+    """Validation-only 20d Naver fallback; exact production source remains Kiwoom."""
+    mobile_rows: List[Dict[str, Any]] = []
+    try:
+        mobile_rows = fetch_naver_flow(code, as_of_date, pages=2, exclude_as_of_date=True)
+    except Exception:
+        mobile_rows = []
+
+    if len(mobile_rows) >= 20:
+        return mobile_rows
+
+    pc_rows: List[Dict[str, Any]] = []
+    try:
+        pc_rows = fetch_naver_pc_flow(code, as_of_date, pages=2, exclude_as_of_date=True)
+    except Exception:
+        pc_rows = []
+
+    # PC rows provide the longer history; mobile rows override overlapping recent
+    # dates because the mobile JSON schema is more structured.  If the merged set is
+    # still <20 sessions, evaluate_flow() deliberately returns UNAVAILABLE.
+    merged = {str(row.get("dt")): row for row in pc_rows if row.get("dt")}
+    merged.update({str(row.get("dt")): row for row in mobile_rows if row.get("dt")})
+    return [merged[k] for k in sorted(merged)]
 
 
 _original_flow_dict = runner.flow_dict
