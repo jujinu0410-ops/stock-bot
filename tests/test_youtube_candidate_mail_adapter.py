@@ -2,6 +2,7 @@
 import unittest
 from datetime import date
 
+from src.analysis.youtube_candidate_ingest import CandidateParseError
 from src.analysis.youtube_candidate_mail_adapter import (
     extract_live_card_mentions,
     parse_and_resolve_mail,
@@ -40,8 +41,6 @@ ACTIVE 30 · 정상수집 30
         result = parse_and_resolve_mail(
             "[경제 Intelligence] 9월30일 | AI·반도체",
             body,
-            # Intentionally incomplete registry. Explicit codes printed in the
-            # report are authoritative candidate identity.
             [{"stock_code": "009150", "stock_name": "삼성전기", "market_type": "KOSPI"}],
         )
         self.assertEqual([x.ticker for x in result.resolved], ["009150", "000990", "403870"])
@@ -106,6 +105,50 @@ ACTIVE 30 · 정상수집 30
         self.assertEqual(result.raw_mentions, tuple())
         self.assertEqual(result.resolved, tuple())
         self.assertEqual(result.unresolved, tuple())
+
+    def test_pre_rollout_narrative_report_is_valid_empty_event(self):
+        body = """Economic Intelligence V2 · TREND
+분석 기준일: 2026-09-05 (TREND · 직전 2026-09-04 대비)
+
+📊 일일 경제 YouTube 크로스 인텔리전스 리포트
+
+국내 반도체 대형주 실적 모멘텀 및 4분기 증시 기대감
+단일 채널 관점
+▲ BULL
+달란트투자 채널에서 삼성전자와 SK하이닉스의 HBM 실적 폭증을 조명했습니다.
+근거(Evidence): 영상 링크
+"""
+        rows = [
+            {"stock_code": "005930", "stock_name": "삼성전자", "market_type": "KOSPI"},
+            {"stock_code": "000660", "stock_name": "SK하이닉스", "market_type": "KOSPI"},
+        ]
+        result = parse_and_resolve_mail(
+            "[경제 Intelligence] 9월5일 | 부동산·절세 · 외국인 수급 · AI·반도체",
+            body,
+            rows,
+        )
+        self.assertEqual(result.report_date, date(2026, 9, 5))
+        self.assertEqual(result.raw_mentions, tuple())
+        self.assertEqual(result.resolved, tuple())
+        self.assertEqual(result.unresolved, tuple())
+
+    def test_post_rollout_missing_candidate_section_still_fails_closed(self):
+        body = """Economic Intelligence V2 · TREND
+분석 기준일: 2026-09-06 (TREND)
+
+📊 일일 경제 YouTube 크로스 인텔리전스 리포트
+삼성전자와 SK하이닉스가 본문에서 언급되지만 전용 후보 섹션은 없습니다.
+"""
+        rows = [
+            {"stock_code": "005930", "stock_name": "삼성전자", "market_type": "KOSPI"},
+            {"stock_code": "000660", "stock_name": "SK하이닉스", "market_type": "KOSPI"},
+        ]
+        with self.assertRaises(CandidateParseError):
+            parse_and_resolve_mail(
+                "[경제 Intelligence] 9월6일 | AI·반도체",
+                body,
+                rows,
+            )
 
     def test_legacy_heading_falls_back_to_core(self):
         body = """분석 기준일: 2026-09-30
