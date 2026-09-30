@@ -29,12 +29,14 @@ import scripts.youtube_candidate_registered_ip_dry_run as runner
 from src.analysis.youtube_candidate_identity import verify_candidate_identity
 from src.analysis.youtube_candidate_ingest import ParseResult
 from src.analysis.youtube_candidate_mail_adapter import parse_and_resolve_mail as _parse_base
+from src.analysis.youtube_candidate_review import describe_flow
 from src.analysis.youtube_candidate_signal import TECH_BUY_CANDIDATE
 
 
 # Save original callables before monkey-patching the validation sidecar.
 _base_fetch_naver_daily = runner.fetch_naver_daily
 _base_evaluate_technical = runner.evaluate_technical
+_base_flow_dict = runner._flow_dict
 _base_run = runner.run
 
 _identity_cache: Dict[Tuple[str, str], Any] = {}
@@ -65,8 +67,6 @@ def _validated_parse_and_resolve_mail(subject, body, stock_rows, fallback_date=N
         return parsed
 
     kept = []
-    # Keep parser-level unresolved items intact. Identity quarantine is tracked
-    # separately so a confirmed bad source row cannot block unrelated valid alerts.
     unresolved = list(parsed.unresolved)
 
     for mention in parsed.resolved:
@@ -87,9 +87,6 @@ def _validated_parse_and_resolve_mail(subject, body, stock_rows, fallback_date=N
             }
             continue
 
-        # VERIFIED / VERIFIED_ALIAS proceed normally. DATA_HOLD at this stage means
-        # 'not conclusively verified', not 'known wrong'; retain candidate and enforce
-        # the strict fail-closed check only if it later reaches BUY_CANDIDATE.
         kept.append(mention)
 
     return ParseResult(
@@ -140,6 +137,13 @@ def _identity_gated_evaluate_technical(ti, *args, **kwargs):
     return replace(tech, status="DATA_HOLD", reason=reason)
 
 
+def _review_flow_dict(flow, query_status: str, error=None):
+    out = _base_flow_dict(flow, query_status, error)
+    if flow is not None:
+        out["reason"] = describe_flow(out)
+    return out
+
+
 def _validated_run(days, as_of, db_path):
     global _current_technical_ticker
     _identity_cache.clear()
@@ -156,9 +160,6 @@ def _validated_run(days, as_of, db_path):
     result["buy_gate_identity_hold_count"] = len(holds)
     result["buy_gate_identity_holds"] = holds
 
-    # A quarantined, unrelated source row is an isolated data-quality note, not a
-    # reason to suppress otherwise verified alerts. BUY-gate holds remain blocking
-    # only for the affected technical candidate because they are converted DATA_HOLD.
     if result.get("data_quality") == "VALID" and quarantines:
         result["data_quality"] = "VALID_WITH_SOURCE_IDENTITY_QUARANTINE"
     elif result.get("data_quality") == "PARTIAL_REVIEW_ISOLATED_CANDIDATE_DATA" and quarantines:
@@ -169,6 +170,7 @@ def _validated_run(days, as_of, db_path):
 runner.parse_and_resolve_mail = _validated_parse_and_resolve_mail
 runner.fetch_naver_daily = _tracked_fetch_naver_daily
 runner.evaluate_technical = _identity_gated_evaluate_technical
+runner._flow_dict = _review_flow_dict
 runner.run = _validated_run
 
 if __name__ == "__main__":
