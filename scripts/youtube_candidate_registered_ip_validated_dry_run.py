@@ -4,10 +4,12 @@
 This is the preferred manual validation entrypoint on the user's Kiwoom-registered
 Windows IP.  It wraps youtube_candidate_registered_ip_dry_run without changing its
 read-only guarantees and validates every structured mail candidate's six-digit code
-against Naver `basic.stockName` before the rolling pool is rebuilt.
+against Naver before the rolling pool is rebuilt.
 
-A source code/name mismatch is quarantined as unresolved and therefore can never
-reach the 0.5 ATR buy gate or Kiwoom ka10059 flow query.
+The validator uses the *mail source name* (`raw_text`), not a local DB registry label.
+This matters because some legacy stock_info rows contain the ticker itself as the
+stock_name.  A source code/name mismatch is quarantined and can never reach the
+0.5 ATR buy gate or Kiwoom ka10059 flow query.
 """
 from __future__ import annotations
 
@@ -30,17 +32,18 @@ def _validated_parse_and_resolve_mail(subject, body, stock_rows, fallback_date=N
     kept = []
     unresolved = list(parsed.unresolved)
     for mention in parsed.resolved:
-        key = (mention.ticker, mention.name)
+        source_name = str(mention.raw_text or mention.name or "").strip()
+        key = (mention.ticker, source_name)
         assessment = _identity_cache.get(key)
         if assessment is None:
-            assessment = verify_candidate_identity(mention.ticker, mention.name)
+            assessment = verify_candidate_identity(mention.ticker, source_name)
             _identity_cache[key] = assessment
         if assessment.valid:
             kept.append(mention)
         else:
             unresolved.append(
                 UnresolvedMention(
-                    mention.raw_text,
+                    source_name,
                     f"{assessment.status}: {assessment.reason}",
                 )
             )
