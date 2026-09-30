@@ -1,27 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Compatibility adapter for live Economic Intelligence candidate-mail formats.
+"""Compatibility adapter for Economic Intelligence candidate-mail formats.
 
-The ingestion core predates the current V8 mail layout.  Current production-like
-reports use a heading such as::
+Current production-like reports expose a dedicated candidate section such as::
 
     📌 오늘 언급·주목 종목 (V8 분석 후보군)
 
-and render each candidate as a vertical card::
-
-    삼성전기
-    (009150)
-    [직접 언급]
-    2개 채널 교차 언급
-    이유: ...
-
-This adapter recognizes that explicit-code card format conservatively and returns
-the same ParseResult/ResolvedMention types used by youtube_candidate_ingest.
-Explicit six-digit codes printed in the report are canonical candidate identity;
-a stale/incomplete local stock registry must not discard them.  Registry data is
-used only to canonicalize the display name/market when available.
-
-If the live-card format is absent, parsing falls back to the existing ingestion
-core so older inline/list mail formats remain supported.
+with explicit six-digit ticker cards.  Those explicit codes are canonical candidate
+identity for this watchlist.  Older Economic Intelligence V2 reports before the
+candidate-card rollout mixed company names into market narratives but did not define
+a structured buy-watch candidate section; those reports are valid zero-event inputs,
+not parser failures, and narrative company mentions are deliberately not promoted to
+candidates.
 """
 from __future__ import annotations
 
@@ -39,6 +28,11 @@ from src.analysis.youtube_candidate_ingest import (
     UnresolvedMention,
 )
 
+
+# Verified from the user's actual Intelligence mail history: dedicated structured
+# candidate cards are used from 2026-09-06 onward.  Reports through 2026-09-05 are
+# narrative-only for stock mentions and therefore must not be mined heuristically.
+LEGACY_NARRATIVE_ONLY_CUTOFF = date(2026, 9, 5)
 
 _LIVE_HEADING_RE = re.compile(
     r"^\s*(?:#{1,6}\s*)?(?:[📌🔎🏢📈📊⭐✅▶▷►•·*-]\s*)*"
@@ -71,6 +65,7 @@ _NO_NEW_CANDIDATES_RE = re.compile(
     r"(?:오늘\s*)?(?:신규\s*)?(?:주목\s*)?종목\s*(?:없음|없습니다)",
     re.IGNORECASE,
 )
+_LEGACY_V2_RE = re.compile(r"Economic\s+Intelligence\s+V2", re.IGNORECASE)
 
 
 def _clean(text: str) -> str:
@@ -201,28 +196,31 @@ def resolve_explicit_live_mentions(
     return list(resolved.values()), unresolved
 
 
+def _empty_result(report_date: date, subject: str) -> ParseResult:
+    return ParseResult(
+        report_date=report_date,
+        raw_mentions=tuple(),
+        resolved=tuple(),
+        unresolved=tuple(),
+        source_subject=subject,
+    )
+
+
 def parse_and_resolve_mail(
     subject: str,
     body: str,
     stock_rows: Iterable[Mapping[str, Any]],
     fallback_date: Optional[date] = None,
 ) -> ParseResult:
-    """Parse current live-card mail first, then fall back to the legacy core parser."""
+    """Parse candidate cards conservatively and fail closed on ambiguous formats."""
     rows = list(stock_rows)
     report_date = core.parse_report_date(subject, body, fallback=fallback_date)
 
     live_section = _extract_live_section(body)
     if live_section is not None and any(_NO_NEW_CANDIDATES_RE.search(line) for line in live_section):
-        # An explicit 'no new candidates today' report is a valid zero-event input.
-        # It must not be treated as a parser failure and, critically, must not clear
-        # the rolling 30-day candidate pool.
-        return ParseResult(
-            report_date=report_date,
-            raw_mentions=tuple(),
-            resolved=tuple(),
-            unresolved=tuple(),
-            source_subject=subject,
-        )
+        # Explicit 'no new candidates today' is a valid zero-event input and must
+        # never clear the rolling 30-day pool.
+        return _empty_result(report_date, subject)
 
     live_mentions = extract_live_card_mentions(body)
     if live_mentions:
@@ -238,6 +236,18 @@ def parse_and_resolve_mail(
         )
 
     normalized = _clean(body)
+
+    # Historical V2 reports through 2026-09-05 contain company names inside market
+    # narratives but no dedicated candidate-list semantics.  Treating those names as
+    # buy-watch candidates would silently change the meaning of the source, so they
+    # are valid zero-event reports instead of parser failures.
+    if (
+        report_date <= LEGACY_NARRATIVE_ONLY_CUTOFF
+        and _LEGACY_V2_RE.search(normalized)
+        and live_section is None
+    ):
+        return _empty_result(report_date, subject)
+
     normalized = re.sub(
         r"(?m)^\s*(?:📌\s*)?(?:오늘(?:의)?\s*)?언급\s*(?:[·ㆍ/&+]\s*)?주목\s*종목",
         "언급종목",
