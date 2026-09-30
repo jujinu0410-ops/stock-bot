@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """Fast validation wrapper for the first YouTube Candidate Watch integrated dry run.
 
-This wrapper keeps the core evaluator unchanged but removes two expensive auxiliary
-operations from the first real-data validation:
-1) no full-market public stock-master download; registry gaps stay UNRESOLVED,
+This wrapper keeps the core evaluator unchanged but adapts the current Economic
+Intelligence V8 mail layout and removes two expensive auxiliary operations:
+1) no full-market public stock-master download; explicit six-digit codes in the
+   report remain canonical candidate identity,
 2) Gmail IMAP is server-filtered by the ASCII subject token "Intelligence" before
    BODY.PEEK[] so unrelated Inbox mail is never downloaded.
 
+FAILED/DEGRADED status notifications are not candidate reports and are excluded.
 All access remains read-only.
 """
 from __future__ import annotations
@@ -19,10 +21,16 @@ from typing import Any, Dict, List
 
 import scripts.youtube_candidate_dry_run as mailmod
 import scripts.youtube_candidate_integrated_dry_run as runner
+from src.analysis import youtube_candidate_mail_adapter as live_adapter
 
 
 def _no_public_registry():
     return []
+
+
+def _is_status_only_subject(subject: str) -> bool:
+    upper = (subject or "").upper()
+    return "FAILED" in upper or "DEGRADED" in upper or "파이프라인 실행 오류" in subject
 
 
 def _fast_fetch_intelligence_mails(days: int, as_of_date) -> List[Dict[str, Any]]:
@@ -65,6 +73,8 @@ def _fast_fetch_intelligence_mails(days: int, as_of_date) -> List[Dict[str, Any]
             subject = mailmod._decode_header_value(msg.get("Subject"))
             if not subject.startswith(mailmod.SUBJECT_PREFIX):
                 continue
+            if _is_status_only_subject(subject):
+                continue
 
             rows.append({
                 "imap_id": msg_id.decode("ascii", errors="ignore"),
@@ -79,6 +89,7 @@ def _fast_fetch_intelligence_mails(days: int, as_of_date) -> List[Dict[str, Any]
 
 runner.fetch_public_registry = _no_public_registry
 runner.fetch_intelligence_mails = _fast_fetch_intelligence_mails
+runner.parse_and_resolve_mail = live_adapter.parse_and_resolve_mail
 
 if __name__ == "__main__":
     raise SystemExit(runner.main())
