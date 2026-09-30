@@ -25,7 +25,6 @@ core so older inline/list mail formats remain supported.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date
 import re
 import unicodedata
@@ -68,6 +67,10 @@ _STOP_HEADING_RE = re.compile(
     r"^\s*(?:📺|🧾|📝|🔚|Generated\s+by|본\s*리포트는|분석\s*기준\s*:)",
     re.IGNORECASE,
 )
+_NO_NEW_CANDIDATES_RE = re.compile(
+    r"(?:오늘\s*)?(?:신규\s*)?(?:주목\s*)?종목\s*(?:없음|없습니다)",
+    re.IGNORECASE,
+)
 
 
 def _clean(text: str) -> str:
@@ -88,13 +91,14 @@ def _plausible_name(line: str) -> bool:
         return False
     if _INFO_LINE_RE.match(s) or _CARD_TAG_RE.match(s) or _CARD_META_RE.match(s):
         return False
+    if _NO_NEW_CANDIDATES_RE.search(s):
+        return False
     if _EXACT_CODE_LINE_RE.match(s):
         return False
     if s.startswith("http://") or s.startswith("https://"):
         return False
     if re.match(r"^#{1,6}\s", s):
         return False
-    # Names may contain Latin letters, digits and Korean, but not sentence punctuation.
     if re.search(r"[.!?。]|https?://", s):
         return False
     if len(s.split()) > 5:
@@ -119,12 +123,9 @@ def _extract_live_section(body: str) -> Optional[List[str]]:
             out.append("")
             continue
         if _INFO_LINE_RE.match(line):
-            # This is explanatory text immediately below the live heading, not an
-            # end-of-section disclaimer.
             continue
         if _STOP_HEADING_RE.match(line):
             break
-        # A new markdown H1-H6 after candidates is a hard section boundary.
         if re.match(r"^\s*#{1,6}\s+\S", raw):
             break
         out.append(line)
@@ -144,7 +145,6 @@ def extract_live_card_mentions(body: str) -> List[RawMention]:
     mentions: List[RawMention] = []
     seen_codes = set()
 
-    # 1) Same-line explicit-code cards, e.g. "삼성전자 (005930)".
     for line in lines:
         m = _SAME_LINE_CODE_RE.match(_strip_line_markup(line))
         if not m:
@@ -155,8 +155,6 @@ def extract_live_card_mentions(body: str) -> List[RawMention]:
             mentions.append(RawMention(raw_text=name, explicit_code=code))
             seen_codes.add(code)
 
-    # 2) Current live vertical cards: name line followed by the next non-empty
-    #    line containing only a six-digit code in parentheses.
     nonempty = [(idx, _strip_line_markup(v)) for idx, v in enumerate(lines) if _strip_line_markup(v)]
     for pos in range(len(nonempty) - 1):
         _, name_line = nonempty[pos]
@@ -212,6 +210,20 @@ def parse_and_resolve_mail(
     """Parse current live-card mail first, then fall back to the legacy core parser."""
     rows = list(stock_rows)
     report_date = core.parse_report_date(subject, body, fallback=fallback_date)
+
+    live_section = _extract_live_section(body)
+    if live_section is not None and any(_NO_NEW_CANDIDATES_RE.search(line) for line in live_section):
+        # An explicit 'no new candidates today' report is a valid zero-event input.
+        # It must not be treated as a parser failure and, critically, must not clear
+        # the rolling 30-day candidate pool.
+        return ParseResult(
+            report_date=report_date,
+            raw_mentions=tuple(),
+            resolved=tuple(),
+            unresolved=tuple(),
+            source_subject=subject,
+        )
+
     live_mentions = extract_live_card_mentions(body)
     if live_mentions:
         resolved, unresolved = resolve_explicit_live_mentions(live_mentions, rows)
@@ -225,9 +237,6 @@ def parse_and_resolve_mail(
             source_subject=subject,
         )
 
-    # Compatibility fallback: normalize the new heading to one the ingestion core
-    # understands.  This also supports a future live heading that returns to a plain
-    # list/inline layout rather than vertical cards.
     normalized = _clean(body)
     normalized = re.sub(
         r"(?m)^\s*(?:📌\s*)?(?:오늘(?:의)?\s*)?언급\s*(?:[·ㆍ/&+]\s*)?주목\s*종목",
