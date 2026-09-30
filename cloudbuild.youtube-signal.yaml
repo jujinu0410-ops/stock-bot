@@ -1,0 +1,22 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-youtube-signal-service'
+    args:
+      - 'build'
+      - '-f'
+      - 'Dockerfile.youtube-signal'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:${_TAG}'
+      - '.'
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:${_TAG}'
+
+substitutions:
+  _REGION: 'asia-northeast3'
+  _REPOSITORY: 'stockbot-repo'
+  _IMAGE: 'youtube-signal-service'
+  _TAG: 'latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
