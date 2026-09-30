@@ -167,3 +167,114 @@ function installYouTubeWatchTriggersV2() {
   ScriptApp.newTrigger('refreshYouTubeCandidatePoolV2')
     .timeBased().everyMinutes(30).create();
 }
+
+/*
+ * Robust live-mail candidate parser override.
+ * This file is loaded after youtube_candidate_ingest.gs, so this declaration
+ * intentionally replaces the stricter earlier parser in the same eval scope.
+ *
+ * Inside the dedicated candidate section, the explicit six-digit ticker is the
+ * canonical identity. A [직접 언급]/[관련 수혜주] tag is useful metadata but is
+ * not required for candidate recognition because Gmail plain-text rendering may
+ * alter or separate those tag lines.
+ */
+function collectIntelligenceCandidates_() {
+  const query = 'subject:"경제 Intelligence" newer_than:' + YCI.LOOKBACK_DAYS + 'd -in:trash -in:spam';
+  const threads = GmailApp.search(query, 0, YCI.MAX_THREADS);
+  const byCode = {};
+  let structuredMailCount = 0;
+  let parsedCardCount = 0;
+
+  threads.forEach(function(thread) {
+    thread.getMessages().forEach(function(message) {
+      const subject = String(message.getSubject() || '');
+      if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
+
+      const body = String(message.getPlainBody() || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/[\u00a0\u200b\ufeff\u200e\u200f]/g, ' ')
+        .replace(/[\u202a-\u202e\u2066-\u2069]/g, '');
+
+      const headingRe = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:📌\s*)?(?:(?:오늘(?:의)?|주요|핵심|최종)\s*)?언급\s*(?:(?:[·ㆍ\/&+]\s*)?주목\s*)?종목(?:\s*(?:목록|리스트))?(?:\s*\([^\n)]{1,80}\))?[^\n]*/gi;
+      let headingMatch = null;
+      let hm;
+      while ((hm = headingRe.exec(body)) !== null) headingMatch = hm;
+      if (!headingMatch) return;
+
+      structuredMailCount += 1;
+      const section = body.substring(headingMatch.index + headingMatch[0].length);
+      const lines = section.split('\n').map(function(v) {
+        return String(v || '')
+          .replace(/[\u00a0\u200b\ufeff\u200e\u200f]/g, ' ')
+          .replace(/[\u202a-\u202e\u2066-\u2069]/g, '')
+          .replace(/^\s*[-*+•▪◦‣▶▷►]+\s*/, '')
+          .replace(/\*\*|__|`/g, '')
+          .trim();
+      });
+      const dateKey = Utilities.formatDate(message.getDate(), 'Asia/Seoul', 'yyyy-MM-dd');
+      const seenThisMessage = new Set();
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        if (/^(?:📺|🧾|📝|🔚|Generated\s+by|본\s*리포트는|분석\s*기준\s*:)/i.test(line)) break;
+
+        // One-line form: 삼성전기 (009150)
+        const same = line.match(/^(.{2,50}?)\s*[\[(]\s*(\d{6})\s*[\])]\s*$/);
+        if (same) {
+          const sameName = cleanCandidateName_(same[1]);
+          const sameCode = normalizeCandidateCode_(same[2]);
+          if (sameName && sameCode && !seenThisMessage.has(sameCode)) {
+            addCandidateMention_(byCode, seenThisMessage, sameCode, sameName, dateKey);
+            parsedCardCount += 1;
+          }
+          continue;
+        }
+
+        // Current vertical form: a six-digit code line identifies the card.
+        // Find the closest plausible preceding non-empty line as its company name.
+        const compact = line.replace(/\s/g, '');
+        const cm = compact.match(/^\(?(\d{6})\)?$/);
+        if (!cm) continue;
+
+        const code = normalizeCandidateCode_(cm[1]);
+        if (!code || seenThisMessage.has(code)) continue;
+
+        let name = '';
+        for (let j = i - 1, looked = 0; j >= 0 && looked < 4; j--) {
+          const prior = String(lines[j] || '').trim();
+          if (!prior) continue;
+          looked += 1;
+          if (plausibleCandidateName_(prior)) {
+            name = cleanCandidateName_(prior);
+            break;
+          }
+        }
+        if (!name) continue;
+
+        addCandidateMention_(byCode, seenThisMessage, code, name, dateKey);
+        parsedCardCount += 1;
+      }
+    });
+  });
+
+  if (structuredMailCount > 0 && parsedCardCount === 0) {
+    throw new Error('CANDIDATE_PARSE_EMPTY_WITH_STRUCTURED_MAILS_' + structuredMailCount);
+  }
+
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - (YCI.TTL_DAYS - 1));
+  const cutoffKey = Utilities.formatDate(cutoff, 'Asia/Seoul', 'yyyy-MM-dd');
+
+  Object.keys(byCode).forEach(function(code) {
+    if (byCode[code].lastSeen < cutoffKey) {
+      delete byCode[code];
+    } else {
+      byCode[code].mentionDays = byCode[code].dates.size;
+    }
+  });
+
+  return byCode;
+}
