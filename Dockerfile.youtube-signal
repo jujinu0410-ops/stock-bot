@@ -1,0 +1,30 @@
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    TZ=Asia/Seoul \
+    STOCKBOT_CLOUD_MODE=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tzdata ca-certificates \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-youtube-signal.txt ./
+RUN pip install --no-cache-dir -r requirements-youtube-signal.txt
+
+COPY config/ ./config/
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+COPY services/ ./services/
+
+RUN useradd -m -u 1000 stockbot && chown -R stockbot:stockbot /app
+USER stockbot
+
+ENV PORT=8080
+EXPOSE 8080
+
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 1 --threads 4 --timeout 60 services.youtube_signal_service:app"]
