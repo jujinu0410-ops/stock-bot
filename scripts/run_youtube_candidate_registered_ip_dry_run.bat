@@ -34,6 +34,10 @@ if /I not "%REF_OK%"=="YES" (
   exit /b 3
 )
 
+if not exist "scripts\youtube_candidate_registered_ip_bootstrap.py" (
+  echo [ERROR] credential bootstrap module not found on the validated ref.
+  exit /b 4
+)
 if not exist "scripts\youtube_candidate_registered_ip_validated_dry_run.py" (
   echo [ERROR] validated dry-run module not found on the validated ref.
   exit /b 4
@@ -56,19 +60,6 @@ if not exist "%SOURCE_DB%" (
   exit /b 7
 )
 
-REM Load only Kiwoom credentials into this process. Values are never echoed.
-for /f "usebackq delims=" %%K in (`powershell -NoProfile -Command "$p='%ENV_FILE%'; $m=Get-Content -LiteralPath $p ^| Where-Object { $_ -match '^\s*KIWOOM_APP_KEY\s*=' } ^| Select-Object -First 1; if($m){$v=($m -split '=',2)[1].Trim().Trim('''').Trim([char]34); Write-Output $v}"`) do set "KIWOOM_APP_KEY=%%K"
-for /f "usebackq delims=" %%K in (`powershell -NoProfile -Command "$p='%ENV_FILE%'; $m=Get-Content -LiteralPath $p ^| Where-Object { $_ -match '^\s*KIWOOM_APP_SECRET\s*=' } ^| Select-Object -First 1; if($m){$v=($m -split '=',2)[1].Trim().Trim('''').Trim([char]34); Write-Output $v}"`) do set "KIWOOM_APP_SECRET=%%K"
-
-if not defined KIWOOM_APP_KEY (
-  echo [ERROR] KIWOOM_APP_KEY was not loaded from %ENV_FILE%.
-  exit /b 8
-)
-if not defined KIWOOM_APP_SECRET (
-  echo [ERROR] KIWOOM_APP_SECRET was not loaded from %ENV_FILE%.
-  exit /b 9
-)
-
 if not exist "logs" mkdir logs
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "TIMESTAMP=%%I"
 if not defined TIMESTAMP set "TIMESTAMP=UNKNOWN"
@@ -86,11 +77,11 @@ echo HEAD: %CURRENT_HEAD% >> "%LOG_OUT%"
 echo WorkingDirectory: %CD% >> "%LOG_OUT%"
 echo SourceDB: %SOURCE_DB% >> "%LOG_OUT%"
 echo JSON: %JSON_OUT% >> "%LOG_OUT%"
-echo KiwoomCredentialsLoaded=YES >> "%LOG_OUT%"
+echo KiwoomCredentialsSource=config.settings local .env bootstrap >> "%LOG_OUT%"
 echo Safety: SheetWrite=NO EmailSend=NO PortfolioMutation=NO OrderAPI=NO >> "%LOG_OUT%"
 echo ================================================== >> "%LOG_OUT%"
 
-"%PYTHON_EXE%" -m scripts.youtube_candidate_registered_ip_validated_dry_run ^
+"%PYTHON_EXE%" -m scripts.youtube_candidate_registered_ip_bootstrap ^
   --days 35 ^
   --db "%SOURCE_DB%" ^
   --json-out "%JSON_OUT%" >> "%LOG_OUT%" 2>&1
