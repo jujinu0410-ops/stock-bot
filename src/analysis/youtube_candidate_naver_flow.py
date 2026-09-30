@@ -70,7 +70,10 @@ def _find_col(columns: List[str], *needles: str) -> Optional[str]:
 
 def _extract_table(html: str) -> pd.DataFrame:
     try:
-        tables = pd.read_html(StringIO(html))
+        # pandas may otherwise pick the html5lib parser, which is optional and was
+        # absent in the real GitHub Actions validation environment.  lxml is an
+        # explicit project dependency, so pin the parser for deterministic dry-runs.
+        tables = pd.read_html(StringIO(html), flavor="lxml")
     except Exception as exc:
         raise NaverFlowError(f"NAVER_FLOW_HTML_PARSE: {exc}") from exc
 
