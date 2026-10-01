@@ -49,6 +49,14 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         with self.assertRaises(svc.SignalServiceError):
             svc._clean_ticker("ABC")
 
+    def test_user_facing_signal_language_matches_held_monitor(self):
+        self.assertEqual(svc.SIGNAL_LABELS[svc.FINAL_WATCH_ONLY], "· 관찰")
+        self.assertEqual(svc.SIGNAL_LABELS[svc.FINAL_BUY_ALERT], "△ 매수조짐")
+        self.assertEqual(svc.SIGNAL_LABELS[svc.FINAL_BUY_ALERT_STRONG], "▲ 매수확인")
+        self.assertEqual(svc.SIGNAL_COLORS[svc.FINAL_WATCH_ONLY], "#64748B")
+        self.assertEqual(svc.SIGNAL_COLORS[svc.FINAL_BUY_ALERT], "#DC2626")
+        self.assertEqual(svc.SIGNAL_COLORS[svc.FINAL_BUY_ALERT_STRONG], "#DC2626")
+
 
 if __name__ == "__main__":
     unittest.main()
