@@ -53,10 +53,18 @@ app = Flask(__name__)
 
 KIWOOM_BASE_URL = "https://api.kiwoom.com"
 ALLOWED_FINAL_SIGNALS = {FINAL_WATCH_ONLY, FINAL_BUY_ALERT, FINAL_BUY_ALERT_STRONG}
+# User-facing language is shared with the held-position monitor:
+# ▲ confirmed upward/buy condition, △ early upward/buy condition, · neutral watch.
+# Internal final-signal codes remain unchanged for compatibility.
 SIGNAL_LABELS = {
-    FINAL_WATCH_ONLY: "관찰",
-    FINAL_BUY_ALERT: "매수검토",
-    FINAL_BUY_ALERT_STRONG: "강한매수검토",
+    FINAL_WATCH_ONLY: "· 관찰",
+    FINAL_BUY_ALERT: "△ 매수조짐",
+    FINAL_BUY_ALERT_STRONG: "▲ 매수확인",
+}
+SIGNAL_COLORS = {
+    FINAL_WATCH_ONLY: "#64748B",
+    FINAL_BUY_ALERT: "#DC2626",
+    FINAL_BUY_ALERT_STRONG: "#DC2626",
 }
 _DART = DartAPIClient()
 
@@ -379,6 +387,7 @@ def _email_html(
     trigger05 = _as_float(payload, "buy_trigger_05")
     trigger06 = _as_float(payload, "confirm_trigger_06")
     label = SIGNAL_LABELS.get(final_signal, final_signal)
+    label_color = SIGNAL_COLORS.get(final_signal, "#334155")
 
     def n(value: float | None) -> str:
         return "-" if value is None else f"{value:,.0f}"
@@ -388,7 +397,7 @@ def _email_html(
 <html><head><meta charset="utf-8"></head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;background:#f8fafc;margin:0;padding:18px;color:#0f172a">
 <div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:18px">
-  <div style="font-size:18px;font-weight:700;margin-bottom:12px">YouTube 언급종목 {escape(label)} 알림</div>
+  <div style="font-size:18px;font-weight:700;margin-bottom:12px">YouTube 언급종목 <span style="color:{label_color};font-weight:800">{escape(label)}</span> 알림</div>
   <div style="font-size:15px;font-weight:700;margin-bottom:10px">{name} {ticker}</div>
   <div style="font-size:13px;line-height:1.75;color:#334155">
     기술신호: <b>BUY_CANDIDATE</b><br>
