@@ -1,7 +1,19 @@
 /*
  * Runtime V8: one-calendar-month candidate TTL + row reuse.
  *
- * Policy:
+ * Identity policy:
+ * - six-digit stock code is the primary key.
+ * - exact/canonical name match passes.
+ * - known aliases are accepted only for the same verified code.
+ * - unknown name/code mismatches remain quarantined (no fuzzy matching).
+ * - canonical Naver name is stored in CANDIDATES when available.
+ * - repeated identical identity errors are logged at most once per Seoul day.
+ *
+ * Alias source:
+ * - built-in aliases cover known historical cases.
+ * - CONFIG rows with Key=STOCK_ALIAS_<6digit> and Value=alias1|alias2 extend the map.
+ *
+ * Candidate policy:
  * - Candidate validity is one calendar month from the latest direct mention.
  * - A re-mention resets the mention date and expiry from that new date.
  * - Expired candidate rows are cleared and recycled before new rows are added.
@@ -10,6 +22,13 @@
 
 const YCV8 = Object.freeze({
   TIMEZONE: 'Asia/Seoul',
+  ALIAS_CONFIG_PREFIX: 'STOCK_ALIAS_',
+  IDENTITY_LOG_STATE_KEY: 'IDENTITY_LOG_STATE_V8',
+  BUILTIN_ALIASES: Object.freeze({
+    '005380': Object.freeze(['현대차', '현대자동차']),
+    '031980': Object.freeze(['피에스케이홀딩스', 'PSK홀딩스']),
+    '035420': Object.freeze(['NAVER', '네이버']),
+  }),
 });
 
 function ymdFromAnyV8_(value) {
@@ -51,6 +70,82 @@ function isExpiredMentionV8_(lastSeen, todayKey) {
   const last = ymdFromAnyV8_(lastSeen);
   if (!last) return true;
   return expiryKeyFromMentionV8_(last) < String(todayKey || todayKeyV8_());
+}
+
+function addAliasValuesV8_(map, code, values) {
+  const normalizedCode = normalizeCandidateCode_(code);
+  if (!normalizedCode) return;
+  if (!map[normalizedCode]) map[normalizedCode] = new Set();
+  (values || []).forEach(function(value) {
+    const n = normalizeName_(value);
+    if (n) map[normalizedCode].add(n);
+  });
+}
+
+function loadStockAliasMapV8_(ss) {
+  const map = {};
+
+  Object.keys(YCV8.BUILTIN_ALIASES).forEach(function(code) {
+    addAliasValuesV8_(map, code, YCV8.BUILTIN_ALIASES[code]);
+  });
+
+  const config = ss.getSheetByName('CONFIG');
+  if (!config || config.getLastRow() < 2) return map;
+
+  const rows = config.getRange(2, 1, config.getLastRow() - 1, 2).getDisplayValues();
+  rows.forEach(function(r) {
+    const key = String(r[0] || '').trim().toUpperCase();
+    const m = key.match(/^STOCK_ALIAS_(\d{6})$/);
+    if (!m) return;
+    const values = String(r[1] || '')
+      .split(/[|,;\n]/)
+      .map(function(v) { return String(v || '').trim(); })
+      .filter(Boolean);
+    addAliasValuesV8_(map, m[1], values);
+  });
+
+  return map;
+}
+
+function isSameStockNameV8_(code, sourceName, canonicalName, aliasMap) {
+  const src = normalizeName_(sourceName);
+  const canon = normalizeName_(canonicalName);
+  if (!src || !canon) return false;
+  if (src === canon) return true;
+
+  const allowed = aliasMap[normalizeCandidateCode_(code)];
+  if (!allowed) return false;
+
+  /* Both sides must be members for this exact code. This intentionally avoids
+   * fuzzy matching and prevents a wrong company name from passing merely
+   * because the stock code exists. */
+  return allowed.has(src) && allowed.has(canon);
+}
+
+function shouldLogIdentityIssueV8_(code, errorCode) {
+  const props = PropertiesService.getScriptProperties();
+  const today = todayKeyV8_();
+  let state = {date: today, keys: []};
+
+  try {
+    const raw = String(props.getProperty(YCV8.IDENTITY_LOG_STATE_KEY) || '');
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && parsed.date === today && Array.isArray(parsed.keys)) state = parsed;
+  } catch (e) {
+    state = {date: today, keys: []};
+  }
+
+  const key = normalizeCandidateCode_(code) + '|' + String(errorCode || '');
+  if (state.keys.indexOf(key) >= 0) return false;
+
+  state.keys.push(key);
+  props.setProperty(YCV8.IDENTITY_LOG_STATE_KEY, JSON.stringify(state));
+  return true;
+}
+
+function appendIdentityIssueV8_(ss, payload) {
+  if (!shouldLogIdentityIssueV8_(payload.ticker, payload.error)) return;
+  appendDispatchLog_(ss, payload);
 }
 
 /*
@@ -185,14 +280,20 @@ function refreshYouTubeCandidatePoolV2() {
     /* Reclaim first so old codes cannot be re-used and then deactivated later. */
     reclaimExpiredRowsV8_(sheet, today);
     const existing = existingCandidateRowsV2_(sheet);
+    const aliasMap = loadStockAliasMapV8_(ss);
     const activeCodes = new Set();
 
     Object.keys(pool).sort().forEach(function(code) {
       const item = pool[code];
       const identity = resolveNaverIdentity_(code, item.name);
+      const prior = existing[code] || null;
 
-      if (identity.verified && identity.name && normalizeName_(identity.name) !== normalizeName_(item.name)) {
-        appendDispatchLog_(ss, {
+      if (
+        identity.verified &&
+        identity.name &&
+        !isSameStockNameV8_(code, item.name, identity.name, aliasMap)
+      ) {
+        appendIdentityIssueV8_(ss, {
           ticker: code, name: item.name, tech: 'IDENTITY_QUARANTINE', http: '',
           finalSignal: '', flowStatus: '', detail: 'Naver=' + identity.name,
           triggerKey: '', elapsedMs: Date.now() - started,
@@ -201,11 +302,10 @@ function refreshYouTubeCandidatePoolV2() {
         return;
       }
 
-      const prior = existing[code] || null;
       const rowNumber = prior ? prior.row : firstReusableCandidateRowV8_(sheet);
       const market = identity.market || (prior ? prior.market : '');
       if (!market) {
-        appendDispatchLog_(ss, {
+        appendIdentityIssueV8_(ss, {
           ticker: code, name: item.name, tech: 'IDENTITY_PENDING', http: '',
           finalSignal: '', flowStatus: '', detail: '', triggerKey: '',
           elapsedMs: Date.now() - started, error: 'MARKET_UNRESOLVED', source: 'GMAIL_INGEST_V8',
@@ -215,7 +315,8 @@ function refreshYouTubeCandidatePoolV2() {
 
       if (!prior) clearCandidatePayloadV8_(sheet, rowNumber);
 
-      const canonicalName = identity.name || item.name;
+      const priorName = prior ? String(sheet.getRange(prior.row, 2).getDisplayValue() || '').trim() : '';
+      const canonicalName = identity.verified && identity.name ? identity.name : (priorName || item.name);
       const ticker = (market === 'KOSDAQ' ? 'KOSDAQ:' : 'KRX:') + code;
       const lastSeenKey = ymdFromAnyV8_(item.lastSeen);
       const lastSeen = parseYmd_(lastSeenKey);
