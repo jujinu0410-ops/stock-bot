@@ -1,12 +1,12 @@
 /* ETF 상시 감시판: 기존 보유종목 Apps Script 프로젝트에 파일 하나로 추가.
- * ewInstall() 1회 실행: ETF 전용 시간당 트리거 설치. 기존 트리거/보유종목 변경 없음.
+ * ewInstall() 1회 실행: ETF 전용 5분 트리거 설치. 기존 트리거/보유종목 변경 없음.
  * ewPreview()는 읽기만 하며 메일을 발송하지 않습니다.
  * 영구 유니버스: 만료/자동삭제/주문/외부 수급 호출 없음.
  */
 const EW = Object.freeze({
   SPREADSHEET_ID: '15WgSe4yOSBqSt6YTRQEETD_Hs6J1WL2Hop9RlzFCGkw',
   SHEET: 'ETF_WATCHLIST', TZ: 'Asia/Seoul', MAX_ROWS: 99,
-  HANDLER: 'ewHourly', SENT_KEY: 'ETF_WATCH_LAST_SENT_HOUR_V1'
+  HANDLER: 'ewTick5m', STATE_KEY: 'ETF_WATCH_SIGNAL_STATE_V2', CONFIRM_CYCLES: 2
 });
 function ewRecipient_() {
   const props = PropertiesService.getScriptProperties();
@@ -19,18 +19,19 @@ function ewInstall() {
   const sh = SpreadsheetApp.openById(EW.SPREADSHEET_ID).getSheetByName(EW.SHEET);
   if (!sh) throw new Error('ETF_WATCHLIST 탭이 없습니다.');
   // First create, then remove old ETF triggers, leaving all other handlers untouched.
-  const existing = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === EW.HANDLER);
-  ScriptApp.newTrigger(EW.HANDLER).timeBased().everyHours(1).create();
+  const existing = ScriptApp.getProjectTriggers().filter(t => [EW.HANDLER, 'ewHourly'].indexOf(t.getHandlerFunction()) >= 0);
+  ScriptApp.newTrigger(EW.HANDLER).timeBased().everyMinutes(5).create();
   existing.forEach(t => ScriptApp.deleteTrigger(t));
-  console.log('ETF 시간당 감시 설치 완료. 평일 09:20~16:20, 당일 시세가 있는 경우만 1시간 1통.');
+  console.log('ETF 5분 감시 설치 완료. 한국시간 평일 09:00~15:30 · 2회 연속 신호 확인 · 중립 제외 · 종목/신호별 하루 1회.');
 }
 function ewUninstall() {
-  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === EW.HANDLER).forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.getProjectTriggers().filter(t => [EW.HANDLER, 'ewHourly'].indexOf(t.getHandlerFunction()) >= 0).forEach(t => ScriptApp.deleteTrigger(t));
 }
 function ewNum_(x) { return typeof x === 'number' && isFinite(x) ? x : null; }
 function ewFresh_(tradeTime, now) {
   return tradeTime instanceof Date && !isNaN(tradeTime.getTime()) &&
-    Utilities.formatDate(tradeTime, EW.TZ, 'yyyy-MM-dd') === Utilities.formatDate(now, EW.TZ, 'yyyy-MM-dd');
+    Utilities.formatDate(tradeTime, EW.TZ, 'yyyy-MM-dd') === Utilities.formatDate(now, EW.TZ, 'yyyy-MM-dd') &&
+    now.getTime() - tradeTime.getTime() >= -60000 && now.getTime() - tradeTime.getTime() <= 30*60000;
 }
 function ewRows_(now) {
   const sh = SpreadsheetApp.openById(EW.SPREADSHEET_ID).getSheetByName(EW.SHEET);
@@ -48,11 +49,11 @@ function ewEscape_(x) { return String(x).replace(/&/g,'&amp;').replace(/</g,'&lt
 function ewMessage_(rows,now) {
   const sorted=rows.filter(r => r.valid).slice().sort((a,b) => (b.day == null ? -Infinity : b.day)-(a.day == null ? -Infinity : a.day));
   const pending=rows.length-sorted.length;
-  const title='ETF 상시 감시 '+Utilities.formatDate(now,EW.TZ,'MM-dd HH:mm');
+  const title='ETF 매수·매도 신호 '+Utilities.formatDate(now,EW.TZ,'MM-dd HH:mm');
   const plain=[title,'영역 | ETF | 1일 | 5일 | 20일 | 기술상태'];
   let html='<p>'+ewEscape_(title)+'</p><table cellpadding="5" style="border-collapse:collapse"><tr><th>영역 / ETF</th><th>1일</th><th>5일</th><th>20일</th><th>기술상태</th></tr>';
   sorted.forEach(r => {
-    plain.push(r.sector+' | '+r.name+' | '+ewPct_(r.day)+' | '+ewPct_(r.five)+' | '+ewPct_(r.twenty)+' | '+r.signal);
+    plain.push(r.sector+' | '+r.code+' '+r.name+' | '+ewPct_(r.day)+' | '+ewPct_(r.five)+' | '+ewPct_(r.twenty)+' | '+r.signal);
     const color=/^[▲△]/.test(r.signal)?'#c00000':/^[▼▽]/.test(r.signal)?'#0044bb':'#444';
     html+='<tr><td>'+ewEscape_(r.sector)+' / '+ewEscape_(r.name)+'</td><td>'+ewPct_(r.day)+'</td><td>'+ewPct_(r.five)+'</td><td>'+ewPct_(r.twenty)+'</td><td style="color:'+color+'">'+ewEscape_(r.signal)+'</td></tr>';
   });
@@ -62,24 +63,57 @@ function ewMessage_(rows,now) {
   plain.push(url);html+='</table><p>'+note+'</p><p>시세 확인 대기 '+pending+'종목</p><a href="'+url+'">ETF 감시판 열기</a>';
   return {subject:title,body:plain.join('\n'),htmlBody:html,count:sorted.length};
 }
-function ewPreview() {
-  const now=new Date(); const msg=ewMessage_(ewRows_(now),now);
-  console.log(msg.body); return msg.body;
-}
-function ewHourly() {
-  const now=new Date();
+function ewInSession_(now) {
   const dow=Utilities.formatDate(now,EW.TZ,'EEE');
   const hhmm=Number(Utilities.formatDate(now,EW.TZ,'HHmm'));
-  if (dow==='Sat'||dow==='Sun'||hhmm<920||hhmm>1620) return;
+  return dow!=='Sat' && dow!=='Sun' && hhmm>=900 && hhmm<=1530;
+}
+function ewStage_(signal) {
+  const match=String(signal).match(/^[▲△▼▽]/);
+  return match ? match[0] : '';
+}
+// Pure state transition: two separate polling slots, one email per code/stage/day.
+function ewPlan_(rows, previous, now) {
+  const day=Utilities.formatDate(now,EW.TZ,'yyyy-MM-dd');
+  const slot=Math.floor(now.getTime()/300000);
+  const state={day:day, items:{}}; const alerts=[];
+  const prior=previous && previous.day===day ? previous.items || {} : {};
+  rows.forEach(r => {
+    const old=prior[r.code] || {stage:'',count:0,sent:{}};
+    if (old.slot===slot) { state.items[r.code]=old; return; }
+    const stage=r.valid ? ewStage_(r.signal) : '';
+    const count=stage && stage===old.stage ? Math.min(EW.CONFIRM_CYCLES,(old.count||0)+1) : stage ? 1 : 0;
+    const next={stage:stage,count:count,slot:slot,sent:Object.assign({},old.sent||{})};
+    state.items[r.code]=next;
+    if (r.valid && stage && count>=EW.CONFIRM_CYCLES && !next.sent[stage]) {
+      alerts.push(r); next.sent[stage]=true;
+    }
+  });
+  return {state:state,alerts:alerts};
+}
+function ewPreview() {
+  const now=new Date(); const rows=ewRows_(now);
+  const props=PropertiesService.getScriptProperties();
+  const previous=JSON.parse(props.getProperty(EW.STATE_KEY)||'{}');
+  const plan=ewPlan_(rows,previous,now);
+  const result={session:ewInSession_(now),enabled:rows.length,valid:rows.filter(r=>r.valid).length,alertCandidates:plan.alerts.length,intervalMinutes:5,confirmationCycles:EW.CONFIRM_CYCLES};
+  console.log(JSON.stringify(result)); return result;
+}
+function ewTick5m() {
+  const now=new Date();
+  if (!ewInSession_(now)) return;
   const lock=LockService.getScriptLock(); if (!lock.tryLock(1000)) return;
   try {
     const props=PropertiesService.getScriptProperties();
-    const hour=Utilities.formatDate(now,EW.TZ,'yyyy-MM-dd-HH');
-    if (props.getProperty(EW.SENT_KEY)===hour) return;
-    const rows=ewRows_(now); const msg=ewMessage_(rows,now);
-    // Holiday/stale data cannot generate an apparent current-day alert.
-    if (!msg.count) return;
-    MailApp.sendEmail({to:ewRecipient_(),subject:msg.subject,body:msg.body,htmlBody:msg.htmlBody});
-    props.setProperty(EW.SENT_KEY,hour);
+    const previous=JSON.parse(props.getProperty(EW.STATE_KEY)||'{}');
+    const plan=ewPlan_(ewRows_(now),previous,now);
+    if (plan.alerts.length) {
+      const msg=ewMessage_(plan.alerts,now);
+      msg.body+='\n5분 간격 2회 연속 확인 · 동일 종목/신호 하루 1회 · 중립은 메일 제외';
+      msg.htmlBody+='<p>5분 간격 2회 연속 확인 · 동일 종목/신호 하루 1회 · 중립은 메일 제외</p>';
+      MailApp.sendEmail({to:ewRecipient_(),subject:msg.subject,body:msg.body,htmlBody:msg.htmlBody});
+    }
+    // Never mark alerts as sent before successful delivery. Failed sends retry.
+    props.setProperty(EW.STATE_KEY,JSON.stringify(plan.state));
   } finally { lock.releaseLock(); }
 }
