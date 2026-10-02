@@ -1,0 +1,14 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const src=fs.readFileSync('etf_work/apps_script/etf_watch_addon.gs','utf8');
+let sent=[],properties={},values=[],deleted=[];
+const now=new Date();
+const fmt=(d,tz,pat)=>pat==='EEE'?'Fri':pat==='HHmm'?'1000':pat==='yyyy-MM-dd'?'2026-10-02':pat==='yyyy-MM-dd-HH'?'2026-10-02-10':'10-02 10:00';
+const ctx={console,Date,Utilities:{formatDate:fmt},PropertiesService:{getScriptProperties:()=>({getProperty:k=>properties[k],setProperty:(k,v)=>properties[k]=v})},Session:{getEffectiveUser:()=>({getEmail:()=> 'self@example.com'})},SpreadsheetApp:{openById:()=>({getSheetByName:()=>({getLastRow:()=>values.length+1,getRange:()=>({getValues:()=>values})})})},MailApp:{sendEmail:m=>sent.push(m)},LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock:()=>{}})},ScriptApp:{getProjectTriggers:()=>[{getHandlerFunction:()=> 'hmTick5m'},{getHandlerFunction:()=> 'ewHourly'}],newTrigger:()=>({timeBased:()=>({everyHours:()=>({create:()=>{}})})}),deleteTrigger:t=>deleted.push(t.getHandlerFunction())}};
+vm.createContext(ctx);vm.runInContext(src,ctx);
+const row=[true,'국내','코스피','069500','KODEX 200','KRX:069500',110,0.01,0.05,0.2,'▲ 상승확인',now,'VALID',''];values=[row];
+ctx.ewPreview();assert.equal(sent.length,0);
+ctx.ewHourly();assert.equal(sent.length,1);ctx.ewHourly();assert.equal(sent.length,1);
+properties={};values=[[...row.slice(0,12),'STALE','']];ctx.ewHourly();assert.equal(sent.length,1);
+values=[row];properties={};ctx.MailApp.sendEmail=()=>{throw Error('quota')};assert.throws(()=>ctx.ewHourly());assert(!properties.ETF_WATCH_LAST_SENT_HOUR_V1);
+ctx.ewInstall();assert.deepEqual(deleted,['ewHourly']);
+assert(!src.includes('clearContent'));assert(!src.includes('/confirm'));console.log('PASS: read-only preview, hourly dedup, stale skip, send retry, existing triggers preserved.');
