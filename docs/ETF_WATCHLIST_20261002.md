@@ -11,7 +11,7 @@
 - 기존 보유종목 수량, 포트폴리오, 후보 TTL 및 트리거는 변경하지 않음.
 - 각 ETF는 종목코드로 계산 데이터와 연결. 정렬해도 다른 ETF의 데이터와 혼합되지 않음.
 
-## 자동 알림 연결 (미설치)
+## 자동 알림 연결 (설치 완료)
 
 보유종목 시트의 확장 프로그램 → Apps Script에서 새 스크립트 파일을 추가하고
 `apps_script/etf_watch_addon.gs` 전체를 붙여넣은 다음 `ewInstall`을 한 번 실행.
@@ -27,7 +27,9 @@
 
 2026-10-02 시트 실측: 28/28 현재가·등락률·기술상태 VALID.
 Node 테스트: 미리보기 무발송, 중복 억제, stale 제외, 실패 재시도, 기존 트리거 보존 통과.
-자동 알림 설치/실제 메일 전달/장중 자연 실행은 아직 확인하지 않음.
+2026-10-02 21:48 KST: 기존 보유종목 bound Apps Script에 ETFWatch.gs 추가, ewInstall 실행 완료. 트리거 화면에서 ewHourly 1시간마다 실행 및 기존 hmTick5m 유지 확인. ewPreview 실행으로 28종목, 시세 확인 대기 0종목 검증.
+실제 메일 전달 및 첫 장중 자연 실행은 아직 확인하지 않음.
+Bound project: 1zXn_L305g2D687tdhPzFgghvZ8wNSEbPiZnnx3gAbtePgifIHY_cFgVG
 
 ## 유니버스
 
