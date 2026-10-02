@@ -26,6 +26,7 @@
 - 수동 주문/매수 판단은 사용자. Cloud Run/키움/DART 추가 호출 없음.
 
 2026-10-02 수정: ETFWatch.gs를 5분 신호 감시로 변경. Node 검증: 장중 경계, 2회 확인, 중립 제외, 데이터 신선도, 일일 중복 억제, 트리거 이전, 발송 실패 재시도 통과.
+운영 검증: ewInstall 완료. 트리거 UI에서 ewTick5m ‘5분마다’ 및 기존 hmTick5m 유지 확인. ewPreview: enabled=28, session=false, valid=0, alertCandidates=0 (장외, 오래된 시세 제외 정상). ewTick5m 수동 장외 실행 완료, 메일 없음.
 실제 메일 전달 및 첫 장중 자연 실행은 아직 확인하지 않음.
 Bound project: 1zXn_L305g2D687tdhPzFgghvZ8wNSEbPiZnnx3gAbtePgifIHY_cFgVG
 
