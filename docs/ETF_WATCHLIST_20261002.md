@@ -17,17 +17,15 @@
 `apps_script/etf_watch_addon.gs` 전체를 붙여넣은 다음 `ewInstall`을 한 번 실행.
 기존 Code.gs를 교체하지 않는다.
 
-- ewInstall: ETF 시간당 트리거만 설치/교체. 기존 보유종목 트리거 보존.
-- ewPreview: 텍스트 미리보기만 실행, 메일 없음.
-- ewHourly: 평일 KST 09:20~16:20에 당일 유효 시세가 있는 경우 시간당 최대 한 통.
-- 휴일/오래된 시세는 메일 제외. 발송 실패 시 다음 실행에서 재시도.
+- ewInstall: ETF 5분 트리거 설치/교체, 이전 ewHourly 제거. 기존 hmTick5m 보존.
+- ewPreview: 감시 개수/유효 시세/신호 후보만 조회. 메일 및 상태 변경 없음.
+- ewTick5m: 평일 KST 09:00~15:30, 5분 간격 확인. △▲▽▼를 2회 연속 확인 후 발송. 중립은 시트 표시만. 동일 종목/신호 하루 1회, 같은 실행의 여러 종목은 한 통으로 묶음.
+- 당일 시세이며 시세시각 기준 30분 이내인 VALID 데이터만 알림. 휴일/오래된 시세 제외. 발송 성공 후에만 상태 저장, 실패 시 재시도. 5분 확인은 GOOGLEFINANCE 실시간 수신을 의미하지 않음.
 - 수신자: ETF_ALERT_EMAIL → 기존 HELD_ALERT_EMAIL → 실행 계정 이메일.
 - ewUninstall: ETF 전용 트리거만 제거.
 - 수동 주문/매수 판단은 사용자. Cloud Run/키움/DART 추가 호출 없음.
 
-2026-10-02 시트 실측: 28/28 현재가·등락률·기술상태 VALID.
-Node 테스트: 미리보기 무발송, 중복 억제, stale 제외, 실패 재시도, 기존 트리거 보존 통과.
-2026-10-02 21:48 KST: 기존 보유종목 bound Apps Script에 ETFWatch.gs 추가, ewInstall 실행 완료. 트리거 화면에서 ewHourly 1시간마다 실행 및 기존 hmTick5m 유지 확인. ewPreview 실행으로 28종목, 시세 확인 대기 0종목 검증.
+2026-10-02 수정: ETFWatch.gs를 5분 신호 감시로 변경. Node 검증: 장중 경계, 2회 확인, 중립 제외, 데이터 신선도, 일일 중복 억제, 트리거 이전, 발송 실패 재시도 통과.
 실제 메일 전달 및 첫 장중 자연 실행은 아직 확인하지 않음.
 Bound project: 1zXn_L305g2D687tdhPzFgghvZ8wNSEbPiZnnx3gAbtePgifIHY_cFgVG
 
