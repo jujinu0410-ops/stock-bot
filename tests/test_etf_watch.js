@@ -1,5 +1,5 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
-const src=fs.readFileSync('etf_work/apps_script/etf_watch_addon.gs','utf8');
+const src=fs.readFileSync(require('path').join(__dirname,'../apps_script/etf_watch_addon.gs'),'utf8');
 let sent=[],properties={},values=[],deleted=[];
 const now=new Date();
 const fmt=(d,tz,pat)=>pat==='EEE'?'Fri':pat==='HHmm'?'1000':pat==='yyyy-MM-dd'?'2026-10-02':pat==='yyyy-MM-dd-HH'?'2026-10-02-10':'10-02 10:00';
