@@ -21,6 +21,7 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         res = self.client.get("/health")
         self.assertEqual(res.status_code, 200)
         self.assertTrue(res.get_json()["ok"])
+        self.assertIn("/jev-gate", res.get_json()["endpoints"])
 
     def test_confirm_requires_shared_token(self):
         res = self.client.post("/confirm", json={"ticker": "007660", "tech_status": "BUY_CANDIDATE"})
@@ -48,6 +49,18 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertEqual(svc._clean_ticker("007660"), "007660")
         with self.assertRaises(svc.SignalServiceError):
             svc._clean_ticker("ABC")
+
+    @patch.object(svc, "_jev_gate")
+    def test_jev_gate_uses_existing_shared_token(self, mocked):
+        mocked.return_value = {"ok": True, "status": "NOT_CONFIGURED", "decision": "SEND"}
+        res = self.client.post(
+            "/jev-gate",
+            headers={"X-StockBot-Token": "test-token"},
+            json={"source": "ETF", "ticker": "069500", "name": "KODEX 200"},
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json()["decision"], "SEND")
+        mocked.assert_called_once()
 
     def test_user_facing_signal_language_matches_held_monitor(self):
         self.assertEqual(svc.SIGNAL_LABELS[svc.FINAL_WATCH_ONLY], "· 관찰")

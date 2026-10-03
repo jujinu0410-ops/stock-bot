@@ -1,5 +1,5 @@
 /**
- * Held Position 5-Minute Monitor v3.1 SIGNAL-ONLY MAIL
+ * Held Position 5-Minute Monitor v3.2 JEV ALERT GATE
  * 보유종목_INTRADAY_GF_MONITOR용
  * v3: 저소음 경보 게이트 + 방향 화살표(▲△▼▽) + 동일 tick 다종목 1통 묶음 + Cloud Run 원인분석
  *
@@ -21,12 +21,14 @@ const HM = Object.freeze({
   REGIME: 'REGIME',
   STATE: 'ALERT_STATE',
   LOG: 'ALERT_LOG',
+  JEV_LOG: 'JEV_GATE_LOG',
 
   CONFIG_COLS: 20,
   LIVE_COLS: 13,
   REGIME_COLS: 20,
   STATE_COLS: 22,
   LOG_COLS: 11,
+  JEV_LOG_COLS: 18,
 
   MARKET_START: 900,
   MARKET_END: 1530,
@@ -197,11 +199,22 @@ function hmEvaluate_(enforceMarketWindow) {
       if (gated.mailEvents.length > 0) {
         // 최종 메일 게이트를 통과한 사건에만 Kiwoom/DART/뉴스를 조회한다.
         const marketContext = hmFetchMarketContext_(cur, gated.mailEvents, now);
-        pendingAlerts.push({
+        const jevGate = hmJevEvaluateAlert_(cur, gated.mailEvents, marketContext, now, 'HELD');
+        const alert = {
           cur: cur,
           events: gated.mailEvents,
-          marketContext: marketContext
-        });
+          marketContext: marketContext,
+          jevGate: jevGate
+        };
+        if (hmJevAllowsAlert_(gated.mailEvents, jevGate)) {
+          pendingAlerts.push(alert);
+        } else {
+          // ACTIVE mode held this non-critical candidate.  Mark the state as
+          // seen so the same 5-minute condition does not repeatedly call Jev;
+          // ALERT_LOG remains mail-only and JEV_GATE_LOG preserves the audit.
+          cur.gateState = hmMarkGateSent_(cur.gateState, cur, gated.mailEvents, now);
+          hmAppendJevGateLog_(ss, [alert], now);
+        }
       }
 
       nextStates.push(cur);
@@ -237,6 +250,7 @@ function hmEvaluate_(enforceMarketWindow) {
             (contextLabel ? ' | 촉매: ' + contextLabel : '')
         ]);
       });
+      hmAppendJevGateLog_(ss, pendingAlerts, now);
     }
 
     if (logRows.length) hmAppendLog_(ss, logRows);
@@ -907,6 +921,132 @@ function hmFetchMarketContext_(cur, events, now) {
   }
 }
 
+/**
+ * Jev is the final *delivery* gate, not a signal generator and never an order
+ * engine.  It is deliberately fail-open: the existing technical rule alert is
+ * delivered when the gateway is off, unconfigured, slow, or returns an error.
+ *
+ * Cloud Run owns JEV_API_KEY.  Apps Script continues to use only its existing
+ * SIGNAL_API_URL / SIGNAL_API_TOKEN properties, so the Jev key never reaches a
+ * spreadsheet, email body, or Apps Script source.
+ */
+function hmJevEvaluateAlert_(cur, events, marketContext, now, source) {
+  const props = PropertiesService.getScriptProperties();
+  const apiUrl = String(props.getProperty(HM.PROP_API_URL) || '').trim().replace(/\/$/, '');
+  const apiToken = String(props.getProperty(HM.PROP_API_TOKEN) || '').trim();
+  const base = {
+    ok: true,
+    status: 'NOT_CONFIGURED',
+    mode: 'SHADOW',
+    decision: 'SEND',
+    reason: 'SIGNAL_API_NOT_CONFIGURED',
+    source: source || 'HELD',
+    ticker: cur.ticker,
+    event_keys: (events || []).map(function(e) { return e.key; })
+  };
+  if (!apiUrl || !apiToken) return base;
+
+  const context = marketContext || {};
+  const flow = context.flow || {};
+  const catalyst = context.catalyst || {};
+  const payload = {
+    source: source || 'HELD',
+    ticker: cur.ticker,
+    name: cur.name,
+    as_of_date: hmDateKey_(now),
+    event_keys: base.event_keys,
+    event_level: hmStrongestLevel_(events || []),
+    current_price: cur.price,
+    change_pct: cur.changePct,
+    atr_band: cur.atrBand,
+    volume_pace: cur.volumePace,
+    stop_broken: cur.stopBroken,
+    vwap9_dir: cur.vwap9Dir,
+    vwap26_dir: cur.vwap26Dir,
+    vwap_rel: cur.vwapRel,
+    obv_dir: cur.obvDir,
+    obv9_dir: cur.obv9Dir,
+    obv_rel: cur.obvRel,
+    regime: cur.regime,
+    context: {
+      catalyst: {label: catalyst.label || '', confidence: catalyst.confidence || '', reason: catalyst.reason || ''},
+      flow: {status: flow.status || '', foreign_5d: flow.foreign_5d, institution_5d: flow.institution_5d, combined_5d: flow.combined_5d, combined_20d: flow.combined_20d},
+      disclosures: (context.disclosures || []).slice(0, 3).map(function(d) { return {report_nm: d.report_nm || '', impact: d.impact || d.summary || ''}; }),
+      news: (context.news || []).slice(0, 3).map(function(n) { return {title: n.title || '', impact: n.impact || n.summary || ''}; })
+    }
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(apiUrl + '/jev-gate', {
+      method: 'post', contentType: 'application/json',
+      headers: {'X-StockBot-Token': apiToken}, payload: JSON.stringify(payload),
+      muteHttpExceptions: true, followRedirects: true
+    });
+    const http = res.getResponseCode();
+    let body = {};
+    try { body = JSON.parse(res.getContentText() || '{}'); } catch (e) { body = {}; }
+    if (http >= 200 && http < 300 && body && body.ok === true && body.decision) return body;
+    return Object.assign({}, base, {status: 'ERROR', reason: 'JEV_GATE_HTTP_' + http + (body.error ? ':' + body.error : '')});
+  } catch (err) {
+    return Object.assign({}, base, {status: 'ERROR', reason: 'JEV_GATE_TRANSPORT:' + String(err && err.message ? err.message : err)});
+  }
+}
+
+function hmJevAllowsAlert_(events, gate) {
+  const keys = (events || []).map(function(e) { return e.key; });
+  // Stop-loss warnings cannot be suppressed even in ACTIVE mode.
+  if (keys.indexOf('STOP_BREACH') >= 0 || keys.indexOf('STOP_BREACH_INITIAL') >= 0) return true;
+  // Fail open. A temporary provider/API problem must never silence a legacy alert.
+  if (!gate || gate.status !== 'OK') return true;
+  return String(gate.decision || 'SEND').toUpperCase() !== 'HOLD';
+}
+
+function hmJevAnswer_(gate, name, field, fallback) {
+  const answer = gate && gate.answers && gate.answers[name] ? gate.answers[name] : {};
+  const value = answer[field];
+  return value == null || value === '' ? (fallback == null ? '' : fallback) : value;
+}
+
+function hmJevDisplayLines_(gate) {
+  if (!gate) return ['Jev: 기록 없음'];
+  if (gate.status !== 'OK') return ['Jev: ' + String(gate.status || 'ERROR') + ' · 기존 규칙으로 발송'];
+  const pct = Math.round(Number(hmJevAnswer_(gate, 'send_alert_now', 'noul', 0)) * 100);
+  const stage = hmJevAnswer_(gate, 'signal_stage', 'choice', 'UNKNOWN');
+  const direction = hmJevAnswer_(gate, 'signal_direction', 'choice', 'UNKNOWN');
+  const urgency = Number(hmJevAnswer_(gate, 'alert_urgency', 'score', 0)).toFixed(1);
+  return ['Jev ' + String(gate.mode || 'SHADOW') + ': ' + direction + ' / ' + stage + ' / 긴급도 ' + urgency + ' / 발송적합 ' + pct + '% / ' + String(gate.decision || 'SEND')];
+}
+
+function hmAppendJevGateLog_(ss, alerts, now) {
+  const list = Array.isArray(alerts) ? alerts : [];
+  if (!list.length) return;
+  let sh = ss.getSheetByName(HM.JEV_LOG);
+  if (!sh) {
+    sh = ss.insertSheet(HM.JEV_LOG);
+    sh.getRange(1, 1, 1, HM.JEV_LOG_COLS).setValues([[
+      'Timestamp', 'Source', 'Ticker', 'Name', 'EventKeys', 'RuleLevel', 'Price', 'ChangePct', 'Regime',
+      'GateStatus', 'Mode', 'Decision', 'Reason', 'Direction', 'Stage', 'Urgency', 'SendProbability', 'InputTokens'
+    ]]);
+    sh.setFrozenRows(1);
+  }
+  const rows = list.map(function(a) {
+    const g = a.jevGate || {};
+    const p = hmJevAnswer_(g, 'send_alert_now', 'noul', '');
+    return [
+      now, String(g.source || 'HELD'), a.cur.ticker, a.cur.name,
+      (a.events || []).map(function(e) { return e.key; }).join('|'), hmStrongestLevel_(a.events || []),
+      a.cur.price == null ? '' : a.cur.price, a.cur.changePct == null ? '' : a.cur.changePct, a.cur.regime,
+      g.status || '', g.mode || '', g.decision || '', g.reason || '',
+      hmJevAnswer_(g, 'signal_direction', 'choice', ''), hmJevAnswer_(g, 'signal_stage', 'choice', ''),
+      hmJevAnswer_(g, 'alert_urgency', 'score', ''), p === '' ? '' : p,
+      g.usage && g.usage.input_tokens != null ? g.usage.input_tokens : ''
+    ];
+  });
+  const start = Math.max(sh.getLastRow() + 1, 2);
+  sh.getRange(start, 1, rows.length, HM.JEV_LOG_COLS).setValues(rows);
+  if (sh.getLastRow() > HM.LOG_MAX_ROWS + 1) sh.deleteRows(2, sh.getLastRow() - HM.LOG_MAX_ROWS - 1);
+}
+
 function hmContextLines_(marketContext) {
   const c = marketContext || {};
   const catalyst = c.catalyst || {};
@@ -1010,13 +1150,14 @@ function hmSendBatchAlertMail_(recipient, alerts, now) {
       '이번 변화: ' + events.map(function(e) { return e.title; }).join(' · ')
     ];
     hmContextLines_(a.marketContext).forEach(function(line) { block.push(line); });
+    hmJevDisplayLines_(a.jevGate).forEach(function(line) { block.push(line); });
     textParts.push(block.join('\n'));
 
     const eventHtml = events.map(function(e) {
       return '<li><b>' + hmEscapeHtml_(e.title) + '</b> — ' + hmEscapeHtml_(e.message) + '</li>';
     }).join('');
 
-    const ctxLines = hmContextLines_(a.marketContext);
+    const ctxLines = hmContextLines_(a.marketContext).concat(hmJevDisplayLines_(a.jevGate));
     const ctxHtml = ctxLines.map(function(line) { return hmEscapeHtml_(line); }).join('<br>');
 
     htmlParts.push(

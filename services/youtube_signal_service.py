@@ -33,6 +33,7 @@ from config.settings import (
     KIWOOM_APP_SECRET,
     RECIPIENT_EMAIL,
 )
+from src.analysis.jev_alert_gate import evaluate_jev_alert_gate
 from src.analysis.market_catalyst_context import assess_catalyst, plain_text
 from src.analysis.youtube_candidate_review import describe_flow
 from src.analysis.youtube_candidate_signal import (
@@ -472,6 +473,42 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     context["kiwoom_429_retry_count"] = session.retry_count
 
+    # YouTube candidates are the first live use of Jev.  The evaluator is
+    # fail-open: missing credentials or an API outage returns SEND, preserving
+    # the established technical + Kiwoom/DART/news mail path.
+    jev_gate = _jev_gate(
+        {
+            **payload,
+            "source": "YOUTUBE",
+            "ticker": ticker,
+            "name": name,
+            "event_keys": ["YOUTUBE_BUY_CANDIDATE", final.final_signal],
+            "event_level": "STRONG" if final.final_signal == FINAL_BUY_ALERT_STRONG else "WATCH",
+            "current_price": payload.get("current_price"),
+            "buy_trigger_05": payload.get("buy_trigger_05"),
+            "confirm_trigger_06": payload.get("confirm_trigger_06"),
+            "context": context,
+        }
+    )
+    if jev_gate.get("decision") == "HOLD":
+        app.logger.info(
+            "Jev held YouTube candidate ticker=%s final=%s reason=%s",
+            ticker, final.final_signal, jev_gate.get("reason"),
+        )
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "name": name,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": final.final_signal,
+            "market_context": context,
+            "jev_gate": jev_gate,
+            "mail_sent": False,
+            "suppressed_by_jev": True,
+            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        }
+
     notifier = GmailNotifier(sender_email=GMAIL_USER, app_password=GMAIL_APP_PASSWORD)
     if RECIPIENT_EMAIL:
         notifier.recipient_email = RECIPIENT_EMAIL
@@ -501,6 +538,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         "combined_20d": flow.combined_20d,
         "flow_strength_5d": flow.flow_strength_5d,
         "market_context": context,
+        "jev_gate": jev_gate,
         "kiwoom_429_retry_count": session.retry_count,
         "mail_sent": True,
         "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -526,13 +564,22 @@ def _held_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _jev_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Shared, fail-open delivery gate for YouTube, held, and ETF alerts."""
+    ticker = _clean_ticker(payload.get("ticker"))
+    enriched = dict(payload)
+    enriched["ticker"] = ticker
+    enriched["name"] = str(payload.get("name") or ticker).strip()
+    return evaluate_jev_alert_gate(enriched)
+
+
 @app.get("/health")
 def health() -> Any:
     return jsonify(
         {
             "ok": True,
             "service": "youtube-signal-service",
-            "endpoints": ["/confirm", "/held-context"],
+            "endpoints": ["/confirm", "/held-context", "/jev-gate"],
         }
     )
 
@@ -566,6 +613,22 @@ def held_context() -> Any:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         app.logger.exception("held context failed")
+        return jsonify({"ok": False, "error": f"UNEXPECTED:{type(exc).__name__}"}), 500
+
+
+@app.post("/jev-gate")
+def jev_gate() -> Any:
+    if not _secret_ok():
+        return jsonify({"ok": False, "error": "UNAUTHORIZED"}), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "INVALID_JSON"}), 400
+    try:
+        return jsonify(_jev_gate(payload)), 200
+    except SignalServiceError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("jev alert gate failed")
         return jsonify({"ok": False, "error": f"UNEXPECTED:{type(exc).__name__}"}), 500
 
 

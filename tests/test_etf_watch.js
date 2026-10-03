@@ -3,14 +3,14 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const sourcePath = fs.existsSync(path.join(__dirname,'apps_script/etf_watch_addon.gs')) ? path.join(__dirname,'apps_script/etf_watch_addon.gs') : path.join(__dirname,'../apps_script/etf_watch_addon.gs');
-let saved = '{}', mails = [], throwMail = false, released = 0, triggers = [];
+let saved = '{}', mails = [], throwMail = false, released = 0, triggers = [], gateDecision = 'SEND', gateCalls = 0;
 const utilities={formatDate(d,tz,fmt){const k=new Date(d.getTime()+9*3600000); const iso=k.toISOString(); return fmt==='EEE'?['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][k.getUTCDay()]:fmt==='HHmm'?iso.slice(11,16).replace(':',''):fmt==='yyyy-MM-dd'?iso.slice(0,10):iso.slice(5,16).replace('T',' ');}};
-const sandbox={Date,console,Utilities:utilities,PropertiesService:{getScriptProperties:()=>({getProperty:k=>k==='ETF_WATCH_SIGNAL_STATE_V2'?saved:k==='ETF_ALERT_EMAIL'?'test@example.com':null,setProperty:(k,v)=>{saved=v;}})},LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock:()=>released++})},MailApp:{sendEmail:m=>{if(throwMail)throw Error('quota');mails.push(m);}},ScriptApp:{getProjectTriggers:()=>triggers,newTrigger:h=>({timeBased(){return this;},everyMinutes(n){assert.equal(n,5);return this;},create(){triggers.push({getHandlerFunction:()=>h});}}),deleteTrigger:t=>{triggers=triggers.filter(x=>x!==t);}},SpreadsheetApp:{openById:()=>({getSheetByName:()=>({})})}};
+const sandbox={Date,console,Utilities:utilities,PropertiesService:{getScriptProperties:()=>({getProperty:k=>k==='ETF_WATCH_SIGNAL_STATE_V2'?saved:k==='ETF_ALERT_EMAIL'?'test@example.com':null,setProperty:(k,v)=>{saved=v;}})},LockService:{getScriptLock:()=>({tryLock:()=>true,releaseLock:()=>released++})},MailApp:{sendEmail:m=>{if(throwMail)throw Error('quota');mails.push(m);}},ScriptApp:{getProjectTriggers:()=>triggers,newTrigger:h=>({timeBased(){return this;},everyMinutes(n){assert.equal(n,5);return this;},create(){triggers.push({getHandlerFunction:()=>h});}}),deleteTrigger:t=>{triggers=triggers.filter(x=>x!==t);}},SpreadsheetApp:{openById:()=>({getSheetByName:()=>({})})},hmJevEvaluateAlert_:()=>{gateCalls++;return {status:'OK',mode:'ACTIVE',decision:gateDecision,reason:'TEST'};},hmJevAllowsAlert_:(events,gate)=>gate.decision==='SEND',hmJevDisplayLines_:()=>['Jev test'],hmAppendJevGateLog_:()=>{}};
 vm.createContext(sandbox);vm.runInContext(sourcePath?fs.readFileSync(sourcePath,'utf8'):'',sandbox);
 const at=(time)=>new Date('2026-10-06T'+time+':00+09:00');
 const row=(signal,valid=true,code='069500')=>({code,name:'ETF',sector:'시장',price:100,day:.01,five:.02,twenty:.03,signal,valid});
 let state={};
-const step=(rows,time)=>{const p=sandbox.ewPlan_(rows,state,at(time));state=p.state;return p.alerts;};
+const step=(rows,time)=>{const p=sandbox.ewPlan_(rows,state,at(time));p.alerts.forEach(r=>{p.state.items[r.code].sent[sandbox.ewStage_(r.signal)]=true;});state=p.state;return p.alerts;};
 assert.equal(sandbox.ewInSession_(at('08:59')),false);
 assert.equal(sandbox.ewInSession_(at('09:00')),true);
 assert.equal(sandbox.ewInSession_(at('15:30')),true);
@@ -28,6 +28,10 @@ assert.equal(step([row('△ 상승조짐')],'09:40').length,0); // already sent 
 assert.equal(step([row('▼ 하락확인',false)],'09:45').length,0);
 assert.equal(step([row('▼ 하락확인')],'09:50').length,0);
 assert.equal(step([row('▼ 하락확인')],'09:55').length,1);
+const holdPlan=sandbox.ewPlan_([row('△ 상승조짐')],{day:'2026-10-06',items:{'069500':{stage:'△',count:1,sent:{}}}},at('10:00'));
+gateDecision='HOLD';assert.equal(sandbox.ewApplyJevGate_(holdPlan,at('10:00')).length,0);assert.equal(holdPlan.state.items['069500'].held['△'],true);
+const sendPlan=sandbox.ewPlan_([row('△ 상승조짐')],{day:'2026-10-06',items:{'069500':{stage:'△',count:1,sent:{}}}},at('10:05'));
+gateDecision='SEND';assert.equal(sandbox.ewApplyJevGate_(sendPlan,at('10:05')).length,1);assert.equal(sendPlan.state.items['069500'].sent['△'],true);assert(gateCalls>=2);
 assert.equal(sandbox.ewFresh_(at('09:30'),at('10:00')),true);
 assert.equal(sandbox.ewFresh_(at('09:25'),at('10:00')),false);
 assert.equal(sandbox.ewFresh_(new Date('2026-10-05T15:30:00+09:00'),at('10:00')),false);
@@ -36,7 +40,7 @@ const next2=sandbox.ewPlan_([row('▲ 상승확인')],next.state,new Date('2026-
 triggers=['hmTick5m','ewHourly','ewTick5m'].map(h=>({getHandlerFunction:()=>h}));sandbox.ewInstall();assert.deepEqual(triggers.map(t=>t.getHandlerFunction()),['hmTick5m','ewTick5m']);
 // Tick integration: unsuccessful mail must not consume the alert.
 sandbox.ewInSession_=()=>true;sandbox.ewRows_=()=>[row('▽ 하락조짐')];
-sandbox.ewPlan_=()=>({state:{day:'test',items:{}},alerts:[row('▽ 하락조짐')]});
+sandbox.ewPlan_=()=>({state:{day:'test',items:{'069500':{stage:'▽',count:2,sent:{}}}},alerts:[row('▽ 하락조짐')]});
 throwMail=true;const before=saved;assert.throws(()=>sandbox.ewTick5m(),/quota/);assert.equal(saved,before);assert.equal(released,1);
 throwMail=false;sandbox.ewTick5m();assert.equal(mails.length,1);assert.notEqual(saved,before);assert.equal(released,2);
 sandbox.ewInSession_=()=>false;sandbox.ewTick5m();assert.equal(mails.length,1);
