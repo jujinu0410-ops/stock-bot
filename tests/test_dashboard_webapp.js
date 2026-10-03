@@ -1,6 +1,9 @@
-const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('path');
+const sourceDir=fs.existsSync(path.join(__dirname,'WebApp.gs'))?__dirname:path.join(__dirname,'../apps_script');
+const serverSource=fs.readFileSync(path.join(sourceDir,'WebApp.gs'),'utf8');
+const clientSource=fs.readFileSync(path.join(sourceDir,'Index.html'),'utf8').split('<script>')[1].split('</script>')[0];
 const server={Date,Utilities:{formatDate:()=> '10.02 00:00'}};
-vm.createContext(server);vm.runInContext(fs.readFileSync('dashboard_repair/WebApp.gs','utf8'),server);
+vm.createContext(server);vm.runInContext(serverSource,server);
 assert.equal(server.wa_ticker_(10140),'010140');
 assert.equal(server.wa_ticker_('000990'),'000990');
 assert.equal(server.wa_keyed_([{TICKER:10140,STOP_BROKEN:true}],'TICKER')['010140'].STOP_BROKEN,true);
@@ -14,7 +17,7 @@ const suspended=server.wa_buildPosition_({...cfg,STATUS:'SUSPENDED_HOLD',REF_CLO
 assert.equal(suspended.valuationPrice,5310);assert.equal(suspended.dayProfitLoss,null);
 let banner=null;const dash={prepend:x=>{banner=x;},innerHTML:'preserved'};
 const document={addEventListener:()=>{},getElementById:id=>id==='dashboard'?dash:id==='dashboardError'?banner:null,createElement:()=>({setAttribute:()=>{},remove:()=>{banner=null;}})};
-const client={document,setInterval:()=>1,clearInterval:()=>{}};vm.createContext(client);vm.runInContext(fs.readFileSync('dashboard_repair/Index.script.js','utf8'),client);
+const client={document,setInterval:()=>1,clearInterval:()=>{}};vm.createContext(client);vm.runInContext(clientSource,client);
 assert.equal(client.won(75000),'75,000원');assert.equal(client.won(null),'-');
 const html=client.stockCardHtml({...p,statusKey:'normal',statusLabel:'정상'});
 assert(!html.includes('원원'));assert(html.includes('20,380,547원'));assert(!html.includes('-원'));
@@ -25,5 +28,5 @@ client.google={script:{run:chain}};client.showLoading=()=>{};client.renderAll=()
 client.loadDashboard();client.loadDashboard();assert.equal(calls.length,1);
 chain.failure({message:'temporary'});client.loadDashboard();assert.equal(calls.length,2);
 chain.success({positions:[],autoRefreshSeconds:60});assert.equal(banner,null);
-assert(!/\.(setValues|setValue|clearContent|deleteRow|appendRow)\(/.test(fs.readFileSync('dashboard_repair/WebApp.gs','utf8')));
+assert(!/\.(setValues|setValue|clearContent|deleteRow|appendRow)\(/.test(serverSource));
 console.log('PASS: ticker joins, valuation, suspended holdings, currency, nulls, retry recovery, overlapping refresh, read-only server');
