@@ -25,6 +25,7 @@ const YC = Object.freeze({
   JEV_MODEL: 'jev-latest',
   JEV_PRE_HOLD_THRESHOLD: 0.35,
   JEV_PRE_MAX_URGENCY_FOR_HOLD: 1,
+  JEV_PRE_RECHECK_MINUTES: 15,
 });
 
 function monitorYouTubeCandidates() {
@@ -113,28 +114,23 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
 
   const preGate = ycJevPreGate_(payload);
   if (preGate.decision === 'HOLD') {
-    // PRE-GATE는 명백히 약한 BUY_CANDIDATE만 Cloud Run 전에 종료한다.
-    // 기존 TriggerKey를 기록해 같은 날 같은 후보를 반복 호출하지 않는다.
-    sheet.getRange(rowNumber, 21, 1, 5).setValues([[
-      triggerKey,
-      new Date(),
-      'WATCH_ONLY',
-      'JEV_PRE_HOLD',
-      ycJevPreGateSummary_(preGate),
-    ]]);
-    appendDispatchLog_(ss, {
-      ticker: code,
-      name: name,
-      tech: techStatus,
-      http: '',
-      finalSignal: 'WATCH_ONLY',
-      flowStatus: 'JEV_PRE_HOLD',
-      detail: ycJevPreGateSummary_(preGate),
-      triggerKey: triggerKey,
-      elapsedMs: Date.now() - started,
-      error: '',
-      source: 'JEV_PRE_GATE',
-    });
+    // PRE-GATE HOLD는 Cloud Run만 막고 15분 뒤 재심사한다.
+    // LastDispatchKey는 쓰지 않아 장중 신호가 강해질 기회를 보존한다.
+    if (preGate.reason !== 'PRE_HOLD_COOLDOWN') {
+      appendDispatchLog_(ss, {
+        ticker: code,
+        name: name,
+        tech: techStatus,
+        http: '',
+        finalSignal: 'WATCH_ONLY',
+        flowStatus: 'JEV_PRE_HOLD',
+        detail: ycJevPreGateSummary_(preGate),
+        triggerKey: triggerKey,
+        elapsedMs: Date.now() - started,
+        error: '',
+        source: 'JEV_PRE_GATE',
+      });
+    }
     return;
   }
   payload.jev_pre_gate = preGate;
@@ -201,6 +197,18 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
 
 function ycJevPreGate_(payload) {
   const props = PropertiesService.getScriptProperties();
+  const holdKey = 'JEV_PRE_HOLD_YOUTUBE_' + String(payload.ticker || '').replace(/\D/g, '');
+  const priorHold = ycJevReadPreHold_(props, holdKey);
+  if (priorHold && priorHold.trigger_key === String(payload.trigger_key || '')) {
+    const ageMs = Date.now() - Number(priorHold.at || 0);
+    if (ageMs >= 0 && ageMs < YC.JEV_PRE_RECHECK_MINUTES * 60000) {
+      return {
+        status: 'OK', mode: 'PRE_GATE', decision: 'HOLD',
+        reason: 'PRE_HOLD_COOLDOWN', needs_final_review: false, answers: {},
+        summary: priorHold.summary || {}
+      };
+    }
+  }
   const apiKey = String(props.getProperty('JEV_API_KEY') || '').trim();
   const base = {
     status: 'NOT_CONFIGURED',
@@ -310,7 +318,7 @@ function ycJevPreGate_(payload) {
       urgency >= 2 &&
       probability >= 0.55;
 
-    return {
+    const result = {
       status: 'OK',
       mode: 'PRE_GATE',
       decision: hold ? 'HOLD' : 'PROCEED',
@@ -325,11 +333,30 @@ function ycJevPreGate_(payload) {
         probability: probability
       }
     };
+    if (hold) {
+      props.setProperty(holdKey, JSON.stringify({
+        trigger_key: String(payload.trigger_key || ''),
+        at: Date.now(),
+        summary: result.summary
+      }));
+    } else {
+      props.deleteProperty(holdKey);
+    }
+    return result;
   } catch (err) {
     return Object.assign({}, base, {
       status: 'ERROR',
       reason: 'JEV_TRANSPORT:' + String(err && err.message ? err.message : err)
     });
+  }
+}
+
+function ycJevReadPreHold_(props, key) {
+  const raw = String(props.getProperty(key) || '').trim();
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) {
+    props.deleteProperty(key);
+    return null;
   }
 }
 
