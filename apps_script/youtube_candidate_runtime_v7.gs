@@ -1,21 +1,17 @@
 /*
- * Runtime V7: fixed [YT_ALL_STOCKS_BEGIN] ... [YT_ALL_STOCKS_END] parser.
- *
- * Source of truth for candidate ingestion is now ONLY the fixed Gmail block:
- *   [YT_ALL_STOCKS_BEGIN]
- *   005930|삼성전자
- *   000660|SK하이닉스
+ * Runtime V7 compatibility parser: source is ONLY the explicit 3-column
+ * "장전 시황" block at the TOP of each [경제 Intelligence] message.
+ *   장전 시황
+ *   009150|삼성전기|AI MLCC 수요 증가
  *   ...
- *   [YT_ALL_STOCKS_END]
  *
- * Legacy "주요 언급 종목" / "V8 분석 후보군" sections are intentionally ignored.
- * Existing active sheet rows are carried until their existing expiry date so
- * the format migration does not erase still-valid candidates on day one.
+ * IMPORTANT: Ignore [YT_ALL_STOCKS_BEGIN] ... END. That is a broad
+ * 87-name analytical index, NOT the approved YouTube buy-watch intake.
+ * Previous active candidates are preserved until their existing expiry.
  */
 
 const YCV7 = Object.freeze({
-  BEGIN: '[YT_ALL_STOCKS_BEGIN]',
-  END: '[YT_ALL_STOCKS_END]',
+  HEADING: '장전 시황',
 });
 
 function parseYtAllStocksBlockV7_(body) {
@@ -24,31 +20,37 @@ function parseYtAllStocksBlockV7_(body) {
     .replace(/\r/g, '\n')
     .replace(/[\u00a0\u200b\ufeff\u200e\u200f]/g, ' ')
     .replace(/[\u202a-\u202e\u2066-\u2069]/g, '');
+  const lines = text.split('\n');
+  const start = lines.findIndex(function(line) {
+    return /^장전 시황[：:]?$/.test(String(line || '').trim());
+  });
+  if (start < 0) return {found: false, stocks: []};
 
-  const begin = text.indexOf(YCV7.BEGIN);
-  if (begin < 0) return {found: false, stocks: []};
-  const end = text.indexOf(YCV7.END, begin + YCV7.BEGIN.length);
-  if (end < 0) throw new Error('YT_ALL_STOCKS_END_MISSING');
-
-  const raw = text.substring(begin + YCV7.BEGIN.length, end);
   const stocks = [];
   const seen = new Set();
-  const lines = raw.split('\n');
-
-  lines.forEach(function(rawLine, idx) {
-    const line = String(rawLine || '').trim();
-    if (!line) return;
-    const m = line.match(/^(\d{6})\|(.+)$/);
-    if (!m) throw new Error('YT_ALL_STOCKS_INVALID_LINE_' + (idx + 1) + ': ' + line);
-
-    const code = String(m[1]);
-    const name = String(m[2] || '').trim();
-    if (!name) throw new Error('YT_ALL_STOCKS_EMPTY_NAME_' + code);
-    if (seen.has(code)) return;
-    seen.add(code);
-    stocks.push({code: code, name: name});
-  });
-
+  let started = false;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = String(lines[i] || '').trim();
+    if (!line) {
+      if (started) break;  // End of dedicated contiguous feed block.
+      continue;
+    }
+    const m = /^(\d{6})\|([^|]+)\|(.+)$/.exec(line);
+    if (!m) {
+      throw new Error('YT_MORNING_STOCKS_INVALID_LINE_' + (i + 1) + ': ' + line);
+    }
+    const code = m[1];
+    const name = m[2].trim();
+    const reason = m[3].trim();
+    if (!name || !reason) throw new Error('YT_MORNING_STOCKS_INCOMPLETE_' + code);
+    if (!seen.has(code)) {
+      stocks.push({code: code, name: name});
+      seen.add(code);
+    }
+    started = true;
+    if (stocks.length > 50) throw new Error('YT_MORNING_STOCKS_OVERSIZED');
+  }
+  if (!stocks.length) throw new Error('YT_MORNING_STOCKS_EMPTY');
   return {found: true, stocks: stocks};
 }
 
