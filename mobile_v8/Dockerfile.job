@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    STOCKBOT_CLOUD_MODE=1 \
+    V8_ENGINE_PATH=/app/v8_engine
+
+WORKDIR /app
+
+COPY v8_engine/requirements.txt /tmp/requirements-v8.txt
+RUN python -m pip install --no-cache-dir -r /tmp/requirements-v8.txt \
+    && python -m pip install --no-cache-dir "google-auth>=2.29.0"
+
+COPY . /app
+
+CMD ["python", "-m", "mobile_v8.job_runner"]

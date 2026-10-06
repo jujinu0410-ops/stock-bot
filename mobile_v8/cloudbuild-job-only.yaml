@@ -1,0 +1,7 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'mobile_v8/Dockerfile.job', '-t', '${_JOB_IMAGE}', '.']
+images:
+  - '${_JOB_IMAGE}'
+options:
+  logging: CLOUD_LOGGING_ONLY
