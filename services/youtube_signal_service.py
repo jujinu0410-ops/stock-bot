@@ -33,7 +33,9 @@ from config.settings import (
     KIWOOM_APP_SECRET,
     RECIPIENT_EMAIL,
 )
+from src.analysis.bollinger_atr_strategy import get_strictly_sliced_45m_df
 from src.analysis.jev_alert_gate import evaluate_jev_alert_gate
+from src.runtime.krx_calendar import KRXCalendar
 from src.analysis.market_catalyst_context import assess_catalyst, plain_text
 from src.analysis.youtube_candidate_review import describe_flow
 from src.analysis.youtube_candidate_signal import (
@@ -136,6 +138,113 @@ def _parse_as_of(payload: Dict[str, Any]) -> date:
     except ValueError as exc:
         raise SignalServiceError("INVALID_AS_OF_DATE") from exc
 
+
+
+def _fetch_daily_obv_gate(ticker: str) -> Dict[str, Any]:
+    """Daily OBV vs OBV9 timing state from the same Naver daily chart source."""
+    url = (
+        "https://fchart.stock.naver.com/sise.nhn"
+        f"?symbol={ticker}&timeframe=day&count=40&requestType=0"
+    )
+    try:
+        res = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code != 200:
+            return {"available": False, "reason": f"HTTP_{res.status_code}"}
+        text = res.content.decode("cp949", errors="replace")
+        if text.lstrip().startswith("<?xml") and "?>" in text:
+            text = text[text.find("?>") + 2:]
+        root = ET.fromstring(text)
+        bars = []
+        for item in root.iter("item"):
+            parts = str(item.attrib.get("data") or "").split("|")
+            if len(parts) < 6:
+                continue
+            try:
+                bars.append({"close": float(parts[4]), "volume": float(parts[5])})
+            except (TypeError, ValueError):
+                continue
+        if len(bars) < 10:
+            return {"available": False, "reason": f"INSUFFICIENT_BARS_{len(bars)}"}
+        obv = []
+        running = 0.0
+        for i, bar in enumerate(bars):
+            if i > 0:
+                if bar["close"] > bars[i - 1]["close"]:
+                    running += bar["volume"]
+                elif bar["close"] < bars[i - 1]["close"]:
+                    running -= bar["volume"]
+            obv.append(running)
+        obv9 = sum(obv[-9:]) / 9.0
+        current = obv[-1]
+        prev = obv[-2]
+        return {
+            "available": True,
+            "obv": current,
+            "obv9": obv9,
+            "gold": current > obv9,
+            "trend_down": current < prev,
+        }
+    except Exception as exc:
+        app.logger.warning("daily OBV gate failed ticker=%s error=%s", ticker, exc)
+        return {"available": False, "reason": type(exc).__name__}
+
+
+def _fetch_45m_vwap_gate(ticker: str) -> Dict[str, Any]:
+    """VWAP9/26 on the latest completed KRX 45m bar only."""
+    try:
+        now = datetime.now().astimezone()
+        slot = KRXCalendar.get_completed_45m_bar(now)
+        if not slot:
+            return {"available": False, "reason": "NO_COMPLETED_45M_BAR"}
+        cutoff = datetime.combine(
+            now.date(),
+            datetime.strptime(slot[2], "%H:%M").time(),
+            tzinfo=now.tzinfo,
+        )
+        df_45m, source, quality = get_strictly_sliced_45m_df(ticker, cutoff)
+        if df_45m is None or quality != "VALID" or len(df_45m) < 26:
+            return {"available": False, "reason": quality, "source": source}
+        typical_price = (df_45m["High"] + df_45m["Low"] + df_45m["Close"]) / 3.0
+        tp_vol = typical_price * df_45m["Volume"]
+        vol9 = df_45m["Volume"].rolling(9).sum()
+        vol26 = df_45m["Volume"].rolling(26).sum()
+        vwap9 = float((tp_vol.rolling(9).sum() / (vol9 + 1e-9)).iloc[-1])
+        vwap26 = float((tp_vol.rolling(26).sum() / (vol26 + 1e-9)).iloc[-1])
+        if not (vwap9 == vwap9 and vwap26 == vwap26):
+            return {"available": False, "reason": "VWAP_NAN", "source": source}
+        return {
+            "available": True,
+            "vwap9": vwap9,
+            "vwap26": vwap26,
+            "state": "VWAP_GOLD" if vwap9 > vwap26 else "VWAP_DEAD",
+            "gold": vwap9 > vwap26,
+            "completed_bar": slot[2],
+            "source": source,
+        }
+    except Exception as exc:
+        app.logger.warning("45m VWAP gate failed ticker=%s error=%s", ticker, exc)
+        return {"available": False, "reason": type(exc).__name__}
+
+
+def _evaluate_entry_timing_veto(ticker: str) -> Dict[str, Any]:
+    daily = _fetch_daily_obv_gate(ticker)
+    intraday = _fetch_45m_vwap_gate(ticker)
+    veto = bool(
+        daily.get("available")
+        and intraday.get("available")
+        and not daily.get("gold")
+        and not intraday.get("gold")
+    )
+    return {
+        "decision": "VETO" if veto else "PASS",
+        "reason": (
+            "DAILY_OBV_NOT_GOLD_AND_45M_VWAP_NOT_GOLD"
+            if veto
+            else "TIMING_GATE_PASS_OR_DATA_GAP"
+        ),
+        "daily_obv": daily,
+        "vwap_45m": intraday,
+    }
 
 def _get_kiwoom_token(session: RetryingKiwoomSession) -> str:
     app_key = str(KIWOOM_APP_KEY or os.getenv("KIWOOM_APP_KEY") or "").strip()
@@ -443,6 +552,38 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         reason="BUY_CANDIDATE supplied by Google Sheet monitor",
     )
     final = combine_final_signal(tech, flow)
+    timing_gate = None
+    if final.final_signal in {FINAL_BUY_ALERT, FINAL_BUY_ALERT_STRONG}:
+        timing_gate = _evaluate_entry_timing_veto(ticker)
+        if timing_gate.get("decision") == "VETO":
+            app.logger.info(
+                "entry timing veto ticker=%s final=%s reason=%s",
+                ticker, final.final_signal, timing_gate.get("reason"),
+            )
+            flow_text = describe_flow(
+                {
+                    "status": flow.status,
+                    "foreign_5d": flow.foreign_5d,
+                    "institution_5d": flow.institution_5d,
+                    "combined_5d": flow.combined_5d,
+                    "combined_20d": flow.combined_20d,
+                }
+            )
+            return {
+                "ok": True,
+                "ticker": ticker,
+                "name": name,
+                "trigger_key": str(payload.get("trigger_key") or ""),
+                "final_signal": FINAL_WATCH_ONLY,
+                "original_final_signal": final.final_signal,
+                "flow_status": flow.status,
+                "flow_summary": flow_text,
+                "timing_gate": timing_gate,
+                "mail_sent": False,
+                "suppressed_by_timing_gate": True,
+                "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+            }
     flow_text = describe_flow(
         {
             "status": flow.status,

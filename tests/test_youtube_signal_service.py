@@ -50,6 +50,23 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         with self.assertRaises(svc.SignalServiceError):
             svc._clean_ticker("ABC")
 
+    @patch.object(svc, "_fetch_45m_vwap_gate")
+    @patch.object(svc, "_fetch_daily_obv_gate")
+    def test_entry_timing_veto_when_daily_obv_and_45m_vwap_both_not_gold(self, daily, vwap):
+        daily.return_value = {"available": True, "gold": False, "trend_down": True}
+        vwap.return_value = {"available": True, "gold": False, "state": "VWAP_DEAD"}
+        gate = svc._evaluate_entry_timing_veto("316140")
+        self.assertEqual(gate["decision"], "VETO")
+        self.assertEqual(gate["reason"], "DAILY_OBV_NOT_GOLD_AND_45M_VWAP_NOT_GOLD")
+
+    @patch.object(svc, "_fetch_45m_vwap_gate")
+    @patch.object(svc, "_fetch_daily_obv_gate")
+    def test_entry_timing_gate_passes_if_either_signal_is_gold(self, daily, vwap):
+        daily.return_value = {"available": True, "gold": False}
+        vwap.return_value = {"available": True, "gold": True, "state": "VWAP_GOLD"}
+        gate = svc._evaluate_entry_timing_veto("316140")
+        self.assertEqual(gate["decision"], "PASS")
+
     @patch.object(svc, "_jev_gate")
     def test_jev_gate_uses_existing_shared_token(self, mocked):
         mocked.return_value = {"ok": True, "status": "NOT_CONFIGURED", "decision": "SEND"}
