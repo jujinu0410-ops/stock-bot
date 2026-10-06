@@ -37,6 +37,9 @@ function parseYtAllStocksBlockV7_(body) {
     }
     const m = /^(\d{6})\|([^|]+)\|(.+)$/.exec(line);
     if (!m) {
+      // The publisher appends its chart-channel source link immediately
+      // after the last candidate, sometimes WITHOUT a blank separator.
+      if (started && /^차트분석남 게시물\s*:/.test(line)) break;
       throw new Error('YT_MORNING_STOCKS_INVALID_LINE_' + (i + 1) + ': ' + line);
     }
     const code = m[1];
