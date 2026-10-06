@@ -111,9 +111,10 @@ function ewApplyJevGate_(plan,now) {
 
     if (typeof hmJevPreAllowsProceed_ === 'function' && !hmJevPreAllowsProceed_(events,preGate)) {
       r.jevGate=preGate;
-      item.held=Object.assign({},item.held||{});
-      item.held[stage]=true;
-      held.push({cur:cur,events:events,jevGate:preGate});
+      // PRE-HOLD는 하루 영구차단하지 않는다. 15분 후 direct Jev만 재심사한다.
+      if (preGate.reason !== 'PRE_HOLD_COOLDOWN') {
+        held.push({cur:cur,events:events,jevGate:preGate});
+      }
       return;
     }
 
