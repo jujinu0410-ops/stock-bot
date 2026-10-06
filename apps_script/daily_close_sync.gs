@@ -413,6 +413,7 @@ function dcsReplaceDataBlock_(sheet, cols, rows) {
   const existing = Math.max(0, sheet.getLastRow() - 1);
   const clearRows = Math.max(existing, rows.length);
   if (clearRows > 0) sheet.getRange(2,1,clearRows,cols).clearContent();
+  dcsForceCodeColumnText_(sheet, Math.max(clearRows, rows.length));
   if (rows.length > 0) sheet.getRange(2,1,rows.length,cols).setValues(rows);
 }
 
@@ -420,8 +421,18 @@ function dcsRestoreDataBlock_(sheet, cols, snapshot) {
   const existing = Math.max(0, sheet.getLastRow() - 1);
   const clearRows = Math.max(existing, snapshot.count || 0);
   if (clearRows > 0) sheet.getRange(2,1,clearRows,cols).clearContent();
+  dcsForceCodeColumnText_(sheet, Math.max(clearRows, snapshot.count || 0));
   if (snapshot.values && snapshot.values.length) {
     sheet.getRange(2,1,snapshot.values.length,cols).setValues(snapshot.values);
+  }
+}
+
+function dcsForceCodeColumnText_(sheet, rowCount) {
+  if (!(rowCount > 0)) return;
+  if (sheet.getName() === DCS.PORTFOLIO_SHEET) {
+    sheet.getRange(2,4,rowCount,1).setNumberFormat('@');
+  } else if (sheet.getName() === DCS.MONITOR_SHEET) {
+    sheet.getRange(2,1,rowCount,1).setNumberFormat('@');
   }
 }
 
