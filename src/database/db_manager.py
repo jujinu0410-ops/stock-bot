@@ -281,6 +281,12 @@ class DatabaseManager:
                 cursor.execute("DELETE FROM dart_financials WHERE quarter_code = 'Q4' OR stock_code IN ('161510', '490590', '088500', '371460', '484730')")
                 cursor.execute("DELETE FROM kiwoom_daily WHERE stk_date IN ('20260808', '20260809') OR strftime('%w', substr(stk_date, 1, 4) || '-' || substr(stk_date, 5, 2) || '-' || substr(stk_date, 7, 2)) IN ('0', '6')")
 
+                # sell_warning_45m 컬럼 마이그레이션
+                cursor.execute("PRAGMA table_info(sell_warning_45m)")
+                sw_cols = [row[1] for row in cursor.fetchall()]
+                if sw_cols and "sell_confirmed" not in sw_cols:
+                    cursor.execute("ALTER TABLE sell_warning_45m ADD COLUMN sell_confirmed INTEGER DEFAULT 0;")
+
                 conn.commit()
                 logger.info("모든 DB 테이블 및 인덱스 초기화 완료")
         except sqlite3.Error as e:
@@ -1452,6 +1458,77 @@ class DatabaseManager:
         query = "SELECT * FROM add_advisory_45m WHERE trading_date = ? ORDER BY id ASC"
         rows = self.execute_query(query, (trading_date,))
         return [dict(r) for r in rows] if rows else []
+
+    # =========================================================================
+    # 45m SELL WARNING Sidecar Persistence (isolated from scan_journal/orders)
+    # =========================================================================
+    def insert_sell_warning_45m(self, entry: Dict[str, Any]) -> bool:
+        """45m sell-warning 저장; 동일 종목/완성봉은 최초 1건만 보존."""
+        columns = (
+            "trading_date", "stock_code", "bar_timestamp", "evaluated_at",
+            "engine_version", "sell_warning_state", "sell_confirmed", "data_quality", "reason_codes",
+            "bearish_axes_count", "price_weakness", "obv_weakness",
+            "chaikin_weakness", "bear_trend", "chaikin_recovery_conflict",
+            "bull_trend_conflict", "vwap_dead", "is_price_below_cloud_45m",
+            "completed_45m_timestamp", "completed_45m_bar_count", "vwap9", "vwap26",
+            "close_45m", "cloud_bottom_45m", "obv", "obv_wma9", "obv_gap",
+            "obv_gap_delta", "obv_gap_state", "chaikin_value", "chaikin_delta",
+            "chaikin_state", "adx_14_45m", "plus_di_45m", "minus_di_45m",
+        )
+        placeholders = ", ".join("?" for _ in columns)
+        query = (
+            f"INSERT OR IGNORE INTO sell_warning_45m ({', '.join(columns)}) "
+            f"VALUES ({placeholders})"
+        )
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(entry.get(column) for column in columns))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception:
+            if conn:
+                conn.rollback()
+            logger.error("45m sell-warning 저장 실패", exc_info=True)
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+    def get_latest_sell_warning_for_stock(
+        self,
+        stock_code: str,
+        trading_date: Optional[str] = None,
+        max_bar_timestamp: Optional[str] = None,
+        before_bar_timestamp: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Freshness 조건을 선택적으로 적용해 최신 sell-warning을 조회."""
+        clauses = ["stock_code = ?"]
+        params: List[Any] = [stock_code]
+        if trading_date:
+            clauses.append("trading_date = ?")
+            params.append(trading_date)
+        if max_bar_timestamp:
+            clauses.append("bar_timestamp <= ?")
+            params.append(max_bar_timestamp)
+        if before_bar_timestamp:
+            clauses.append("bar_timestamp < ?")
+            params.append(before_bar_timestamp)
+        query = (
+            "SELECT * FROM sell_warning_45m WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
+        )
+        rows = self.execute_query(query, tuple(params))
+        return dict(rows[0]) if rows else None
+
+    def get_sell_warnings_by_date(self, trading_date: str) -> List[Dict[str, Any]]:
+        rows = self.execute_query(
+            "SELECT * FROM sell_warning_45m WHERE trading_date = ? ORDER BY id ASC",
+            (trading_date,),
+        )
+        return [dict(row) for row in rows] if rows else []
 
     def acquire_scheduler_lock(self, lock_name: str, task_name: str, pid: int, ttl_seconds: int = 600) -> bool:
         """

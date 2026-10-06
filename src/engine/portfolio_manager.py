@@ -10,7 +10,7 @@ from config.settings import ATR_CONFIG, ATR_ENGINE_VERSION
 from src.database.db_manager import DatabaseManager
 from src.utils.logger import logger
 from src.api.kiwoom_api import KiwoomAPIClient
-from src.analysis.technical_analysis import TechnicalAnalysis, adjust_krx_tick_size
+from src.analysis.technical_analysis import TechnicalAnalysis, adjust_krx_tick_size, calculate_wilder_atr
 
 def safe_float(val, default: float = 0.0) -> float:
     if val is None:
@@ -163,6 +163,14 @@ class PortfolioManager:
             
             # DB 단일 트랜잭션 갱신 (실패 시 롤백 및 기존 DB 보존)
             self._update_portfolio_in_single_transaction(positions)
+
+            # LIVE HOLDINGS와 STRATEGY CONFIG 분리 동기화 (Google Sheet 및 스냅샷 갱신)
+            try:
+                from src.engine.portfolio_reconciler import PortfolioReconciler
+                reconciler = PortfolioReconciler()
+                reconciler.reconcile(positions)
+            except Exception as e_rec:
+                logger.warning(f"[PortfolioManager] 감시센터 시트/스냅샷 동기화 중 경고 (분석은 계속 진행): {e_rec}")
             
             # 로컬 JSON 파일 백업 갱신
             if self._holdings_backup_path:
@@ -184,6 +192,12 @@ class PortfolioManager:
             logger.info("[PortfolioManager] 로컬 테스트 환경: mock/json 잔고 데이터 사용")
             if positions and len(positions) > 0:
                 self._update_portfolio_in_single_transaction(positions)
+                try:
+                    from src.engine.portfolio_reconciler import PortfolioReconciler
+                    reconciler = PortfolioReconciler()
+                    reconciler.reconcile(positions, sync_to_sheet=False)
+                except Exception:
+                    pass
                 return positions
             mock_positions = self.kiwoom._get_mock_account_positions()
             self._update_portfolio_in_single_transaction(mock_positions)
@@ -235,6 +249,24 @@ class PortfolioManager:
 
             daily_df = self.db.get_daily_prices(code)
             market_close_p = float(daily_df.iloc[-1]["close_price"]) if not daily_df.empty else 0.0
+            if daily_df.empty or len(daily_df) < 14:
+                try:
+                    from src.api.real_market_api import RealMarketAPIClient
+                    candles = RealMarketAPIClient().get_real_daily_candles(code, count=60)
+                    if candles:
+                        daily_df = pd.DataFrame(candles)
+                except Exception as e_candle:
+                    logger.debug(f"[{code}] 일봉 시세 수집 fallback 실패: {e_candle}")
+            # 완성 일봉(1D_COMPLETED: 당일 장중 미완성봉 제외) 슬라이스 추출
+            today_ymd = datetime.now().strftime("%Y%m%d")
+            completed_df = pd.DataFrame()
+            completed_base_date = ""
+            if not daily_df.empty and "stk_date" in daily_df.columns:
+                clean_dates = daily_df["stk_date"].astype(str).str.replace("-", "").str.strip()
+                completed_df = daily_df[clean_dates < today_ymd]
+                if not completed_df.empty:
+                    raw_d = str(completed_df.iloc[-1]["stk_date"]).replace("-", "").strip()
+                    completed_base_date = f"{raw_d[:4]}-{raw_d[4:6]}-{raw_d[6:8]}" if len(raw_d) == 8 else raw_d
 
             # 1. 기술적 지표 및 기본 분석 데이터 추출
             tech_eval = {}
@@ -259,8 +291,9 @@ class PortfolioManager:
                 except Exception as e_an:
                     logger.error(f"[{code}] 종목 분석 중 예외: {e_an}")
 
-            if not daily_df.empty and len(daily_df) >= 5:
-                ta = TechnicalAnalysis(daily_df, is_etf=is_etf)
+            analysis_df = completed_df if not completed_df.empty and len(completed_df) >= 5 else daily_df
+            if not analysis_df.empty and len(analysis_df) >= 5:
+                ta = TechnicalAnalysis(analysis_df, is_etf=is_etf)
                 tech_eval = ta.evaluate_signals()
             elif analysis:
                 tech_eval = analysis
@@ -332,7 +365,9 @@ class PortfolioManager:
                 "tech_eval": tech_eval,
                 "analysis": analysis,
                 "row": dict(r),
-                "daily_df": daily_df
+                "daily_df": daily_df,
+                "completed_df": completed_df,
+                "completed_base_date": completed_base_date
             })
 
         # 동일한 최종 적용 가격 기준으로 계좌 총 평가금액 산출 (분모)
@@ -343,6 +378,21 @@ class PortfolioManager:
         # ----------------------------------------------------
         # Pass 2: 종목별 평가손익, 계좌비중, 포지션 사이징 및 정밀 평가 산출
         # ----------------------------------------------------
+        # 잔고 동기화 후 최신 전략 검증 스냅샷 매핑
+        val_map = {}
+        try:
+            state_p = Path(os.getenv("STOCKBOT_STATE_DIR") or ".")
+            snap_file = state_p / "data" / "PORTFOLIO_LIVE.json"
+            if not snap_file.exists():
+                snap_file = Path("data/PORTFOLIO_LIVE.json")
+            if snap_file.exists():
+                with open(snap_file, "r", encoding="utf-8") as f_snap:
+                    snap_data = json.load(f_snap)
+                    for pos_item in snap_data.get("positions", []):
+                        val_map[str(pos_item.get("ticker", "")).strip().zfill(6)] = pos_item
+        except Exception as e_vmap:
+            logger.debug(f"[PortfolioManager] PORTFOLIO_LIVE 스냅샷 매핑 건너뜀: {e_vmap}")
+
         eval_list = []
         for h in confirmed_holdings:
             code = h["code"]
@@ -390,7 +440,10 @@ class PortfolioManager:
                     if not suspension_reason:
                         suspension_reason = "연속 5봉 거래량 0 (매매거래 정지 의심)"
 
-            # 2. 직전 완료봉 Wilder ATR14 (At) 및 NATR(%) 산출
+            # 2. 직전 완료봉 Wilder ATR14 (At) 및 NATR(%) 산출 (1D_COMPLETED 원칙: 장중 미완성봉 제외)
+            completed_df = h.get("completed_df", pd.DataFrame())
+            completed_base_date = h.get("completed_base_date", "")
+
             if is_suspended:
                 at = 0.0
                 natr_pct = 0.0
@@ -399,11 +452,38 @@ class PortfolioManager:
                 cycle_id = f"{code}_INVALID_SUSPENDED_CYCLE"
                 anchor_created_at = p_row.get("anchor_created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 is_migrated_anchor = False
+
+                last_valid_atr = None
+                last_valid_date = completed_base_date or None
+                target_df = completed_df if not completed_df.empty else daily_df
+                if not target_df.empty and len(target_df) >= 1:
+                    try:
+                        atr_series = calculate_wilder_atr(target_df, period=14)
+                        if not atr_series.empty and atr_series.iloc[-1] > 0:
+                            last_valid_atr = float(atr_series.iloc[-1])
+                            if not last_valid_date:
+                                raw_d = str(target_df.iloc[-1].get("stk_date", "")).replace("-", "").strip()
+                                last_valid_date = f"{raw_d[:4]}-{raw_d[4:6]}-{raw_d[6:8]}" if len(raw_d) == 8 else raw_d
+                    except Exception:
+                        pass
+                from src.engine.portfolio_reconciler import compute_atr_metrics
+                atr_bundle = compute_atr_metrics(last_valid_atr, base_date=last_valid_date, is_suspended=True, is_etf=is_etf)
             else:
-                at = float(tech_eval.get("atr_14", current_price * 0.03) or (current_price * 0.03))
+                target_df = completed_df if not completed_df.empty else daily_df
+                if not target_df.empty and len(target_df) >= 1:
+                    atr_series = calculate_wilder_atr(target_df, period=14)
+                    if not atr_series.empty and atr_series.iloc[-1] > 0:
+                        at = float(atr_series.iloc[-1])
+                    else:
+                        at = float(tech_eval.get("atr_14", current_price * 0.03) or (current_price * 0.03))
+                else:
+                    at = float(tech_eval.get("atr_14", current_price * 0.03) or (current_price * 0.03))
+
                 if at <= 0:
                     at = current_price * 0.03
                 natr_pct = round((at / (current_price + 1e-9)) * 100.0, 2)
+                from src.engine.portfolio_reconciler import compute_atr_metrics
+                atr_bundle = compute_atr_metrics(at, base_date=completed_base_date, is_suspended=False, is_etf=is_etf)
 
                 # 3. 🔥 P0(감시개시 기준가격) & A0(기준 ATR) 동결 및 포지션 사이클 영속 관리
                 p0 = safe_float(p_row.get("anchor_price_p0"))
@@ -697,6 +777,12 @@ class PortfolioManager:
                 "natr_pct": natr_pct,
                 "atr_14": round(at, 1),
                 "atr_pct": natr_pct,
+                "atr_round": atr_bundle.get("atr_round"),
+                "atr_text": atr_bundle.get("atr_text"),
+                "buy_trailing_dist": atr_bundle.get("buy_trailing_dist"),
+                "sell_trailing_dist": atr_bundle.get("sell_trailing_dist"),
+                "atr_detail_text": atr_bundle.get("atr_detail_text"),
+                "atr_base_date": atr_bundle.get("atr_base_date"),
                 "is_migrated_anchor": is_migrated_anchor,
 
                 # V4 매매가격선
@@ -748,6 +834,15 @@ class PortfolioManager:
                 "data_validity_flag": data_validity_flag,
                 "data_hold_reason": " / ".join(data_hold_reasons) if data_hold_reasons else "정상",
                 "auto_order_enabled": auto_order_enabled,
+
+                # 전략 검증 메타데이터 (포지션 변경 후 유효성 검증 결과)
+                "strategy_status": val_map.get(code, {}).get("strategy_status", "NORMAL"),
+                "strategy_warning": val_map.get(code, {}).get("strategy_warning", ""),
+                "strategy_revalidation_required": val_map.get(code, {}).get("strategy_revalidation_required", False),
+                "revalidation_reasons": val_map.get(code, {}).get("revalidation_reasons", []),
+                "stop_status": val_map.get(code, {}).get("stop_status", "ACTIVE"),
+                "target1_status": val_map.get(code, {}).get("target1_status", "NONE"),
+                "target2_status": val_map.get(code, {}).get("target2_status", "NONE"),
 
                 # 점수 및 수급
                 "f_score": f_sc,
@@ -891,5 +986,33 @@ class PortfolioManager:
                 item["action_status"] = "🎯 45m 눌림목 분할매수"
             else:
                 item["action_status"] = "🟢 계속 보유/홀딩"
+
+        # 최신 산출된 ATR 메타데이터를 reconciler 및 스냅샷/시트에 갱신 (비동기 안전 호출)
+        try:
+            from src.engine.portfolio_reconciler import PortfolioReconciler
+            atr_map = {
+                item["stock_code"]: {
+                    "atr_14": item.get("current_completed_atr") if (item.get("current_completed_atr") or 0) > 0 else item.get("atr_round"),
+                    "base_date": item.get("atr_base_date"),
+                }
+                for item in eval_list
+            }
+            reconciler = PortfolioReconciler()
+            reconciler.reconcile(
+                [
+                    {
+                        "stock_code": it["stock_code"],
+                        "quantity": it["quantity"],
+                        "avg_buy_price": it["avg_buy_price"],
+                        "current_price": it["current_price"],
+                        "stock_name": it["stock_name"],
+                    }
+                    for it in eval_list
+                ],
+                atr_map=atr_map,
+                sync_to_sheet=True
+            )
+        except Exception as e_reconcile:
+            logger.debug(f"[PortfolioManager] get_held_portfolio_status 후 ATR 시트 갱신 건너뜀: {e_reconcile}")
 
         return eval_list

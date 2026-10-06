@@ -639,6 +639,48 @@ TABLE_SCHEMAS = {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(stock_code, bar_timestamp)
         );
+    """,
+    "sell_warning_45m": """
+        CREATE TABLE IF NOT EXISTS sell_warning_45m (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trading_date TEXT NOT NULL,
+            stock_code TEXT NOT NULL,
+            bar_timestamp TEXT NOT NULL,
+            evaluated_at TEXT NOT NULL,
+            engine_version TEXT NOT NULL,
+            sell_warning_state TEXT NOT NULL,
+            sell_confirmed INTEGER DEFAULT 0,
+            data_quality TEXT NOT NULL,
+            reason_codes TEXT,
+            bearish_axes_count INTEGER,
+            price_weakness INTEGER,
+            obv_weakness INTEGER,
+            chaikin_weakness INTEGER,
+            bear_trend INTEGER,
+            chaikin_recovery_conflict INTEGER,
+            bull_trend_conflict INTEGER,
+            vwap_dead INTEGER,
+            is_price_below_cloud_45m INTEGER,
+            completed_45m_timestamp TEXT,
+            completed_45m_bar_count INTEGER,
+            vwap9 REAL,
+            vwap26 REAL,
+            close_45m REAL,
+            cloud_bottom_45m REAL,
+            obv REAL,
+            obv_wma9 REAL,
+            obv_gap REAL,
+            obv_gap_delta REAL,
+            obv_gap_state TEXT,
+            chaikin_value REAL,
+            chaikin_delta REAL,
+            chaikin_state TEXT,
+            adx_14_45m REAL,
+            plus_di_45m REAL,
+            minus_di_45m REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(stock_code, bar_timestamp)
+        );
     """
 }
 

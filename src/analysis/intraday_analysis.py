@@ -20,6 +20,69 @@ class Intraday45mAnalyzer:
     def __init__(self):
         pass
 
+    @staticmethod
+    def calculate_canonical_45m_trend(df_45m: pd.DataFrame) -> Dict[str, Any]:
+        """Calculate raw 45m ADX/DMI and pure Ichimoku price structure.
+
+        This method intentionally does not include OBV in the cloud-breakdown
+        result.  Existing composite fields remain defined by
+        ``analyze_45m_indicators`` for backward compatibility.
+        """
+        if not isinstance(df_45m, pd.DataFrame) or len(df_45m) < 16:
+            raise ValueError("INSUFFICIENT_COMPLETED_45M_BARS")
+        required = {"High", "Low", "Close"}
+        if not required.issubset(df_45m.columns):
+            raise ValueError("MALFORMED_45M_OHLCV")
+
+        high = df_45m["High"]
+        low = df_45m["Low"]
+        close = df_45m["Close"]
+        up_move = high.diff()
+        down_move = -low.diff()
+        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+        tr = np.maximum(
+            high - low,
+            np.maximum((high - close.shift(1)).abs(), (low - close.shift(1)).abs()),
+        )
+        tr_s = pd.Series(tr, index=df_45m.index).ewm(alpha=1 / 14, adjust=False).mean()
+        plus_di_series = (
+            100
+            * pd.Series(plus_dm, index=df_45m.index).ewm(alpha=1 / 14, adjust=False).mean()
+            / (tr_s + 1e-9)
+        )
+        minus_di_series = (
+            100
+            * pd.Series(minus_dm, index=df_45m.index).ewm(alpha=1 / 14, adjust=False).mean()
+            / (tr_s + 1e-9)
+        )
+        dx = 100 * (plus_di_series - minus_di_series).abs() / (
+            plus_di_series + minus_di_series + 1e-9
+        )
+        adx_series = dx.ewm(alpha=1 / 14, adjust=False).mean()
+
+        high_9 = high.rolling(window=9).max()
+        low_9 = low.rolling(window=9).min()
+        tenkan = (high_9 + low_9) / 2.0
+        high_26 = high.rolling(window=26).max()
+        low_26 = low.rolling(window=26).min()
+        kijun = (high_26 + low_26) / 2.0
+        span_a = (tenkan + kijun) / 2.0
+        high_52 = high.rolling(window=52).max() if len(high) >= 52 else high.expanding().max()
+        low_52 = low.rolling(window=52).min() if len(low) >= 52 else low.expanding().min()
+        span_b = (high_52 + low_52) / 2.0
+        cloud_bottom = float(np.minimum(span_a.iloc[-1], span_b.iloc[-1]))
+        close_value = float(close.iloc[-1])
+
+        return {
+            "adx_14_45m": float(adx_series.iloc[-1]),
+            "plus_di_45m": float(plus_di_series.iloc[-1]),
+            "minus_di_45m": float(minus_di_series.iloc[-1]),
+            "close_45m": close_value,
+            "cloud_bottom_45m": cloud_bottom,
+            "is_price_below_cloud_45m": bool(close_value < cloud_bottom),
+        }
+
     def _fetch_from_yfinance(self, stock_code: str) -> Optional[Tuple[pd.DataFrame, str]]:
         """yfinance를 통한 15분봉 데이터 수집 (KS / KQ 순차 시도)"""
         code = str(stock_code).zfill(6)
@@ -99,6 +162,9 @@ class Intraday45mAnalyzer:
             "plus_di_45m": None,
             "minus_di_45m": None,
             "adx_di_dominance_45m": "N/A (데이터 결측)",
+            "close_45m": None,
+            "cloud_bottom_45m": None,
+            "is_price_below_cloud_45m": None,
             "obv_45m": None,
             "obv_45m_trend": "N/A (데이터 결측)",
             "chaikin_osc_45m": None,
@@ -147,24 +213,11 @@ class Intraday45mAnalyzer:
 
             last_ts = str(df_45m.index[-1])
 
-            # 3. 45분봉 DMI / ADX (14) 연산
-            up_move = high.diff()
-            down_move = -low.diff()
-            plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-            minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-
-            tr = np.maximum(high - low, np.maximum((high - close.shift(1)).abs(), (low - close.shift(1)).abs()))
-            tr_s = pd.Series(tr, index=df_45m.index).ewm(alpha=1/14, adjust=False).mean()
-
-            plus_di_series = 100 * pd.Series(plus_dm, index=df_45m.index).ewm(alpha=1/14, adjust=False).mean() / (tr_s + 1e-9)
-            minus_di_series = 100 * pd.Series(minus_dm, index=df_45m.index).ewm(alpha=1/14, adjust=False).mean() / (tr_s + 1e-9)
-
-            dx = 100 * (plus_di_series - minus_di_series).abs() / (plus_di_series + minus_di_series + 1e-9)
-            adx_series = dx.ewm(alpha=1/14, adjust=False).mean()
-
-            latest_adx = float(adx_series.iloc[-1])
-            latest_plus_di = float(plus_di_series.iloc[-1])
-            latest_minus_di = float(minus_di_series.iloc[-1])
+            # 3. 45분봉 DMI / ADX (14) 및 순수 가격구조 연산
+            trend_metrics = self.calculate_canonical_45m_trend(df_45m)
+            latest_adx = trend_metrics["adx_14_45m"]
+            latest_plus_di = trend_metrics["plus_di_45m"]
+            latest_minus_di = trend_metrics["minus_di_45m"]
 
             di_dom_str = f"+DI: {latest_plus_di:.1f} / -DI: {latest_minus_di:.1f} (ADX {latest_adx:.1f}, {'+DI우세' if latest_plus_di >= latest_minus_di else '-DI우세'})"
 
@@ -210,22 +263,9 @@ class Intraday45mAnalyzer:
             else:
                 cho_flow_str = f"💧 CHO 자금유입 ({latest_cho:+,d})"
 
-            # 6. 45분봉 일목균형표 구름대 (9, 26, 52)
-            high_9 = high.rolling(window=9).max()
-            low_9 = low.rolling(window=9).min()
-            tenkan = (high_9 + low_9) / 2.0
-
-            high_26 = high.rolling(window=26).max()
-            low_26 = low.rolling(window=26).min()
-            kijun = (high_26 + low_26) / 2.0
-
-            span_a = (tenkan + kijun) / 2.0
-            high_52 = high.rolling(window=52).max() if len(high) >= 52 else high.expanding().max()
-            low_52 = low.rolling(window=52).min() if len(low) >= 52 else low.expanding().min()
-            span_b = (high_52 + low_52) / 2.0
-
-            cloud_bottom = np.minimum(span_a.iloc[-1], span_b.iloc[-1])
-            is_45m_breakdown = bool(close.iloc[-1] < cloud_bottom) and obv_dead_flag
+            # 6. 기존 breakdown 의미 유지: 순수 구름 하단 이탈 AND 기존 EMA9 OBV dead
+            is_price_below_cloud_45m = trend_metrics["is_price_below_cloud_45m"]
+            is_45m_breakdown = is_price_below_cloud_45m and obv_dead_flag
 
             adx_bear_flag = (latest_adx >= 22.0) and (latest_minus_di > latest_plus_di)
             bearish_signals_count = sum([obv_dead_flag, cho_dead_flag, adx_bear_flag])
@@ -248,6 +288,9 @@ class Intraday45mAnalyzer:
                 "plus_di_45m": round(latest_plus_di, 1),
                 "minus_di_45m": round(latest_minus_di, 1),
                 "adx_di_dominance_45m": di_dom_str,
+                "close_45m": round(trend_metrics["close_45m"], 2),
+                "cloud_bottom_45m": round(trend_metrics["cloud_bottom_45m"], 2),
+                "is_price_below_cloud_45m": is_price_below_cloud_45m,
                 "obv_45m": int(obv_series.iloc[-1]),
                 "obv_45m_trend": obv_trend_str,
                 "chaikin_osc_45m": latest_cho,

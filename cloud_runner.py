@@ -91,10 +91,16 @@ def resolve_session_code(kst_dt: datetime, report_mode: str) -> str:
         return "1335" if kst_dt.hour >= 13 else "1120"
     elif mode == "POSTMARKET":
         return "1535"
+    elif mode == "SHADOW_SCAN":
+        from src.runtime.krx_calendar import KRXCalendar
+        bar_info = KRXCalendar.get_completed_45m_bar(kst_dt)
+        if bar_info:
+            return bar_info[2].replace(":", "")
+        return kst_dt.strftime("%H%M")
     else:
         raise ValueError(
             f"INVALID_REPORT_MODE: {mode!r}. "
-            "Allowed modes are INTRADAY or POSTMARKET."
+            "Allowed modes are INTRADAY, POSTMARKET, or SHADOW_SCAN."
         )
 
 
@@ -141,8 +147,9 @@ class CloudRunner:
         state_dir: Optional[Path] = None,
         storage_client: Any = None,
         force: bool = False,
+        asof_dt: Optional[datetime] = None,
     ):
-        self.kst_now = get_current_kst_time()
+        self.kst_now = asof_dt or get_current_kst_time()
         self.report_mode = self._resolve_report_mode(report_mode)
         self.session_code = resolve_session_code(self.kst_now, self.report_mode)
         self.run_id = build_run_id(self.kst_now, self.report_mode)
@@ -162,11 +169,11 @@ class CloudRunner:
 
     def _resolve_report_mode(self, explicit_mode: Optional[str]) -> str:
         mode = (explicit_mode or os.getenv("REPORT_MODE") or "").strip().upper()
-        if mode in ("INTRADAY", "POSTMARKET"):
+        if mode in ("INTRADAY", "POSTMARKET", "SHADOW_SCAN"):
             return mode
         err = (
             f"INVALID_REPORT_MODE: {mode!r}. "
-            "Allowed modes are INTRADAY or POSTMARKET. "
+            "Allowed modes are INTRADAY, POSTMARKET, or SHADOW_SCAN. "
             "Auto-detection is forbidden."
         )
         logger.critical(f"[CloudRunner] {err}")
@@ -177,6 +184,8 @@ class CloudRunner:
         Detects state machine branch with minimal GCS I/O.
         No full bundle download at this stage.
         """
+        if self.report_mode == "SHADOW_SCAN":
+            return "SHADOW_SCAN"
         if not self.force and self.state_adapter.has_dispatch_receipt(self.run_id):
             return _SM_ALREADY_COMPLETED
         committed_run_id = self.state_adapter.get_committed_run_id()
@@ -461,6 +470,21 @@ class CloudRunner:
         logger.info(f"  State Dir: {self.state_dir}")
         logger.info("=" * 60)
 
+        # Non-trading day early guard (Weekends & KRX Holidays)
+        if not self.force:
+            from src.runtime.krx_calendar import KRXCalendar
+            if not KRXCalendar.is_krx_trading_day(self.kst_now):
+                logger.info(
+                    f"[CloudRunner] Today {self.kst_now.strftime('%Y-%m-%d')} is not a KRX trading day. "
+                    "Skipping execution (Gmail=0, Kakao=0, Orders=0, StateBundle=0)."
+                )
+                return {
+                    "status": "SKIPPED_NON_TRADING_DAY",
+                    "run_id": self.run_id,
+                    "dispatch_id": self.dispatch_id,
+                    "message": f"Execution skipped on non-trading day ({self.kst_now.strftime('%Y-%m-%d')}).",
+                }
+
         initial_state = self._detect_state()
 
         if initial_state == _SM_ALREADY_COMPLETED:
@@ -474,6 +498,9 @@ class CloudRunner:
 
         db_path = self.state_dir / "data" / "stock_system.db"
         db = DatabaseManager(db_path=str(db_path))
+
+        if initial_state == "SHADOW_SCAN":
+            return self._run_shadow_scan(manifest, current_generation, db)
 
         # Phase 3: RESUME vs FRESH
         # CRITICAL: If state was committed for this run_id, invalid prepared dispatch
@@ -494,18 +521,79 @@ class CloudRunner:
 
         return self._run_fresh(manifest, current_generation, db)
 
+    def _run_shadow_scan(
+        self,
+        manifest: Dict[str, Any],
+        current_generation: Optional[int],
+        db: DatabaseManager,
+    ) -> Dict[str, Any]:
+        """
+        SHADOW_SCAN: 45m completed bar shadow recording only.
+        - Advisory & shadow recording only (ZERO Gmail / ZERO Kakao / ZERO Orders).
+        - NO dispatch receipt created or checked.
+        - Fail-isolated: failures do not disrupt existing reports.
+        - GCS state bundle committed if scan succeeds.
+        """
+        os.environ["STOCKBOT_STATE_DIR"] = str(self.state_dir)
+        os.environ["STOCKBOT_CLOUD_MODE"] = "1"
 
-def main():
+        logger.info("[CloudRunner SHADOW_SCAN] Executing 45m Intraday Shadow Scan...")
+        from src.runtime.runtime_scheduler import RuntimeScheduler
+        scheduler = RuntimeScheduler(db_manager=db)
+
+        scan_res = scheduler._execute_intraday_shadow_scan(
+            is_manual=self.force,
+            skip_reserved_check=True,
+            asof_dt=self.kst_now,
+        )
+        scan_status = scan_res.get("status")
+        logger.info(f"[CloudRunner SHADOW_SCAN] Scan status: {scan_status}")
+
+        committed_bundle = None
+        if scan_status == "SUCCESS":
+            self.state_adapter._validate_sqlite_integrity()
+            committed_bundle, _ = self.state_adapter.create_and_upload_bundle(
+                run_id=self.run_id,
+                expected_generation=current_generation,
+                metadata={
+                    "report_mode": "SHADOW_SCAN",
+                    "stocks_scanned": scan_res.get("stocks_scanned", 0),
+                    "journals_created": scan_res.get("journals_created", 0),
+                    "last_completed_45m_bar": scan_res.get("last_completed_45m_bar"),
+                },
+            )
+            logger.info(f"[CloudRunner SHADOW_SCAN] State bundle committed: {committed_bundle}")
+
+        logger.info("=" * 60)
+        logger.info(f"[CloudRunner SHADOW_SCAN] Finished. Status={scan_status}")
+        logger.info(f"  Run ID: {self.run_id}")
+        logger.info(f"  Committed Bundle: {committed_bundle}")
+        logger.info("=" * 60)
+
+        return {
+            "status": scan_status,
+            "run_id": self.run_id,
+            "scan_result": scan_res,
+            "committed_bundle": committed_bundle,
+        }
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="StockBot Cloud Run Job Entrypoint")
     parser.add_argument(
         "--mode", type=str, required=True,
-        choices=["INTRADAY", "POSTMARKET", "intraday", "postmarket"],
+        choices=["INTRADAY", "POSTMARKET", "SHADOW_SCAN", "intraday", "postmarket", "shadow_scan"],
         help="Report mode",
     )
     parser.add_argument("--force", action="store_true", help="Bypass idempotency check")
     parser.add_argument("--state-dir", type=str, help="State directory")
     parser.add_argument("--bucket", type=str, help="GCS bucket name")
     parser.add_argument("--prefix", type=str, default="stockbot-state", help="GCS prefix")
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     runner = CloudRunner(
@@ -519,7 +607,13 @@ def main():
     try:
         res = runner.run()
         print(f"CloudRunner Result: {res.get('status')}")
-        if res.get("status") in ("SUCCESS", _SM_ALREADY_COMPLETED, _SM_RESUME):
+        if res.get("status") in (
+            "SUCCESS",
+            _SM_ALREADY_COMPLETED,
+            _SM_RESUME,
+            "SKIPPED_NO_NEW_45M_BAR",
+            "SKIPPED_NON_TRADING_DAY",
+        ):
             sys.exit(0)
         else:
             sys.exit(1)
