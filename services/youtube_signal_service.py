@@ -614,23 +614,61 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     context["kiwoom_429_retry_count"] = session.retry_count
 
-    # YouTube candidates are the first live use of Jev.  The evaluator is
-    # fail-open: missing credentials or an API outage returns SEND, preserving
-    # the established technical + Kiwoom/DART/news mail path.
-    jev_gate = _jev_gate(
-        {
-            **payload,
-            "source": "YOUTUBE",
+    # Apps Script may already have run the cheap direct Jev PRE-GATE.
+    # A decisive PROCEED does not pay for a second Jev call.  Uncertain or
+    # missing PRE-GATE results keep the existing context-rich final Jev review.
+    pre_gate = payload.get("jev_pre_gate") if isinstance(payload.get("jev_pre_gate"), dict) else {}
+    pre_gate_ok = str(pre_gate.get("status") or "").upper() == "OK"
+    pre_gate_decision = str(pre_gate.get("decision") or "").upper()
+    needs_final_review = bool(pre_gate.get("needs_final_review", True))
+
+    if pre_gate_ok and pre_gate_decision == "HOLD":
+        # Defensive consistency: Apps Script should have stopped before /confirm,
+        # but if a HOLD payload reaches here, do not run expensive final work/mail.
+        return {
+            "ok": True,
             "ticker": ticker,
             "name": name,
-            "event_keys": ["YOUTUBE_BUY_CANDIDATE", final.final_signal],
-            "event_level": "STRONG" if final.final_signal == FINAL_BUY_ALERT_STRONG else "WATCH",
-            "current_price": payload.get("current_price"),
-            "buy_trigger_05": payload.get("buy_trigger_05"),
-            "confirm_trigger_06": payload.get("confirm_trigger_06"),
-            "context": context,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": FINAL_WATCH_ONLY,
+            "flow_status": flow.status,
+            "flow_summary": flow_text,
+            "jev_pre_gate": pre_gate,
+            "mail_sent": False,
+            "suppressed_by_jev_pre_gate": True,
+            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
         }
-    )
+
+    if pre_gate_ok and pre_gate_decision == "PROCEED" and not needs_final_review:
+        jev_gate = {
+            "ok": True,
+            "status": "OK",
+            "mode": "PRE_GATE",
+            "decision": "SEND",
+            "reason": "PRE_GATE_DECISIVE_PROCEED",
+            "source": "YOUTUBE",
+            "ticker": ticker,
+            "event_keys": ["YOUTUBE_BUY_CANDIDATE", final.final_signal],
+            "model": pre_gate.get("model") or "jev-latest",
+            "answers": pre_gate.get("answers") or {},
+            "usage": {},
+        }
+    else:
+        jev_gate = _jev_gate(
+            {
+                **payload,
+                "source": "YOUTUBE",
+                "ticker": ticker,
+                "name": name,
+                "event_keys": ["YOUTUBE_BUY_CANDIDATE", final.final_signal],
+                "event_level": "STRONG" if final.final_signal == FINAL_BUY_ALERT_STRONG else "WATCH",
+                "current_price": payload.get("current_price"),
+                "buy_trigger_05": payload.get("buy_trigger_05"),
+                "confirm_trigger_06": payload.get("confirm_trigger_06"),
+                "context": context,
+            }
+        )
     if jev_gate.get("decision") == "HOLD":
         app.logger.info(
             "Jev held YouTube candidate ticker=%s final=%s reason=%s",
@@ -679,6 +717,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         "combined_20d": flow.combined_20d,
         "flow_strength_5d": flow.flow_strength_5d,
         "market_context": context,
+        "jev_pre_gate": pre_gate,
         "jev_gate": jev_gate,
         "kiwoom_429_retry_count": session.retry_count,
         "mail_sent": True,
