@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - feat/youtube-candidate-ingest-v0-20260930
+      - feat/jev-pregate-20261006
     paths:
       - '.github/workflows/youtube_candidate_readonly_dry_run.yml'
       - 'scripts/youtube_candidate_*.py'
