@@ -21,6 +21,10 @@ const YC = Object.freeze({
   DATA_START_ROW: 2,
   LAST_COLUMN: 26,
   ELIGIBLE_TECH: 'BUY_CANDIDATE',
+  JEV_URL: 'https://api.typesafe.ai/v1/systemone',
+  JEV_MODEL: 'jev-latest',
+  JEV_PRE_HOLD_THRESHOLD: 0.35,
+  JEV_PRE_MAX_URGENCY_FOR_HOLD: 1,
 });
 
 function monitorYouTubeCandidates() {
@@ -107,6 +111,34 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
     confirm_trigger_06: numberOrNull_(row[16]),
   };
 
+  const preGate = ycJevPreGate_(payload);
+  if (preGate.decision === 'HOLD') {
+    // PRE-GATE는 명백히 약한 BUY_CANDIDATE만 Cloud Run 전에 종료한다.
+    // 기존 TriggerKey를 기록해 같은 날 같은 후보를 반복 호출하지 않는다.
+    sheet.getRange(rowNumber, 21, 1, 5).setValues([[
+      triggerKey,
+      new Date(),
+      'WATCH_ONLY',
+      'JEV_PRE_HOLD',
+      ycJevPreGateSummary_(preGate),
+    ]]);
+    appendDispatchLog_(ss, {
+      ticker: code,
+      name: name,
+      tech: techStatus,
+      http: '',
+      finalSignal: 'WATCH_ONLY',
+      flowStatus: 'JEV_PRE_HOLD',
+      detail: ycJevPreGateSummary_(preGate),
+      triggerKey: triggerKey,
+      elapsedMs: Date.now() - started,
+      error: '',
+      source: 'JEV_PRE_GATE',
+    });
+    return;
+  }
+  payload.jev_pre_gate = preGate;
+
   const response = UrlFetchApp.fetch(apiUrl.replace(/\/$/, '') + '/confirm', {
     method: 'post',
     contentType: 'application/json',
@@ -164,6 +196,160 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
     error: String(body.error || ('HTTP_' + http)),
     source: 'BACKEND_ERROR',
   });
+}
+
+
+function ycJevPreGate_(payload) {
+  const props = PropertiesService.getScriptProperties();
+  const apiKey = String(props.getProperty('JEV_API_KEY') || '').trim();
+  const base = {
+    status: 'NOT_CONFIGURED',
+    mode: 'PRE_GATE',
+    decision: 'PROCEED',
+    reason: 'JEV_API_KEY_MISSING',
+    needs_final_review: true,
+    answers: {}
+  };
+  if (!apiKey) return base;
+
+  const requestBody = {
+    model: YC.JEV_MODEL,
+    state: {
+      source: 'YOUTUBE',
+      as_of: String(payload.as_of_date || ''),
+      ticker: String(payload.ticker || ''),
+      name: String(payload.name || ''),
+      existing_rule_candidate: true,
+      event_keys: ['YOUTUBE_BUY_CANDIDATE'],
+      event_level: 'WATCH',
+      technical: {
+        current_price: payload.current_price,
+        reference_low: payload.reference_low,
+        atr14: payload.atr14,
+        ma20: payload.ma20,
+        ma60: payload.ma60,
+        ma20_slope_5d: payload.ma20_slope_5d,
+        rsi14: payload.rsi14,
+        pullback_ready: payload.pullback_ready,
+        buy_trigger_05: payload.buy_trigger_05,
+        confirm_trigger_06: payload.confirm_trigger_06
+      }
+    },
+    questions: {
+      signal_direction: {
+        type: 'choice',
+        instructions: 'Classify the supplied BUY_CANDIDATE evidence only. Do not infer missing flow, news, disclosure, or intraday evidence.',
+        criteria: {
+          UP: 'Supplied technical evidence is predominantly constructive.',
+          DOWN: 'Supplied technical evidence is predominantly deteriorating.',
+          NEUTRAL: 'Evidence is mixed or insufficient.'
+        }
+      },
+      signal_stage: {
+        type: 'choice',
+        instructions: 'Rate only whether this candidate merits further validation, not whether to place an order.',
+        criteria: {
+          NONE: 'No credible upward setup from the supplied evidence.',
+          DEVELOPING: 'Early or incomplete setup; evidence is limited.',
+          BUY_WATCH: 'Enough evidence to justify further validation.',
+          BUY_CONFIRMED: 'Strong supplied evidence; further validation is clearly worthwhile.'
+        }
+      },
+      alert_urgency: {
+        type: 'score',
+        instructions: 'How urgently should this candidate proceed to the more expensive validation pipeline?',
+        criteria: [
+          '0: no material reason to continue now.',
+          '1: weak/noisy and can wait.',
+          '2: useful candidate worth validating.',
+          '3: timely validation is warranted.',
+          '4: unusually strong/time-sensitive candidate.'
+        ]
+      },
+      send_alert_now: {
+        type: 'noul',
+        instructions: 'Probability that this existing BUY_CANDIDATE is worth continuing to the expensive validation pipeline now. Under uncertainty, prefer continuing rather than rejecting.'
+      }
+    }
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(YC.JEV_URL, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: {Authorization: 'Bearer ' + apiKey},
+      payload: JSON.stringify(requestBody),
+      muteHttpExceptions: true,
+      followRedirects: true
+    });
+    const http = res.getResponseCode();
+    if (http < 200 || http >= 300) {
+      return Object.assign({}, base, {status: 'ERROR', reason: 'JEV_HTTP_' + http});
+    }
+    let body = {};
+    try { body = JSON.parse(res.getContentText() || '{}'); } catch (e) {
+      return Object.assign({}, base, {status: 'ERROR', reason: 'JEV_INVALID_JSON'});
+    }
+    const answers = body && body.answers ? body.answers : {};
+    const stage = ycJevChoice_(answers.signal_stage, 'UNKNOWN');
+    const direction = ycJevChoice_(answers.signal_direction, 'UNKNOWN');
+    const urgency = ycJevNumber_(answers.alert_urgency, 'score', 0);
+    const probability = ycJevNumber_(answers.send_alert_now, 'noul', 1);
+
+    // Conservative fail-open PRE-GATE:
+    // only clearly weak NONE/DEVELOPING + low urgency + low probability is rejected.
+    const weakStage = stage === 'NONE' || stage === 'DEVELOPING';
+    const hold = weakStage &&
+      urgency <= YC.JEV_PRE_MAX_URGENCY_FOR_HOLD &&
+      probability < YC.JEV_PRE_HOLD_THRESHOLD;
+
+    // Strong pre-gate evidence does not need another Jev call after expensive validation.
+    // Middling/uncertain cases may still use the existing final Jev gate.
+    const decisiveProceed = !hold &&
+      (stage === 'BUY_WATCH' || stage === 'BUY_CONFIRMED') &&
+      urgency >= 2 &&
+      probability >= 0.55;
+
+    return {
+      status: 'OK',
+      mode: 'PRE_GATE',
+      decision: hold ? 'HOLD' : 'PROCEED',
+      reason: hold ? 'CLEARLY_WEAK_PRE_GATE' : (decisiveProceed ? 'DECISIVE_PROCEED' : 'PROCEED_UNCERTAIN'),
+      needs_final_review: !decisiveProceed,
+      model: String(body.model || YC.JEV_MODEL),
+      answers: answers,
+      summary: {
+        direction: direction,
+        stage: stage,
+        urgency: urgency,
+        probability: probability
+      }
+    };
+  } catch (err) {
+    return Object.assign({}, base, {
+      status: 'ERROR',
+      reason: 'JEV_TRANSPORT:' + String(err && err.message ? err.message : err)
+    });
+  }
+}
+
+function ycJevChoice_(answer, fallback) {
+  return String(answer && answer.choice ? answer.choice : (fallback || 'UNKNOWN')).toUpperCase();
+}
+
+function ycJevNumber_(answer, field, fallback) {
+  const value = answer && answer[field] != null ? Number(answer[field]) : Number(fallback || 0);
+  return isFinite(value) ? value : Number(fallback || 0);
+}
+
+function ycJevPreGateSummary_(gate) {
+  const s = gate && gate.summary ? gate.summary : {};
+  return 'Jev PRE ' + String(gate && gate.decision || 'PROCEED') +
+    ' · ' + String(s.direction || 'UNKNOWN') +
+    ' / ' + String(s.stage || 'UNKNOWN') +
+    ' / urgency ' + String(s.urgency == null ? '-' : s.urgency) +
+    ' / proceed ' + Math.round(Number(s.probability == null ? 1 : s.probability) * 100) + '%' +
+    ' · ' + String(gate && gate.reason || '');
 }
 
 function isMonitorEnabled_(ss) {
