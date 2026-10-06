@@ -252,7 +252,7 @@ Invoke-Gcloud -Args @(
     '--network=default',
     '--subnet=default',
     '--vpc-egress=all-traffic',
-    "--set-env-vars=STOCKBOT_CLOUD_MODE=1,GMAIL_USER=$GmailUser,GMAIL_SENDER_EMAIL=$GmailUser,RECIPIENT_GMAIL=$GmailUser,TZ=Asia/Seoul,JEV_ALERT_GATE_MODE=SHADOW,JEV_ALERT_GATE_YOUTUBE_MODE=ACTIVE,JEV_ALERT_GATE_SEND_THRESHOLD=0.70,JEV_ALERT_GATE_DETERIORATION_THRESHOLD=0.70,JEV_ALERT_GATE_MIN_URGENCY=2.0",
+    "--set-env-vars=STOCKBOT_CLOUD_MODE=1,GMAIL_USER=$GmailUser,GMAIL_SENDER_EMAIL=$GmailUser,RECIPIENT_GMAIL=$GmailUser,TZ=Asia/Seoul,JEV_ALERT_GATE_MODE=SHADOW,JEV_ALERT_GATE_YOUTUBE_MODE=ACTIVE,JEV_ALERT_GATE_ETF_MODE=ACTIVE,JEV_ALERT_GATE_HELD_MODE=ACTIVE,JEV_ALERT_GATE_SEND_THRESHOLD=0.70,JEV_ALERT_GATE_DETERIORATION_THRESHOLD=0.70,JEV_ALERT_GATE_MIN_URGENCY=2.0",
     '--set-secrets=KIWOOM_APP_KEY=youtube-kiwoom-app-key:latest,KIWOOM_APP_SECRET=youtube-kiwoom-app-secret:latest,GMAIL_APP_PASSWORD=youtube-gmail-app-password:latest,YOUTUBE_SIGNAL_API_TOKEN=youtube-signal-api-token:latest,JEV_API_KEY=youtube-jev-api-key:latest',
     '--min-instances=0','--max-instances=2','--memory=512Mi','--cpu=1','--timeout=60','--quiet',
     '--project',$Project
