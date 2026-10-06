@@ -44,6 +44,7 @@ const HM = Object.freeze({
   JEV_MODEL: 'jev-latest',
   JEV_PRE_HOLD_THRESHOLD: 0.35,
   JEV_PRE_MAX_URGENCY_FOR_HOLD: 1,
+  JEV_PRE_RECHECK_MINUTES: 15,
 
   GATE_VERSION: 3,
   CONFIRM_CYCLES: 2,
@@ -206,14 +207,17 @@ function hmEvaluate_(enforceMarketWindow) {
         // before Cloud Run / Kiwoom / DART / news. Risk/down events fail-open to context.
         const jevPreGate = hmJevPreGate_(cur, gated.mailEvents, now, 'HELD');
         if (!hmJevPreAllowsProceed_(gated.mailEvents, jevPreGate)) {
-          const heldAlert = {
-            cur: cur,
-            events: gated.mailEvents,
-            marketContext: {},
-            jevGate: jevPreGate
-          };
-          cur.gateState = hmMarkGateSent_(cur.gateState, cur, gated.mailEvents, now);
-          hmAppendJevGateLog_(ss, [heldAlert], now);
+          // PRE-HOLD는 15분 뒤 다시 Jev만 재심사한다.
+          // 여기서는 gateState를 sent 처리하지 않아 장중 강화 신호를 놓치지 않는다.
+          if (jevPreGate.reason !== 'PRE_HOLD_COOLDOWN') {
+            const heldAlert = {
+              cur: cur,
+              events: gated.mailEvents,
+              marketContext: {},
+              jevGate: jevPreGate
+            };
+            hmAppendJevGateLog_(ss, [heldAlert], now);
+          }
         } else {
           // Only PRE-GATE survivors pay for Cloud Run + Kiwoom/DART/news context.
           const marketContext = hmFetchMarketContext_(cur, gated.mailEvents, now);
@@ -950,6 +954,20 @@ function hmFetchMarketContext_(cur, events, now) {
  */
 function hmJevPreGate_(cur, events, now, source) {
   const keys = (events || []).map(function(e) { return String(e && e.key || '').toUpperCase(); });
+  const props = PropertiesService.getScriptProperties();
+  const holdKey = hmJevPreHoldKey_(source || 'HELD', cur && cur.ticker || '', keys);
+  const priorHold = hmJevReadPreHold_(props, holdKey);
+  if (priorHold) {
+    const ageMs = Date.now() - Number(priorHold.at || 0);
+    if (ageMs >= 0 && ageMs < HM.JEV_PRE_RECHECK_MINUTES * 60000) {
+      return {
+        ok: true, status: 'OK', mode: 'PRE_GATE', decision: 'HOLD',
+        reason: 'PRE_HOLD_COOLDOWN', source: source || 'HELD',
+        ticker: cur && cur.ticker || '', event_keys: keys,
+        needs_final_review: false, answers: priorHold.answers || {}
+      };
+    }
+  }
   const riskish = (events || []).some(function(e) {
     const key = String(e && e.key || '').toUpperCase();
     const level = String(e && e.level || '').toUpperCase();
@@ -978,7 +996,6 @@ function hmJevPreGate_(cur, events, now, source) {
     });
   }
 
-  const props = PropertiesService.getScriptProperties();
   const apiKey = String(props.getProperty(HM.PROP_JEV_API_KEY) || '').trim();
   if (!apiKey) return base;
 
@@ -1077,7 +1094,7 @@ function hmJevPreGate_(cur, events, now, source) {
       urgency >= 2 &&
       probability >= 0.55;
 
-    return {
+    const result = {
       ok: true,
       status: 'OK',
       mode: 'PRE_GATE',
@@ -1090,11 +1107,31 @@ function hmJevPreGate_(cur, events, now, source) {
       model: String(body.model || HM.JEV_MODEL),
       answers: answers
     };
+    if (hold) {
+      props.setProperty(holdKey, JSON.stringify({at: Date.now(), answers: answers}));
+    } else {
+      props.deleteProperty(holdKey);
+    }
+    return result;
   } catch (err) {
     return Object.assign({}, base, {
       status: 'ERROR',
       reason: 'JEV_PRE_TRANSPORT:' + String(err && err.message ? err.message : err)
     });
+  }
+}
+
+function hmJevPreHoldKey_(source, ticker, keys) {
+  const raw = [source || 'HELD', ticker || '', (keys || []).join('_')].join('_');
+  return 'JEV_PRE_HOLD_' + raw.replace(/[^A-Za-z0-9_가-힣]/g, '').slice(0, 180);
+}
+
+function hmJevReadPreHold_(props, key) {
+  const raw = String(props.getProperty(key) || '').trim();
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) {
+    props.deleteProperty(key);
+    return null;
   }
 }
 
@@ -1135,9 +1172,9 @@ function hmJevNumber_(answer, field, fallback) {
  * engine.  It is deliberately fail-open: the existing technical rule alert is
  * delivered when the gateway is off, unconfigured, slow, or returns an error.
  *
- * Cloud Run owns JEV_API_KEY.  Apps Script continues to use only its existing
- * SIGNAL_API_URL / SIGNAL_API_TOKEN properties, so the Jev key never reaches a
- * spreadsheet, email body, or Apps Script source.
+ * PRE-GATE reads JEV_API_KEY from Apps Script Script Properties and calls Jev
+ * directly. The key is never written to a sheet, log, or email. Context-rich
+ * FINAL review still uses Cloud Run via SIGNAL_API_URL / SIGNAL_API_TOKEN.
  */
 function hmJevEvaluateAlert_(cur, events, marketContext, now, source) {
   const props = PropertiesService.getScriptProperties();
