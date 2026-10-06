@@ -96,18 +96,42 @@ function ewPlan_(rows, previous, now) {
 function ewApplyJevGate_(plan,now) {
   const delivered=[]; const held=[];
   (plan.alerts||[]).forEach(r => {
-    const stage=ewStage_(r.signal); const item=plan.state.items[r.code] || (plan.state.items[r.code]={stage:stage,count:EW.CONFIRM_CYCLES,sent:{}});
+    const stage=ewStage_(r.signal);
+    const item=plan.state.items[r.code] || (plan.state.items[r.code]={stage:stage,count:EW.CONFIRM_CYCLES,sent:{}});
     const events=[{key:'ETF_SIGNAL_'+stage,level:/^[▲▼]/.test(stage)?'STRONG':'WATCH',title:r.signal,message:r.sector+' ETF 기술신호'}];
-    const gate=(typeof hmJevEvaluateAlert_ === 'function') ? hmJevEvaluateAlert_({
+    const cur={
       ticker:r.code,name:r.name,price:r.price,changePct:r.day,atrBand:'ETF_NA',volumePace:null,stopBroken:false,
       vwap9Dir:'ETF_NA',vwap26Dir:'ETF_NA',vwapRel:'ETF_NA',obvDir:'ETF_NA',obv9Dir:'ETF_NA',obvRel:'ETF_NA',regime:r.signal
-    },events,{catalyst:{label:'ETF price/technical signal',confidence:'N/A',reason:r.sector},flow:{status:'NOT_REQUESTED'},disclosures:[],news:[]},now,'ETF') : {status:'NOT_CONFIGURED',decision:'SEND',reason:'HELD_JEV_HELPER_MISSING'};
+    };
+
+    // Cheap/direct Jev PRE-GATE first. Clearly weak upward ETF signals stop before Cloud Run.
+    const preGate=(typeof hmJevPreGate_ === 'function')
+      ? hmJevPreGate_(cur,events,now,'ETF')
+      : {status:'NOT_CONFIGURED',decision:'PROCEED',reason:'JEV_PRE_HELPER_MISSING',needs_final_review:true};
+
+    if (typeof hmJevPreAllowsProceed_ === 'function' && !hmJevPreAllowsProceed_(events,preGate)) {
+      r.jevGate=preGate;
+      item.held=Object.assign({},item.held||{});
+      item.held[stage]=true;
+      held.push({cur:cur,events:events,jevGate:preGate});
+      return;
+    }
+
+    // Strong PRE-GATE proceeds directly. Uncertain survivors get the existing final Jev review.
+    const gate=preGate && preGate.needs_final_review===false && typeof hmJevPromotePreGate_ === 'function'
+      ? hmJevPromotePreGate_(preGate)
+      : ((typeof hmJevEvaluateAlert_ === 'function') ? hmJevEvaluateAlert_(
+          cur,events,
+          {catalyst:{label:'ETF price/technical signal',confidence:'N/A',reason:r.sector},flow:{status:'NOT_REQUESTED'},disclosures:[],news:[]},
+          now,'ETF'
+        ) : {status:'NOT_CONFIGURED',decision:'SEND',reason:'HELD_JEV_HELPER_MISSING'});
     r.jevGate=gate;
+
     const allowed=(typeof hmJevAllowsAlert_ === 'function') ? hmJevAllowsAlert_(events,gate) : true;
     if (allowed) {
       item.sent[stage]=true; delivered.push(r);
     } else {
-      item.held=Object.assign({},item.held||{}); item.held[stage]=true; held.push({cur:{ticker:r.code,name:r.name,price:r.price,changePct:r.day,regime:r.signal},events:events,jevGate:gate});
+      item.held=Object.assign({},item.held||{}); item.held[stage]=true; held.push({cur:cur,events:events,jevGate:gate});
     }
   });
   if (held.length && typeof hmAppendJevGateLog_ === 'function') hmAppendJevGateLog_(SpreadsheetApp.openById(EW.SPREADSHEET_ID),held,now);
