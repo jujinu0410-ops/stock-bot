@@ -115,7 +115,11 @@ function hmRunNow() {
 }
 
 function hmTick5m() {
-  return hmEvaluate_(true);
+  const closeSync = (typeof dcsScheduledTick_ === 'function')
+    ? dcsScheduledTick_()
+    : {status:'DCS_NOT_LOADED'};
+  const monitor = hmEvaluate_(true);
+  return {closeSync:closeSync, monitor:monitor};
 }
 
 function hmCompactNow() {
