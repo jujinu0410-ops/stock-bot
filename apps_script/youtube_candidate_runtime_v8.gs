@@ -12,6 +12,63 @@ const YCV8 = Object.freeze({
   TIMEZONE: 'Asia/Seoul',
 });
 
+/*
+ * Premarket parser: ONLY the machine-readable "장전 시황" block is eligible
+ * for YouTube candidate ingestion. The later [YT_ALL_STOCKS_*] block is an
+ * audit/full-mention list and MUST NOT feed the candidate pool.
+ *
+ * Expected lines:
+ *   장전 시황
+ *   009150|삼성전기|reason...
+ *   ...
+ * Parsing stops at the first non-empty line that is not CODE|NAME|REASON
+ * after at least one stock line.
+ */
+function parsePremarketStocksBlockV10_(body) {
+  const text = String(body || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\u00a0\u200b\ufeff\u200e\u200f]/g, ' ')
+    .replace(/[\u202a-\u202e\u2066-\u2069]/g, '');
+
+  const lines = text.split('\n');
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (String(lines[i] || '').trim() === '장전 시황') {
+      start = i + 1;
+      break;
+    }
+  }
+  if (start < 0) return {found: false, stocks: []};
+
+  const stocks = [];
+  const seen = new Set();
+
+  for (let i = start; i < lines.length; i++) {
+    const line = String(lines[i] || '').trim();
+    if (!line) {
+      if (stocks.length) break;
+      continue;
+    }
+
+    const m = line.match(/^(\d{6})\|([^|]+)\|(.+)$/);
+    if (!m) {
+      if (stocks.length) break;
+      continue;
+    }
+
+    const code = String(m[1]);
+    const name = String(m[2] || '').trim();
+    if (!name) throw new Error('PREMARKET_EMPTY_NAME_' + code);
+    if (seen.has(code)) continue;
+    seen.add(code);
+    stocks.push({code: code, name: name});
+  }
+
+  return {found: true, stocks: stocks};
+}
+
+
 function ymdFromAnyV8_(value) {
   if (value instanceof Date && !isNaN(value.getTime())) {
     return Utilities.formatDate(value, YCV8.TIMEZONE, 'yyyy-MM-dd');
@@ -67,7 +124,7 @@ function collectIntelligenceCandidates_() {
       const subject = String(message.getSubject() || '');
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
 
-      const parsed = parseYtAllStocksBlockV7_(message.getPlainBody());
+      const parsed = parsePremarketStocksBlockV10_(message.getPlainBody());
       if (!parsed.found) return;
 
       const dateKey = Utilities.formatDate(message.getDate(), YCV8.TIMEZONE, 'yyyy-MM-dd');
