@@ -25,6 +25,7 @@ const DCS = Object.freeze({
   MONITOR_SHEET: 'MONITOR_CONFIG',
   LOG_SHEET: 'SYNC_LOG',
   PROP_LAST_SUCCESS: 'DAILY_CLOSE_SYNC_LAST_SUCCESS',
+  PROP_LAST_NO_REPORT_LOG: 'DAILY_CLOSE_SYNC_LAST_NO_REPORT_LOG',
   REPORT_SUBJECT: '[장마감 리포트 (15:35)]',
   WINDOW_START_HHMM: 1538,
   WINDOW_END_HHMM: 1605,
@@ -79,7 +80,10 @@ function dcsRun_(now, force) {
 
     const report = dcsFindReportForDate_(dayKey);
     if (!report) {
-      dcsAppendLog_(now, 'SKIP_NO_REPORT', '', 0, '', '당일 15:35 장마감 리포트 없음');
+      if (props.getProperty(DCS.PROP_LAST_NO_REPORT_LOG) !== dayKey) {
+        dcsAppendLog_(now, 'SKIP_NO_REPORT', '', 0, '', '당일 15:35 장마감 리포트 없음');
+        props.setProperty(DCS.PROP_LAST_NO_REPORT_LOG, dayKey);
+      }
       return {status:'NO_REPORT', day:dayKey};
     }
 
@@ -120,6 +124,7 @@ function dcsRun_(now, force) {
     }
 
     props.setProperty(DCS.PROP_LAST_SUCCESS, dayKey);
+    props.deleteProperty(DCS.PROP_LAST_NO_REPORT_LOG);
     const detail = [
       'holdings=' + output.monitorRows.length,
       'added=' + output.added.join('|'),
