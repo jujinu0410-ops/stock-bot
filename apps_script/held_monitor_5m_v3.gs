@@ -39,6 +39,11 @@ const HM = Object.freeze({
   PROP_LAST_LOG_CLEANUP: 'HELD_LAST_LOG_CLEANUP',
   PROP_API_URL: 'SIGNAL_API_URL',
   PROP_API_TOKEN: 'SIGNAL_API_TOKEN',
+  PROP_JEV_API_KEY: 'JEV_API_KEY',
+  JEV_URL: 'https://api.typesafe.ai/v1/systemone',
+  JEV_MODEL: 'jev-latest',
+  JEV_PRE_HOLD_THRESHOLD: 0.35,
+  JEV_PRE_MAX_URGENCY_FOR_HOLD: 1,
 
   GATE_VERSION: 3,
   CONFIRM_CYCLES: 2,
@@ -197,23 +202,37 @@ function hmEvaluate_(enforceMarketWindow) {
       cur.lastAlertAt = prev ? (prev.lastAlertAt || '') : '';
 
       if (gated.mailEvents.length > 0) {
-        // 최종 메일 게이트를 통과한 사건에만 Kiwoom/DART/뉴스를 조회한다.
-        const marketContext = hmFetchMarketContext_(cur, gated.mailEvents, now);
-        const jevGate = hmJevEvaluateAlert_(cur, gated.mailEvents, marketContext, now, 'HELD');
-        const alert = {
-          cur: cur,
-          events: gated.mailEvents,
-          marketContext: marketContext,
-          jevGate: jevGate
-        };
-        if (hmJevAllowsAlert_(gated.mailEvents, jevGate)) {
-          pendingAlerts.push(alert);
-        } else {
-          // ACTIVE mode held this non-critical candidate.  Mark the state as
-          // seen so the same 5-minute condition does not repeatedly call Jev;
-          // ALERT_LOG remains mail-only and JEV_GATE_LOG preserves the audit.
+        // PRE-GATE: Apps Script -> Jev direct. Clear weak upward candidates stop here,
+        // before Cloud Run / Kiwoom / DART / news. Risk/down events fail-open to context.
+        const jevPreGate = hmJevPreGate_(cur, gated.mailEvents, now, 'HELD');
+        if (!hmJevPreAllowsProceed_(gated.mailEvents, jevPreGate)) {
+          const heldAlert = {
+            cur: cur,
+            events: gated.mailEvents,
+            marketContext: {},
+            jevGate: jevPreGate
+          };
           cur.gateState = hmMarkGateSent_(cur.gateState, cur, gated.mailEvents, now);
-          hmAppendJevGateLog_(ss, [alert], now);
+          hmAppendJevGateLog_(ss, [heldAlert], now);
+        } else {
+          // Only PRE-GATE survivors pay for Cloud Run + Kiwoom/DART/news context.
+          const marketContext = hmFetchMarketContext_(cur, gated.mailEvents, now);
+          const jevGate = jevPreGate.needs_final_review
+            ? hmJevEvaluateAlert_(cur, gated.mailEvents, marketContext, now, 'HELD')
+            : hmJevPromotePreGate_(jevPreGate);
+          const alert = {
+            cur: cur,
+            events: gated.mailEvents,
+            marketContext: marketContext,
+            jevGate: jevGate
+          };
+          if (hmJevAllowsAlert_(gated.mailEvents, jevGate)) {
+            pendingAlerts.push(alert);
+          } else {
+            // Final Jev held this non-critical survivor.
+            cur.gateState = hmMarkGateSent_(cur.gateState, cur, gated.mailEvents, now);
+            hmAppendJevGateLog_(ss, [alert], now);
+          }
         }
       }
 
@@ -919,6 +938,196 @@ function hmFetchMarketContext_(cur, events, now) {
       news: []
     };
   }
+}
+
+
+/**
+ * Direct Jev PRE-GATE.
+ *
+ * Purpose: reject only clearly weak upward candidates before Cloud Run.
+ * Risk/down events bypass PRE-GATE and continue to the existing context/final path.
+ * Missing key, transport failure, malformed response, or uncertainty => PROCEED.
+ */
+function hmJevPreGate_(cur, events, now, source) {
+  const keys = (events || []).map(function(e) { return String(e && e.key || '').toUpperCase(); });
+  const riskish = (events || []).some(function(e) {
+    const key = String(e && e.key || '').toUpperCase();
+    const level = String(e && e.level || '').toUpperCase();
+    return level === 'RISK' || /STOP|DOWN|RISK|▼|▽/.test(key);
+  }) || /^(▼|▽)/.test(String(cur && cur.regime || ''));
+
+  const base = {
+    ok: true,
+    status: 'NOT_CONFIGURED',
+    mode: 'PRE_GATE',
+    decision: 'PROCEED',
+    reason: 'JEV_API_KEY_MISSING',
+    source: source || 'HELD',
+    ticker: cur && cur.ticker || '',
+    event_keys: keys,
+    needs_final_review: true,
+    answers: {}
+  };
+
+  // Safety first: never let the low-context PRE-GATE suppress risk/down alerts.
+  if (riskish) {
+    return Object.assign({}, base, {
+      status: 'BYPASS',
+      reason: 'RISK_OR_DOWN_PRE_GATE_BYPASS',
+      needs_final_review: true
+    });
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const apiKey = String(props.getProperty(HM.PROP_JEV_API_KEY) || '').trim();
+  if (!apiKey) return base;
+
+  const requestBody = {
+    model: HM.JEV_MODEL,
+    state: {
+      source: source || 'HELD',
+      as_of: hmDateKey_(now),
+      ticker: cur.ticker,
+      name: cur.name,
+      existing_rule_candidate: true,
+      event_keys: keys,
+      event_level: hmStrongestLevel_(events || []),
+      technical: {
+        current_price: cur.price,
+        change_pct: cur.changePct,
+        atr_band: cur.atrBand,
+        volume_pace: cur.volumePace,
+        stop_broken: cur.stopBroken,
+        vwap9_direction: cur.vwap9Dir,
+        vwap26_direction: cur.vwap26Dir,
+        vwap_relation: cur.vwapRel,
+        obv_direction: cur.obvDir,
+        obv9_direction: cur.obv9Dir,
+        obv_relation: cur.obvRel,
+        regime: cur.regime
+      }
+    },
+    questions: {
+      signal_direction: {
+        type: 'choice',
+        instructions: 'Classify only the supplied low-cost evidence. Do not infer missing flow, news, disclosure, or other context.',
+        criteria: {
+          UP: 'Evidence is predominantly improving or bullish.',
+          DOWN: 'Evidence is predominantly deteriorating or risk-off.',
+          NEUTRAL: 'Evidence is mixed, stale, or insufficient.'
+        }
+      },
+      signal_stage: {
+        type: 'choice',
+        instructions: 'Rate whether this upward candidate merits the more expensive validation pipeline, not whether to place an order.',
+        criteria: {
+          NONE: 'No credible upward setup from supplied evidence.',
+          DEVELOPING: 'Early/incomplete upward setup with limited conviction.',
+          BUY_WATCH: 'Enough evidence to justify further validation.',
+          BUY_CONFIRMED: 'Strong supplied evidence; further validation is clearly worthwhile.'
+        }
+      },
+      alert_urgency: {
+        type: 'score',
+        instructions: 'How urgently should this candidate continue to the more expensive validation pipeline?',
+        criteria: [
+          '0: record only; no material reason to continue now.',
+          '1: weak/noisy and can wait.',
+          '2: useful candidate worth validating.',
+          '3: timely validation is warranted.',
+          '4: unusually strong/time-sensitive candidate.'
+        ]
+      },
+      send_alert_now: {
+        type: 'noul',
+        instructions: 'Probability that this existing candidate is worth continuing to the expensive validation pipeline now. Under uncertainty, prefer continuing rather than rejecting.'
+      }
+    }
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(HM.JEV_URL, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: {Authorization: 'Bearer ' + apiKey},
+      payload: JSON.stringify(requestBody),
+      muteHttpExceptions: true,
+      followRedirects: true
+    });
+    const http = res.getResponseCode();
+    if (http < 200 || http >= 300) {
+      return Object.assign({}, base, {status: 'ERROR', reason: 'JEV_PRE_HTTP_' + http});
+    }
+    let body = {};
+    try { body = JSON.parse(res.getContentText() || '{}'); } catch (e) {
+      return Object.assign({}, base, {status: 'ERROR', reason: 'JEV_PRE_INVALID_JSON'});
+    }
+    const answers = body && body.answers ? body.answers : {};
+    const stage = hmJevChoice_(answers.signal_stage, 'UNKNOWN');
+    const direction = hmJevChoice_(answers.signal_direction, 'UNKNOWN');
+    const urgency = hmJevNumber_(answers.alert_urgency, 'score', 0);
+    const probability = hmJevNumber_(answers.send_alert_now, 'noul', 1);
+
+    const weakStage = stage === 'NONE' || stage === 'DEVELOPING';
+    const hold = weakStage &&
+      urgency <= HM.JEV_PRE_MAX_URGENCY_FOR_HOLD &&
+      probability < HM.JEV_PRE_HOLD_THRESHOLD;
+    const decisiveProceed = !hold &&
+      (stage === 'BUY_WATCH' || stage === 'BUY_CONFIRMED') &&
+      urgency >= 2 &&
+      probability >= 0.55;
+
+    return {
+      ok: true,
+      status: 'OK',
+      mode: 'PRE_GATE',
+      decision: hold ? 'HOLD' : 'PROCEED',
+      reason: hold ? 'CLEARLY_WEAK_PRE_GATE' : (decisiveProceed ? 'DECISIVE_PROCEED' : 'PROCEED_UNCERTAIN'),
+      source: source || 'HELD',
+      ticker: cur.ticker,
+      event_keys: keys,
+      needs_final_review: !decisiveProceed,
+      model: String(body.model || HM.JEV_MODEL),
+      answers: answers
+    };
+  } catch (err) {
+    return Object.assign({}, base, {
+      status: 'ERROR',
+      reason: 'JEV_PRE_TRANSPORT:' + String(err && err.message ? err.message : err)
+    });
+  }
+}
+
+function hmJevPreAllowsProceed_(events, gate) {
+  const keys = (events || []).map(function(e) { return String(e && e.key || '').toUpperCase(); });
+  if (keys.some(function(k) { return /STOP|DOWN|RISK|▼|▽/.test(k); })) return true;
+  if (!gate || gate.status !== 'OK') return true;
+  return String(gate.decision || 'PROCEED').toUpperCase() !== 'HOLD';
+}
+
+function hmJevPromotePreGate_(preGate) {
+  return {
+    ok: true,
+    status: 'OK',
+    mode: 'PRE_GATE',
+    decision: 'SEND',
+    reason: 'PRE_GATE_DECISIVE_PROCEED',
+    source: preGate && preGate.source || '',
+    ticker: preGate && preGate.ticker || '',
+    event_keys: preGate && preGate.event_keys || [],
+    model: preGate && preGate.model || HM.JEV_MODEL,
+    answers: preGate && preGate.answers || {},
+    usage: {}
+  };
+}
+
+function hmJevChoice_(answer, fallback) {
+  return String(answer && answer.choice ? answer.choice : (fallback || 'UNKNOWN')).toUpperCase();
+}
+
+function hmJevNumber_(answer, field, fallback) {
+  const value = answer && answer[field] != null ? Number(answer[field]) : Number(fallback || 0);
+  return isFinite(value) ? value : Number(fallback || 0);
 }
 
 /**
