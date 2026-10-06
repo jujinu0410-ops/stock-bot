@@ -10,6 +10,9 @@
 
 const YCV8 = Object.freeze({
   TIMEZONE: 'Asia/Seoul',
+  PREMARKET_MIN_STOCKS: 1,
+  PREMARKET_MAX_STOCKS: 30,
+  PREMARKET_SOURCE_TAG: 'PREMARKET_V10',
 });
 
 /*
@@ -39,7 +42,7 @@ function parsePremarketStocksBlockV10_(body) {
       break;
     }
   }
-  if (start < 0) return {found: false, stocks: []};
+  if (start < 0) return {found: false, source: YCV8.PREMARKET_SOURCE_TAG, stocks: []};
 
   const stocks = [];
   const seen = new Set();
@@ -65,7 +68,71 @@ function parsePremarketStocksBlockV10_(body) {
     stocks.push({code: code, name: name});
   }
 
-  return {found: true, stocks: stocks};
+  return {found: true, source: YCV8.PREMARKET_SOURCE_TAG, stocks: stocks};
+}
+
+/*
+ * Fail-closed ingest guard.
+ * No candidate-sheet writes are allowed unless the payload is proven to be
+ * the dedicated premarket block and passes basic structural consistency checks.
+ */
+function validatePremarketIngestV10_(body, parsed) {
+  if (!parsed || parsed.source !== YCV8.PREMARKET_SOURCE_TAG) {
+    throw new Error('INGEST_GUARD_SOURCE_MISMATCH');
+  }
+  if (!parsed.found) {
+    throw new Error('INGEST_GUARD_PREMARKET_BLOCK_MISSING');
+  }
+
+  const stocks = parsed.stocks || [];
+  if (
+    stocks.length < YCV8.PREMARKET_MIN_STOCKS ||
+    stocks.length > YCV8.PREMARKET_MAX_STOCKS
+  ) {
+    throw new Error(
+      'INGEST_GUARD_COUNT_OUT_OF_RANGE_' +
+      stocks.length +
+      '_ALLOWED_' +
+      YCV8.PREMARKET_MIN_STOCKS +
+      '_TO_' +
+      YCV8.PREMARKET_MAX_STOCKS
+    );
+  }
+
+  const seen = new Set();
+  stocks.forEach(function(stock) {
+    const code = String(stock && stock.code || '').trim();
+    const name = String(stock && stock.name || '').trim();
+    if (!/^\\d{6}$/.test(code)) {
+      throw new Error('INGEST_GUARD_INVALID_CODE_' + code);
+    }
+    if (!name) {
+      throw new Error('INGEST_GUARD_EMPTY_NAME_' + code);
+    }
+    if (seen.has(code)) {
+      throw new Error('INGEST_GUARD_DUPLICATE_CODE_' + code);
+    }
+    seen.add(code);
+  });
+
+  const text = String(body || '');
+  const hasAllStocksBlock = text.indexOf('[YT_ALL_STOCKS_BEGIN]') >= 0;
+  if (hasAllStocksBlock) {
+    const allParsed = parseYtAllStocksBlockV7_(body);
+    if (!allParsed || !allParsed.found) {
+      throw new Error('INGEST_GUARD_ALL_STOCKS_BLOCK_UNREADABLE');
+    }
+    const allCodes = new Set((allParsed.stocks || []).map(function(stock) {
+      return String(stock.code || '').trim();
+    }));
+    stocks.forEach(function(stock) {
+      if (!allCodes.has(stock.code)) {
+        throw new Error('INGEST_GUARD_PREMARKET_NOT_IN_ALL_' + stock.code);
+      }
+    });
+  }
+
+  return true;
 }
 
 
@@ -124,8 +191,10 @@ function collectIntelligenceCandidates_() {
       const subject = String(message.getSubject() || '');
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
 
-      const parsed = parsePremarketStocksBlockV10_(message.getPlainBody());
+      const body = message.getPlainBody();
+      const parsed = parsePremarketStocksBlockV10_(body);
       if (!parsed.found) return;
+      validatePremarketIngestV10_(body, parsed);
 
       const dateKey = Utilities.formatDate(message.getDate(), YCV8.TIMEZONE, 'yyyy-MM-dd');
       parsed.stocks.forEach(function(stock) {
