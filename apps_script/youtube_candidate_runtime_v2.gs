@@ -11,7 +11,10 @@ function monitorYouTubeCandidatesV2() {
     if (!sheet) throw new Error('CANDIDATES sheet not found');
 
     const lastRow = lastCandidateRowByCode_(sheet);
-    if (lastRow < YC.DATA_START_ROW) return;
+    if (lastRow < YC.DATA_START_ROW) {
+      ycRefreshAlertOutcomes_(ss);
+      return;
+    }
 
     SpreadsheetApp.flush();
     const range = sheet.getRange(YC.DATA_START_ROW, 1, lastRow - YC.DATA_START_ROW + 1, YC.LAST_COLUMN);
@@ -35,6 +38,9 @@ function monitorYouTubeCandidatesV2() {
         });
       }
     });
+
+    // SHADOW post-alert review; does not alter live signal decisions.
+    ycRefreshAlertOutcomes_(ss);
   } finally {
     lock.releaseLock();
   }
