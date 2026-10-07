@@ -10,7 +10,7 @@
  */
 
 const YCB = Object.freeze({
-  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/32af7be8f41fb1ef3d1f2cbca528961e9920d675/apps_script/',
+  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/24fe365842c2f8db8de20c1f9cfa2b8ae5abc525/apps_script/',
   FILES: [
     'youtube_candidate_monitor.gs',
     'youtube_candidate_ingest.gs',
@@ -21,7 +21,8 @@ const YCB = Object.freeze({
     'youtube_candidate_runtime_v6.gs',
     'youtube_candidate_runtime_v7.gs',
     'youtube_candidate_runtime_v8.gs',
-    'youtube_candidate_runtime_v9.gs'
+    'youtube_candidate_runtime_v9.gs',
+    'youtube_candidate_runtime_v10.gs'
   ]
 });
 
@@ -104,7 +105,7 @@ function ycInstallTriggers() {
 
   SpreadsheetApp.getUi().alert(
     '설치 완료',
-    '후보메일: [YT_ALL_STOCKS_BEGIN]~[YT_ALL_STOCKS_END] 고정 블록만 수집합니다.\n' +
+    '후보메일: [경제 Intelligence]의 "장전 시황" CODE|NAME|reason 블록만 수집합니다.\n' +
     '후보 유효기간: 마지막 직접언급일부터 한 달이며 재언급 시 다시 한 달 연장됩니다.\n' +
     '만료 후보 행은 신규 종목에 재사용합니다.\n' +
     'DISPATCH_LOG: 최근 90일, 최대 2,000건만 유지하며 하루 한 번 자동 정리합니다.\n' +
