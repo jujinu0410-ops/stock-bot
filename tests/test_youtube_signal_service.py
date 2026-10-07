@@ -22,6 +22,7 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertTrue(res.get_json()["ok"])
         self.assertIn("/jev-gate", res.get_json()["endpoints"])
+        self.assertIn("/alert-outcome", res.get_json()["endpoints"])
 
     def test_confirm_requires_shared_token(self):
         res = self.client.post("/confirm", json={"ticker": "007660", "tech_status": "BUY_CANDIDATE"})
@@ -44,6 +45,37 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertTrue(res.get_json()["ok"])
         mocked.assert_called_once()
+
+    def test_alert_outcome_requires_shared_token(self):
+        res = self.client.post(
+            "/alert-outcome",
+            json={
+                "ticker": "488900",
+                "alert_time": "2026-10-07T11:20:00+09:00",
+                "alert_price": 11910,
+                "atr14": 900,
+            },
+        )
+        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.get_json()["error"], "UNAUTHORIZED")
+
+    def test_minute_bar_datetime_supports_intraday_hhmmss(self):
+        alert = svc._parse_alert_time("2026-10-07T11:20:00+09:00")
+        parsed = svc._minute_bar_datetime("122100", alert)
+        self.assertEqual(parsed.isoformat(), "2026-10-07T12:21:00+09:00")
+
+    def test_build_alert_outcome_bars_uses_minutes_after_alert(self):
+        alert = svc._parse_alert_time("2026-10-07T11:20:00+09:00")
+        bars = svc._build_alert_outcome_bars(
+            [
+                {"time": "111900", "high": 12000, "low": 11800, "close": 11900},
+                {"time": "112500", "high": 12100, "low": 11900, "close": 12050},
+                {"time": "115000", "high": 12300, "low": 12000, "close": 12200},
+                {"time": "122000", "high": 12600, "low": 12100, "close": 12400},
+            ],
+            alert,
+        )
+        self.assertEqual([b["minutes_after_alert"] for b in bars], [5, 30, 60])
 
     def test_ticker_validation(self):
         self.assertEqual(svc._clean_ticker("007660"), "007660")

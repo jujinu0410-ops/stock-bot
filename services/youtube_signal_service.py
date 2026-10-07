@@ -14,6 +14,7 @@ Safety:
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from email.utils import parsedate_to_datetime
 from html import escape
 import os
@@ -38,6 +39,7 @@ from src.analysis.jev_alert_gate import evaluate_jev_alert_gate
 from src.runtime.krx_calendar import KRXCalendar
 from src.analysis.market_catalyst_context import assess_catalyst, plain_text
 from src.analysis.youtube_candidate_review import describe_flow
+from src.analysis.youtube_alert_outcome import evaluate_youtube_alert_outcome
 from src.analysis.youtube_candidate_signal import (
     FINAL_BUY_ALERT,
     FINAL_BUY_ALERT_STRONG,
@@ -349,6 +351,8 @@ def _fetch_kiwoom_minute_bars(
     session: RetryingKiwoomSession,
     token: str,
     ticker: str,
+    limit: int = 10,
+    base_date: date | None = None,
 ) -> Dict[str, Any]:
     response = session.post(
         f"{KIWOOM_BASE_URL}/api/dostk/chart",
@@ -361,7 +365,7 @@ def _fetch_kiwoom_minute_bars(
             "stk_cd": ticker,
             "tic_scope": "1",
             "upd_stkpc_tp": "1",
-            "base_dt": date.today().strftime("%Y%m%d"),
+            "base_dt": (base_date or date.today()).strftime("%Y%m%d"),
         },
         timeout=10,
     )
@@ -399,7 +403,118 @@ def _fetch_kiwoom_minute_bars(
             "reason": f"KA10080_INSUFFICIENT_BARS_{len(ordered)}",
             "bars": ordered,
         }
-    return {"available": True, "reason": "OK", "bars": ordered[-10:], "source": "KIWOOM_KA10080"}
+    keep = max(4, int(limit or 10))
+    return {"available": True, "reason": "OK", "bars": ordered[-keep:], "source": "KIWOOM_KA10080"}
+
+
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def _parse_alert_time(value: Any) -> datetime:
+    raw = str(value or "").strip()
+    if not raw:
+        raise SignalServiceError("ALERT_TIME_MISSING")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SignalServiceError("ALERT_TIME_INVALID") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_KST)
+    return parsed.astimezone(_KST)
+
+
+def _minute_bar_datetime(raw_time: Any, alert_time: datetime) -> datetime | None:
+    digits = re.sub(r"\D", "", str(raw_time or ""))
+    try:
+        if len(digits) == 14:
+            return datetime.strptime(digits, "%Y%m%d%H%M%S").replace(tzinfo=_KST)
+        if len(digits) == 12:
+            return datetime.strptime(digits, "%Y%m%d%H%M").replace(tzinfo=_KST)
+        if len(digits) == 6:
+            t = datetime.strptime(digits, "%H%M%S").time()
+            return datetime.combine(alert_time.date(), t, tzinfo=_KST)
+        if len(digits) == 4:
+            t = datetime.strptime(digits, "%H%M").time()
+            return datetime.combine(alert_time.date(), t, tzinfo=_KST)
+    except ValueError:
+        return None
+    return None
+
+
+def _build_alert_outcome_bars(
+    raw_bars: List[Dict[str, Any]],
+    alert_time: datetime,
+) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for row in raw_bars:
+        bar_time = _minute_bar_datetime(row.get("time"), alert_time)
+        if bar_time is None:
+            continue
+        seconds = (bar_time - alert_time).total_seconds()
+        if seconds < 0:
+            continue
+        minutes_after = int(seconds // 60)
+        if minutes_after > 90:
+            continue
+        try:
+            out.append(
+                {
+                    "minutes_after_alert": minutes_after,
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    out.sort(key=lambda x: x["minutes_after_alert"])
+    return out
+
+
+def _evaluate_alert_outcome(payload: Dict[str, Any]) -> Dict[str, Any]:
+    ticker = _clean_ticker(payload.get("ticker"))
+    alert_time = _parse_alert_time(payload.get("alert_time"))
+    alert_price = _as_float(payload, "alert_price")
+    atr14 = _as_float(payload, "atr14")
+    if alert_price is None or alert_price <= 0:
+        raise SignalServiceError("ALERT_PRICE_INVALID")
+    if atr14 is None or atr14 <= 0:
+        raise SignalServiceError("ATR14_INVALID")
+
+    session = RetryingKiwoomSession(max_attempts=5)
+    token = _get_kiwoom_token(session)
+    minute = _fetch_kiwoom_minute_bars(
+        session,
+        token,
+        ticker,
+        limit=180,
+        base_date=alert_time.date(),
+    )
+    if not minute.get("available"):
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "status": "DATA_UNAVAILABLE",
+            "grade": None,
+            "label": str(minute.get("reason") or "MINUTE_DATA_UNAVAILABLE"),
+            "alert_time": alert_time.isoformat(timespec="seconds"),
+            "kiwoom_429_retry_count": session.retry_count,
+        }
+
+    bars = _build_alert_outcome_bars(list(minute.get("bars") or []), alert_time)
+    outcome = evaluate_youtube_alert_outcome(
+        alert_price=float(alert_price),
+        atr14=float(atr14),
+        bars=bars,
+    )
+    return {
+        "ok": True,
+        "ticker": ticker,
+        "alert_time": alert_time.isoformat(timespec="seconds"),
+        "minute_source": minute.get("source"),
+        "kiwoom_429_retry_count": session.retry_count,
+        **outcome,
+    }
 
 
 def _evaluate_kiwoom_freshness_gate(
@@ -1102,7 +1217,7 @@ def health() -> Any:
         {
             "ok": True,
             "service": "youtube-signal-service",
-            "endpoints": ["/confirm", "/held-context", "/jev-gate"],
+            "endpoints": ["/confirm", "/held-context", "/jev-gate", "/alert-outcome"],
         }
     )
 
@@ -1152,6 +1267,22 @@ def jev_gate() -> Any:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         app.logger.exception("jev alert gate failed")
+        return jsonify({"ok": False, "error": f"UNEXPECTED:{type(exc).__name__}"}), 500
+
+
+@app.post("/alert-outcome")
+def alert_outcome() -> Any:
+    if not _secret_ok():
+        return jsonify({"ok": False, "error": "UNAUTHORIZED"}), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "INVALID_JSON"}), 400
+    try:
+        return jsonify(_evaluate_alert_outcome(payload)), 200
+    except SignalServiceError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("youtube alert outcome evaluation failed")
         return jsonify({"ok": False, "error": f"UNEXPECTED:{type(exc).__name__}"}), 500
 
 
