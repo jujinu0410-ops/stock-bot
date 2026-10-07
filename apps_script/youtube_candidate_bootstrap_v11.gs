@@ -85,6 +85,12 @@ function ycScheduledRefresh() {
 }
 
 function ycScheduledMonitor() {
+  const props = PropertiesService.getScriptProperties();
+  const migrationKey = 'PREMARKET_V10_MIGRATION_DONE_20261007';
+  if (props.getProperty(migrationKey) !== 'Y') {
+    ycLoadRuntimeAndRun_('manualCandidateRefreshV5');
+    props.setProperty(migrationKey, 'Y');
+  }
   return ycLoadRuntimeAndRun_('scheduledCombinedTickV6');
 }
 
