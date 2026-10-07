@@ -124,9 +124,27 @@ function manualDispatchLogCleanupV9() {
 /* Override V6 combined tick: daily log housekeeping first, then preserve the
  * existing candidate-mail refresh and market-guarded monitoring behavior.
  */
+function hasPendingCandidateTechRefreshV9_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(YC.CANDIDATE_SHEET);
+  if (!sheet) return false;
+  const lastRow = lastCandidateRowByCode_(sheet);
+  if (lastRow < YC.DATA_START_ROW) return false;
+  const notes = sheet.getRange(YC.DATA_START_ROW, 26, lastRow - YC.DATA_START_ROW + 1, 1).getDisplayValues();
+  return notes.some(function(r) {
+    return String(r[0] || '').indexOf('TECH_REFRESH_PENDING') >= 0;
+  });
+}
+
 function scheduledCombinedTickV6() {
   const logStatus = cleanupDispatchLogOncePerDayV9_();
-  const refreshStatus = maybeScheduledCandidateRefreshV6();
+  let refreshStatus = '';
+  if (hasPendingCandidateTechRefreshV9_()) {
+    refreshYouTubeCandidatePoolV2();
+    refreshStatus = 'RECOVERY_REFRESH_PENDING_TECH';
+  } else {
+    refreshStatus = maybeScheduledCandidateRefreshV6();
+  }
   const monitorStatus = scheduledCandidateMonitorV5();
   return 'LOG=' + logStatus + '; REFRESH=' + refreshStatus + '; MONITOR=' + monitorStatus;
 }
