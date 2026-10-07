@@ -93,6 +93,21 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
   const apiToken = String(props.getProperty('SIGNAL_API_TOKEN') || '').trim();
   if (!apiUrl || !apiToken) throw new Error('SIGNAL_API_URL/TOKEN missing in Script Properties');
 
+  // Backend-suppressed candidates (WATCH_ONLY / freshness veto / Jev HOLD) are
+  // rechecked every 15 minutes, not every 5-minute monitor tick.
+  const backendHoldKey = 'YOUTUBE_BACKEND_HOLD_' + code;
+  const backendHoldRaw = String(props.getProperty(backendHoldKey) || '').trim();
+  if (backendHoldRaw) {
+    try {
+      const backendHold = JSON.parse(backendHoldRaw);
+      const sameTrigger = String(backendHold.trigger_key || '') === triggerKey;
+      const ageMs = Date.now() - Number(backendHold.at || 0);
+      if (sameTrigger && ageMs >= 0 && ageMs < 15 * 60000) return;
+    } catch (e) {
+      props.deleteProperty(backendHoldKey);
+    }
+  }
+
   const payload = {
     ticker: code,
     name: name || code,
@@ -153,14 +168,32 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
   }
 
   if (http >= 200 && http < 300 && body.ok === true) {
-    // U: LastDispatchKey, V: LastDispatchAt, W: FinalSignal, X: FlowStatus, Y: FlowSummary
-    sheet.getRange(rowNumber, 21, 1, 5).setValues([[
-      triggerKey,
-      new Date(),
-      String(body.final_signal || ''),
-      String(body.flow_status || ''),
-      String(body.flow_summary || ''),
-    ]]);
+    const mailSent = body.mail_sent === true;
+
+    if (mailSent) {
+      // Only an actually delivered △/▲ mail consumes LastDispatchKey.
+      sheet.getRange(rowNumber, 21, 1, 5).setValues([[
+        triggerKey,
+        new Date(),
+        String(body.final_signal || ''),
+        String(body.flow_status || ''),
+        String(body.flow_summary || ''),
+      ]]);
+      props.deleteProperty(backendHoldKey);
+    } else {
+      // Keep LastDispatchKey untouched so a suppressed setup can mature later.
+      // W:Y still shows the most recent backend judgement in the sheet.
+      sheet.getRange(rowNumber, 23, 1, 3).setValues([[
+        String(body.final_signal || ''),
+        String(body.flow_status || ''),
+        String(body.flow_summary || ''),
+      ]]);
+      props.setProperty(backendHoldKey, JSON.stringify({
+        trigger_key: triggerKey,
+        at: Date.now(),
+        reason: String(body.flow_status || body.final_signal || 'SUPPRESSED')
+      }));
+    }
 
     appendDispatchLog_(ss, {
       ticker: code,
@@ -173,7 +206,7 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
       triggerKey: triggerKey,
       elapsedMs: Date.now() - started,
       error: '',
-      source: 'KIWOOM_KA10059',
+      source: mailSent ? 'MAIL_SENT' : 'BACKEND_SUPPRESSED',
     });
     return;
   }

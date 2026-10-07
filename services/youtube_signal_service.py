@@ -55,7 +55,9 @@ from src.notifications.gmail_notifier import GmailNotifier
 app = Flask(__name__)
 
 KIWOOM_BASE_URL = "https://api.kiwoom.com"
-ALLOWED_FINAL_SIGNALS = {FINAL_WATCH_ONLY, FINAL_BUY_ALERT, FINAL_BUY_ALERT_STRONG}
+ALLOWED_FINAL_SIGNALS = {FINAL_BUY_ALERT, FINAL_BUY_ALERT_STRONG}
+FRESHNESS_DAMAGE_ATR = 0.40
+FRESHNESS_SHARP_DROP_ATR = 0.20
 # User-facing language is shared with the held-position monitor:
 # ▲ confirmed upward/buy condition, △ early upward/buy condition, · neutral watch.
 # Internal final-signal codes remain unchanged for compatibility.
@@ -245,6 +247,210 @@ def _evaluate_entry_timing_veto(ticker: str) -> Dict[str, Any]:
         "daily_obv": daily,
         "vwap_45m": intraday,
     }
+
+
+def _parse_kiwoom_price(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = abs(float(str(value).strip().replace(",", "").replace("+", "")))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _fetch_kiwoom_quote(
+    session: RetryingKiwoomSession,
+    token: str,
+    ticker: str,
+) -> Dict[str, Any]:
+    response = session.post(
+        f"{KIWOOM_BASE_URL}/api/dostk/stkinfo",
+        headers={
+            "Content-Type": "application/json;charset=UTF-8",
+            "authorization": f"Bearer {token}",
+            "api-id": "ka10001",
+        },
+        json={"stk_cd": ticker},
+        timeout=10,
+    )
+    if response.status_code != 200:
+        return {"available": False, "reason": f"KA10001_HTTP_{response.status_code}"}
+    payload = response.json()
+    if not isinstance(payload, dict) or str(payload.get("return_code", "0")) not in ("0", "None"):
+        return {"available": False, "reason": "KA10001_BUSINESS_ERROR"}
+    current = _parse_kiwoom_price(payload.get("cur_prc"))
+    if current is None:
+        return {"available": False, "reason": "KA10001_CURRENT_PRICE_MISSING"}
+    return {
+        "available": True,
+        "current_price": current,
+        "open": _parse_kiwoom_price(payload.get("open_pric")),
+        "high": _parse_kiwoom_price(payload.get("high_pric")),
+        "low": _parse_kiwoom_price(payload.get("low_pric")),
+        "source": "KIWOOM_KA10001",
+    }
+
+
+def _fetch_kiwoom_minute_bars(
+    session: RetryingKiwoomSession,
+    token: str,
+    ticker: str,
+) -> Dict[str, Any]:
+    response = session.post(
+        f"{KIWOOM_BASE_URL}/api/dostk/chart",
+        headers={
+            "Content-Type": "application/json;charset=UTF-8",
+            "authorization": f"Bearer {token}",
+            "api-id": "ka10080",
+        },
+        json={
+            "stk_cd": ticker,
+            "tic_scope": "1",
+            "upd_stkpc_tp": "1",
+            "base_dt": date.today().strftime("%Y%m%d"),
+        },
+        timeout=10,
+    )
+    if response.status_code != 200:
+        return {"available": False, "reason": f"KA10080_HTTP_{response.status_code}", "bars": []}
+    payload = response.json()
+    if not isinstance(payload, dict) or str(payload.get("return_code", "0")) not in ("0", "None"):
+        return {"available": False, "reason": "KA10080_BUSINESS_ERROR", "bars": []}
+
+    raw_rows = payload.get("stk_min_pole_chart_qry") or []
+    bars: List[Dict[str, Any]] = []
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            continue
+        ts = str(row.get("cntr_tm") or "").strip()
+        close = _parse_kiwoom_price(row.get("cur_prc"))
+        if not ts or close is None:
+            continue
+        volume = _parse_kiwoom_price(row.get("trde_qty")) or 0.0
+        bars.append(
+            {
+                "time": ts,
+                "close": close,
+                "open": _parse_kiwoom_price(row.get("open_pric")) or close,
+                "high": _parse_kiwoom_price(row.get("high_pric")) or close,
+                "low": _parse_kiwoom_price(row.get("low_pric")) or close,
+                "volume": volume,
+            }
+        )
+    dedup = {str(row["time"]): row for row in bars}
+    ordered = [dedup[key] for key in sorted(dedup)]
+    if len(ordered) < 4:
+        return {
+            "available": False,
+            "reason": f"KA10080_INSUFFICIENT_BARS_{len(ordered)}",
+            "bars": ordered,
+        }
+    return {"available": True, "reason": "OK", "bars": ordered[-10:], "source": "KIWOOM_KA10080"}
+
+
+def _evaluate_kiwoom_freshness_gate(
+    ticker: str,
+    *,
+    signal_price: float | None,
+    atr14: float | None,
+    buy_trigger_05: float | None,
+    session: RetryingKiwoomSession,
+    token: str,
+) -> Dict[str, Any]:
+    quote = _fetch_kiwoom_quote(session, token, ticker)
+    minute = _fetch_kiwoom_minute_bars(session, token, ticker)
+
+    if signal_price is None or signal_price <= 0 or atr14 is None or atr14 <= 0:
+        return {
+            "decision": "VETO",
+            "reason": "FRESHNESS_INPUT_MISSING",
+            "quote": quote,
+            "minute": minute,
+        }
+    if not quote.get("available"):
+        return {
+            "decision": "VETO",
+            "reason": str(quote.get("reason") or "FRESH_QUOTE_UNAVAILABLE"),
+            "quote": quote,
+            "minute": minute,
+        }
+    if not minute.get("available"):
+        return {
+            "decision": "VETO",
+            "reason": str(minute.get("reason") or "MINUTE_BARS_UNAVAILABLE"),
+            "quote": quote,
+            "minute": minute,
+        }
+
+    fresh_price = float(quote["current_price"])
+    damage_atr = (fresh_price - signal_price) / atr14
+
+    bars = list(minute.get("bars") or [])
+    recent = bars[-5:]
+    closes = [float(row["close"]) for row in recent]
+    p3 = float(bars[-4]["close"])
+    delta3_atr = (fresh_price - p3) / atr14
+
+    weighted = 0.0
+    volume_sum = 0.0
+    for row in recent:
+        vol = max(0.0, float(row.get("volume") or 0.0))
+        typical = (
+            float(row.get("high") or row["close"])
+            + float(row.get("low") or row["close"])
+            + float(row["close"])
+        ) / 3.0
+        weighted += typical * vol
+        volume_sum += vol
+    vwap5 = weighted / volume_sum if volume_sum > 0 else sum(closes) / len(closes)
+
+    lower_steps = sum(1 for a, b in zip(closes, closes[1:]) if b < a)
+    below_vwap = fresh_price < vwap5
+    sharp_fall = (
+        delta3_atr <= -FRESHNESS_SHARP_DROP_ATR
+        or (
+            lower_steps >= 2
+            and below_vwap
+            and fresh_price < signal_price
+        )
+    )
+
+    if buy_trigger_05 is not None and buy_trigger_05 > 0 and fresh_price < buy_trigger_05:
+        decision = "VETO"
+        reason = "FRESH_PRICE_BELOW_BUY_TRIGGER"
+    elif damage_atr <= -FRESHNESS_DAMAGE_ATR:
+        decision = "VETO"
+        reason = "FRESH_PRICE_DAMAGED_0_4ATR"
+    elif sharp_fall:
+        decision = "VETO"
+        reason = "RECENT_1M_SHARP_FALL"
+    else:
+        decision = "PASS"
+        reason = "FRESH_SIGNAL_ALIVE"
+
+    if fresh_price >= p3 and fresh_price >= vwap5:
+        direction = "RISING"
+    elif fresh_price < p3 and fresh_price < vwap5:
+        direction = "FALLING"
+    else:
+        direction = "FLAT"
+
+    return {
+        "decision": decision,
+        "reason": reason,
+        "fresh_price": fresh_price,
+        "signal_price": signal_price,
+        "damage_atr": damage_atr,
+        "price_3m_ago": p3,
+        "delta_3m_atr": delta3_atr,
+        "vwap_5m": vwap5,
+        "lower_steps_5m": lower_steps,
+        "direction": direction,
+        "quote": quote,
+        "minute_source": minute.get("source"),
+    }
+
 
 def _get_kiwoom_token(session: RetryingKiwoomSession) -> str:
     app_key = str(KIWOOM_APP_KEY or os.getenv("KIWOOM_APP_KEY") or "").strip()
@@ -532,8 +738,72 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     as_of = _parse_as_of(payload)
 
+    # Cheap Jev PRE-GATE is deliberately first. A clear HOLD must not consume
+    # Kiwoom calls and must never produce a user-facing watch mail.
+    pre_gate = payload.get("jev_pre_gate") if isinstance(payload.get("jev_pre_gate"), dict) else {}
+    pre_gate_ok = str(pre_gate.get("status") or "").upper() == "OK"
+    pre_gate_decision = str(pre_gate.get("decision") or "").upper()
+    needs_final_review = bool(pre_gate.get("needs_final_review", True))
+    if pre_gate_ok and pre_gate_decision == "HOLD":
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "name": name,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": FINAL_WATCH_ONLY,
+            "flow_status": "JEV_PRE_HOLD",
+            "flow_summary": str(pre_gate.get("reason") or "JEV_PRE_HOLD"),
+            "jev_pre_gate": pre_gate,
+            "mail_sent": False,
+            "suppressed_by_jev_pre_gate": True,
+            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        }
+
     session = RetryingKiwoomSession(max_attempts=5)
     token = _get_kiwoom_token(session)
+
+    signal_price = _as_float(payload, "current_price")
+    atr14 = _as_float(payload, "atr14")
+    buy_trigger_05 = _as_float(payload, "buy_trigger_05")
+    freshness_gate = _evaluate_kiwoom_freshness_gate(
+        ticker,
+        signal_price=signal_price,
+        atr14=atr14,
+        buy_trigger_05=buy_trigger_05,
+        session=session,
+        token=token,
+    )
+    if freshness_gate.get("decision") != "PASS":
+        app.logger.info(
+            "freshness veto ticker=%s reason=%s signal=%s fresh=%s",
+            ticker,
+            freshness_gate.get("reason"),
+            signal_price,
+            freshness_gate.get("fresh_price"),
+        )
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "name": name,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": FINAL_WATCH_ONLY,
+            "flow_status": "FRESHNESS_VETO",
+            "flow_summary": str(freshness_gate.get("reason") or "FRESHNESS_VETO"),
+            "freshness_gate": freshness_gate,
+            "jev_pre_gate": pre_gate,
+            "mail_sent": False,
+            "suppressed_by_freshness_gate": True,
+            "kiwoom_429_retry_count": session.retry_count,
+            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        }
+
+    fresh_price = float(freshness_gate["fresh_price"])
+    effective_payload = dict(payload)
+    effective_payload["signal_price"] = signal_price
+    effective_payload["current_price"] = fresh_price
+
     rows = KiwoomInvestorFlowReader(token, session=session).fetch_stock_flow(
         ticker, as_of, max_pages=5
     )
@@ -545,45 +815,14 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         status=TECH_BUY_CANDIDATE,
         rebound_atr=None,
         early_trigger_04=None,
-        buy_trigger_05=_as_float(payload, "buy_trigger_05"),
+        buy_trigger_05=buy_trigger_05,
         confirm_trigger_06=_as_float(payload, "confirm_trigger_06"),
         confirmed_06=False,
         overheat=False,
         reason="BUY_CANDIDATE supplied by Google Sheet monitor",
     )
     final = combine_final_signal(tech, flow)
-    timing_gate = None
-    if final.final_signal in {FINAL_BUY_ALERT, FINAL_BUY_ALERT_STRONG}:
-        timing_gate = _evaluate_entry_timing_veto(ticker)
-        if timing_gate.get("decision") == "VETO":
-            app.logger.info(
-                "entry timing veto ticker=%s final=%s reason=%s",
-                ticker, final.final_signal, timing_gate.get("reason"),
-            )
-            flow_text = describe_flow(
-                {
-                    "status": flow.status,
-                    "foreign_5d": flow.foreign_5d,
-                    "institution_5d": flow.institution_5d,
-                    "combined_5d": flow.combined_5d,
-                    "combined_20d": flow.combined_20d,
-                }
-            )
-            return {
-                "ok": True,
-                "ticker": ticker,
-                "name": name,
-                "trigger_key": str(payload.get("trigger_key") or ""),
-                "final_signal": FINAL_WATCH_ONLY,
-                "original_final_signal": final.final_signal,
-                "flow_status": flow.status,
-                "flow_summary": flow_text,
-                "timing_gate": timing_gate,
-                "mail_sent": False,
-                "suppressed_by_timing_gate": True,
-                "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
-            }
+
     flow_text = describe_flow(
         {
             "status": flow.status,
@@ -594,8 +833,47 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
     )
 
+    # WATCH_ONLY remains a sheet/backend state only. It is never a mail class.
     if final.final_signal not in ALLOWED_FINAL_SIGNALS:
-        raise SignalServiceError(f"FINAL_SIGNAL_NOT_MAIL_WORTHY:{final.final_signal}")
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "name": name,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": final.final_signal,
+            "flow_status": flow.status,
+            "flow_summary": flow_text,
+            "freshness_gate": freshness_gate,
+            "jev_pre_gate": pre_gate,
+            "mail_sent": False,
+            "suppressed_non_mail_signal": True,
+            "kiwoom_429_retry_count": session.retry_count,
+            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        }
+
+    timing_gate = _evaluate_entry_timing_veto(ticker)
+    if timing_gate.get("decision") == "VETO":
+        app.logger.info(
+            "entry timing veto ticker=%s final=%s reason=%s",
+            ticker, final.final_signal, timing_gate.get("reason"),
+        )
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "name": name,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": FINAL_WATCH_ONLY,
+            "original_final_signal": final.final_signal,
+            "flow_status": flow.status,
+            "flow_summary": flow_text,
+            "freshness_gate": freshness_gate,
+            "timing_gate": timing_gate,
+            "mail_sent": False,
+            "suppressed_by_timing_gate": True,
+            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        }
 
     context = _collect_market_context(
         ticker=ticker,
@@ -612,33 +890,8 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         "combined_20d": flow.combined_20d,
         "flow_strength_5d": flow.flow_strength_5d,
     }
+    context["freshness_gate"] = freshness_gate
     context["kiwoom_429_retry_count"] = session.retry_count
-
-    # Apps Script may already have run the cheap direct Jev PRE-GATE.
-    # A decisive PROCEED does not pay for a second Jev call.  Uncertain or
-    # missing PRE-GATE results keep the existing context-rich final Jev review.
-    pre_gate = payload.get("jev_pre_gate") if isinstance(payload.get("jev_pre_gate"), dict) else {}
-    pre_gate_ok = str(pre_gate.get("status") or "").upper() == "OK"
-    pre_gate_decision = str(pre_gate.get("decision") or "").upper()
-    needs_final_review = bool(pre_gate.get("needs_final_review", True))
-
-    if pre_gate_ok and pre_gate_decision == "HOLD":
-        # Defensive consistency: Apps Script should have stopped before /confirm,
-        # but if a HOLD payload reaches here, do not run expensive final work/mail.
-        return {
-            "ok": True,
-            "ticker": ticker,
-            "name": name,
-            "trigger_key": str(payload.get("trigger_key") or ""),
-            "final_signal": FINAL_WATCH_ONLY,
-            "flow_status": flow.status,
-            "flow_summary": flow_text,
-            "jev_pre_gate": pre_gate,
-            "mail_sent": False,
-            "suppressed_by_jev_pre_gate": True,
-            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
-        }
 
     if pre_gate_ok and pre_gate_decision == "PROCEED" and not needs_final_review:
         jev_gate = {
@@ -657,18 +910,17 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:
         jev_gate = _jev_gate(
             {
-                **payload,
+                **effective_payload,
                 "source": "YOUTUBE",
                 "ticker": ticker,
                 "name": name,
                 "event_keys": ["YOUTUBE_BUY_CANDIDATE", final.final_signal],
                 "event_level": "STRONG" if final.final_signal == FINAL_BUY_ALERT_STRONG else "WATCH",
-                "current_price": payload.get("current_price"),
-                "buy_trigger_05": payload.get("buy_trigger_05"),
-                "confirm_trigger_06": payload.get("confirm_trigger_06"),
+                "freshness_gate": freshness_gate,
                 "context": context,
             }
         )
+
     if jev_gate.get("decision") == "HOLD":
         app.logger.info(
             "Jev held YouTube candidate ticker=%s final=%s reason=%s",
@@ -681,9 +933,28 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
             "trigger_key": str(payload.get("trigger_key") or ""),
             "final_signal": final.final_signal,
             "market_context": context,
+            "freshness_gate": freshness_gate,
             "jev_gate": jev_gate,
             "mail_sent": False,
             "suppressed_by_jev": True,
+            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        }
+
+    if payload.get("dry_run") is True:
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "name": name,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": final.final_signal,
+            "flow_status": flow.status,
+            "flow_summary": flow_text,
+            "freshness_gate": freshness_gate,
+            "timing_gate": timing_gate,
+            "jev_gate": jev_gate,
+            "mail_sent": False,
+            "dry_run": True,
             "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
         }
@@ -697,7 +968,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
     sent = notifier.send_email(
         subject,
-        _email_html(payload, final.final_signal, flow, flow_text, context=context),
+        _email_html(effective_payload, final.final_signal, flow, flow_text, context=context),
         attachments=None,
     )
     if not sent:
@@ -717,6 +988,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         "combined_20d": flow.combined_20d,
         "flow_strength_5d": flow.flow_strength_5d,
         "market_context": context,
+        "freshness_gate": freshness_gate,
         "jev_pre_gate": pre_gate,
         "jev_gate": jev_gate,
         "kiwoom_429_retry_count": session.retry_count,

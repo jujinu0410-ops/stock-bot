@@ -67,6 +67,127 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         gate = svc._evaluate_entry_timing_veto("316140")
         self.assertEqual(gate["decision"], "PASS")
 
+
+    def test_watch_only_is_never_mail_worthy(self):
+        self.assertNotIn(svc.FINAL_WATCH_ONLY, svc.ALLOWED_FINAL_SIGNALS)
+        self.assertEqual(
+            svc.ALLOWED_FINAL_SIGNALS,
+            {svc.FINAL_BUY_ALERT, svc.FINAL_BUY_ALERT_STRONG},
+        )
+
+    @patch.object(svc, "_fetch_kiwoom_minute_bars")
+    @patch.object(svc, "_fetch_kiwoom_quote")
+    def test_freshness_veto_when_price_drops_below_buy_trigger(self, quote, minute):
+        quote.return_value = {"available": True, "current_price": 950.0, "source": "KIWOOM_KA10001"}
+        minute.return_value = {
+            "available": True,
+            "source": "KIWOOM_KA10080",
+            "bars": [
+                {"time": "100000", "close": 1010.0, "high": 1012.0, "low": 1008.0, "volume": 100},
+                {"time": "100100", "close": 1005.0, "high": 1007.0, "low": 1002.0, "volume": 100},
+                {"time": "100200", "close": 990.0, "high": 1000.0, "low": 988.0, "volume": 100},
+                {"time": "100300", "close": 970.0, "high": 990.0, "low": 968.0, "volume": 100},
+                {"time": "100400", "close": 955.0, "high": 972.0, "low": 950.0, "volume": 100},
+            ],
+        }
+        gate = svc._evaluate_kiwoom_freshness_gate(
+            "009150",
+            signal_price=1000.0,
+            atr14=100.0,
+            buy_trigger_05=980.0,
+            session=object(),
+            token="token",
+        )
+        self.assertEqual(gate["decision"], "VETO")
+        self.assertEqual(gate["reason"], "FRESH_PRICE_BELOW_BUY_TRIGGER")
+
+    @patch.object(svc, "_fetch_kiwoom_minute_bars")
+    @patch.object(svc, "_fetch_kiwoom_quote")
+    def test_freshness_passes_when_signal_is_still_alive(self, quote, minute):
+        quote.return_value = {"available": True, "current_price": 1020.0, "source": "KIWOOM_KA10001"}
+        minute.return_value = {
+            "available": True,
+            "source": "KIWOOM_KA10080",
+            "bars": [
+                {"time": "100000", "close": 995.0, "high": 998.0, "low": 992.0, "volume": 100},
+                {"time": "100100", "close": 1000.0, "high": 1003.0, "low": 998.0, "volume": 120},
+                {"time": "100200", "close": 1005.0, "high": 1008.0, "low": 1002.0, "volume": 130},
+                {"time": "100300", "close": 1010.0, "high": 1013.0, "low": 1008.0, "volume": 150},
+                {"time": "100400", "close": 1018.0, "high": 1020.0, "low": 1015.0, "volume": 170},
+            ],
+        }
+        gate = svc._evaluate_kiwoom_freshness_gate(
+            "009150",
+            signal_price=1000.0,
+            atr14=100.0,
+            buy_trigger_05=980.0,
+            session=object(),
+            token="token",
+        )
+        self.assertEqual(gate["decision"], "PASS")
+        self.assertEqual(gate["reason"], "FRESH_SIGNAL_ALIVE")
+        self.assertEqual(gate["direction"], "RISING")
+
+    @patch.object(svc.KiwoomInvestorFlowReader, "fetch_stock_flow")
+    @patch.object(svc, "_evaluate_kiwoom_freshness_gate")
+    @patch.object(svc, "_get_kiwoom_token")
+    def test_confirm_watch_only_never_sends_mail(self, token, freshness, fetch_flow):
+        token.return_value = "token"
+        freshness.return_value = {
+            "decision": "PASS",
+            "reason": "FRESH_SIGNAL_ALIVE",
+            "fresh_price": 1020.0,
+        }
+        fetch_flow.return_value = [
+            {
+                "dt": f"202609{day:02d}",
+                "foreign_amount": -100.0,
+                "institution_amount": -100.0,
+                "turnover_amount": 1000.0,
+            }
+            for day in range(1, 21)
+        ]
+        result = svc._confirm(
+            {
+                "ticker": "009150",
+                "name": "삼성전기",
+                "tech_status": "BUY_CANDIDATE",
+                "current_price": 1000.0,
+                "atr14": 100.0,
+                "buy_trigger_05": 980.0,
+                "confirm_trigger_06": 990.0,
+                "as_of_date": "2026-10-07",
+            }
+        )
+        self.assertEqual(result["final_signal"], svc.FINAL_WATCH_ONLY)
+        self.assertFalse(result["mail_sent"])
+        self.assertTrue(result["suppressed_non_mail_signal"])
+
+    @patch.object(svc.KiwoomInvestorFlowReader, "fetch_stock_flow")
+    @patch.object(svc, "_evaluate_kiwoom_freshness_gate")
+    @patch.object(svc, "_get_kiwoom_token")
+    def test_confirm_freshness_veto_short_circuits_flow(self, token, freshness, fetch_flow):
+        token.return_value = "token"
+        freshness.return_value = {
+            "decision": "VETO",
+            "reason": "RECENT_1M_SHARP_FALL",
+            "fresh_price": 950.0,
+        }
+        result = svc._confirm(
+            {
+                "ticker": "009150",
+                "name": "삼성전기",
+                "tech_status": "BUY_CANDIDATE",
+                "current_price": 1000.0,
+                "atr14": 100.0,
+                "buy_trigger_05": 980.0,
+                "as_of_date": "2026-10-07",
+            }
+        )
+        self.assertFalse(result["mail_sent"])
+        self.assertTrue(result["suppressed_by_freshness_gate"])
+        fetch_flow.assert_not_called()
+
     @patch.object(svc, "_jev_gate")
     def test_jev_gate_uses_existing_shared_token(self, mocked):
         mocked.return_value = {"ok": True, "status": "NOT_CONFIGURED", "decision": "SEND"}
