@@ -113,15 +113,17 @@ class SignalTests(unittest.TestCase):
         self.assertTrue(m.program_alignment)
 
     def test_final_mapping(self):
-        tech = evaluate_technical(base_tech(105.0))
+        tech_05 = evaluate_technical(base_tech(105.0))
+        tech_06 = evaluate_technical(base_tech(106.0))
         pos = evaluate_flow(make_flow([1]*20, [1]*20), source_verified=True)
         neu = evaluate_flow(make_flow([1]*20, [-1]*20), source_verified=True)
         neg = evaluate_flow(make_flow([-1]*20, [-1]*20), source_verified=True)
         gap = evaluate_flow(make_flow([0]*20, [0]*20), source_verified=False)
-        self.assertEqual(combine_final_signal(tech, pos).final_signal, FINAL_BUY_ALERT_STRONG)
-        self.assertEqual(combine_final_signal(tech, neu).final_signal, FINAL_BUY_ALERT)
-        self.assertEqual(combine_final_signal(tech, neg).final_signal, FINAL_WATCH_ONLY)
-        self.assertEqual(combine_final_signal(tech, gap).final_signal, FINAL_WATCH_ONLY_DATA_GAP)
+        self.assertEqual(combine_final_signal(tech_05, pos).final_signal, FINAL_BUY_ALERT)
+        self.assertEqual(combine_final_signal(tech_06, pos).final_signal, FINAL_BUY_ALERT_STRONG)
+        self.assertEqual(combine_final_signal(tech_05, neu).final_signal, FINAL_BUY_ALERT)
+        self.assertEqual(combine_final_signal(tech_05, neg).final_signal, FINAL_WATCH_ONLY)
+        self.assertEqual(combine_final_signal(tech_05, gap).final_signal, FINAL_WATCH_ONLY_DATA_GAP)
 
     def test_kiwoom_reader_requests_amount_net_buy_and_parses_signs(self):
         payload = {

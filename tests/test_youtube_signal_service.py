@@ -68,6 +68,40 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertEqual(gate["decision"], "PASS")
 
 
+    def test_strong_confirmation_gate_requires_45m_uptrend(self):
+        strong = svc.FinalSignalAssessment(
+            svc.FINAL_BUY_ALERT_STRONG,
+            svc.TECH_BUY_CANDIDATE,
+            "POSITIVE",
+            "UNAVAILABLE",
+            "confirmed",
+        )
+        final, gate = svc._apply_strong_confirmation_gate(
+            strong,
+            {"fresh_price": 214000, "quote": {"open": 231000}},
+            {"vwap_45m": {"available": True, "gold": False, "state": "VWAP_DEAD"}},
+        )
+        self.assertEqual(final.final_signal, svc.FINAL_BUY_ALERT)
+        self.assertEqual(gate["decision"], "DOWNGRADE_TO_BUY_ALERT")
+        self.assertIn("45M_VWAP_NOT_GOLD", gate["reason"])
+        self.assertIn("INTRADAY_DROP_GE_5PCT", gate["reason"])
+
+    def test_strong_confirmation_gate_passes_when_45m_uptrend_and_no_crash(self):
+        strong = svc.FinalSignalAssessment(
+            svc.FINAL_BUY_ALERT_STRONG,
+            svc.TECH_BUY_CANDIDATE,
+            "POSITIVE",
+            "UNAVAILABLE",
+            "confirmed",
+        )
+        final, gate = svc._apply_strong_confirmation_gate(
+            strong,
+            {"fresh_price": 105000, "quote": {"open": 104000}},
+            {"vwap_45m": {"available": True, "gold": True, "state": "VWAP_GOLD"}},
+        )
+        self.assertEqual(final.final_signal, svc.FINAL_BUY_ALERT_STRONG)
+        self.assertEqual(gate["decision"], "PASS_STRONG")
+
     def test_watch_only_is_never_mail_worthy(self):
         self.assertNotIn(svc.FINAL_WATCH_ONLY, svc.ALLOWED_FINAL_SIGNALS)
         self.assertEqual(

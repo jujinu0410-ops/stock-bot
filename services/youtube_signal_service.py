@@ -45,6 +45,7 @@ from src.analysis.youtube_candidate_signal import (
     FLOW_UNAVAILABLE,
     TECH_BUY_CANDIDATE,
     KiwoomInvestorFlowReader,
+    FinalSignalAssessment,
     TechnicalAssessment,
     combine_final_signal,
     evaluate_flow,
@@ -58,6 +59,7 @@ KIWOOM_BASE_URL = "https://api.kiwoom.com"
 ALLOWED_FINAL_SIGNALS = {FINAL_BUY_ALERT, FINAL_BUY_ALERT_STRONG}
 FRESHNESS_DAMAGE_ATR = 0.40
 FRESHNESS_SHARP_DROP_ATR = 0.20
+STRONG_MAX_INTRADAY_DROP_PCT = -0.05
 # User-facing language is shared with the held-position monitor:
 # ▲ confirmed upward/buy condition, △ early upward/buy condition, · neutral watch.
 # Internal final-signal codes remain unchanged for compatibility.
@@ -246,6 +248,57 @@ def _evaluate_entry_timing_veto(ticker: str) -> Dict[str, Any]:
         ),
         "daily_obv": daily,
         "vwap_45m": intraday,
+    }
+
+
+def _apply_strong_confirmation_gate(
+    final: FinalSignalAssessment,
+    freshness_gate: Dict[str, Any],
+    timing_gate: Dict[str, Any],
+) -> tuple[FinalSignalAssessment, Dict[str, Any]]:
+    """Keep ▲ BUY_ALERT_STRONG only when 45m trend confirms and no severe intraday drop remains."""
+    if final.final_signal != FINAL_BUY_ALERT_STRONG:
+        return final, {
+            "decision": "NOT_APPLICABLE",
+            "reason": "FINAL_SIGNAL_NOT_STRONG",
+        }
+
+    reasons: List[str] = []
+    vwap_45m = timing_gate.get("vwap_45m") or {}
+    if not vwap_45m.get("available"):
+        reasons.append("45M_VWAP_UNAVAILABLE")
+    elif not vwap_45m.get("gold"):
+        reasons.append("45M_VWAP_NOT_GOLD")
+
+    quote = freshness_gate.get("quote") or {}
+    fresh_price = _parse_kiwoom_price(freshness_gate.get("fresh_price"))
+    open_price = _parse_kiwoom_price(quote.get("open"))
+    intraday_change_pct = None
+    if fresh_price and open_price:
+        intraday_change_pct = (fresh_price - open_price) / open_price
+        if intraday_change_pct <= STRONG_MAX_INTRADAY_DROP_PCT:
+            reasons.append("INTRADAY_DROP_GE_5PCT")
+
+    if reasons:
+        downgraded = FinalSignalAssessment(
+            FINAL_BUY_ALERT,
+            final.tech_status,
+            final.flow_status,
+            final.market_regime,
+            final.reason + "; strong confirmation downgraded: " + ",".join(reasons),
+        )
+        return downgraded, {
+            "decision": "DOWNGRADE_TO_BUY_ALERT",
+            "reason": "|".join(reasons),
+            "intraday_change_pct": intraday_change_pct,
+            "vwap_45m": vwap_45m,
+        }
+
+    return final, {
+        "decision": "PASS_STRONG",
+        "reason": "CONFIRMED_06_AND_45M_UPTREND",
+        "intraday_change_pct": intraday_change_pct,
+        "vwap_45m": vwap_45m,
     }
 
 
@@ -811,13 +864,19 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     if flow.status == FLOW_UNAVAILABLE:
         raise SignalServiceError(flow.reason)
 
+    confirm_trigger_06 = _as_float(payload, "confirm_trigger_06")
+    confirmed_06 = bool(
+        confirm_trigger_06 is not None
+        and confirm_trigger_06 > 0
+        and fresh_price >= confirm_trigger_06
+    )
     tech = TechnicalAssessment(
         status=TECH_BUY_CANDIDATE,
         rebound_atr=None,
         early_trigger_04=None,
         buy_trigger_05=buy_trigger_05,
-        confirm_trigger_06=_as_float(payload, "confirm_trigger_06"),
-        confirmed_06=False,
+        confirm_trigger_06=confirm_trigger_06,
+        confirmed_06=confirmed_06,
         overheat=False,
         reason="BUY_CANDIDATE supplied by Google Sheet monitor",
     )
@@ -875,6 +934,14 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
             "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
         }
 
+    final, confirmation_gate = _apply_strong_confirmation_gate(
+        final,
+        freshness_gate,
+        timing_gate,
+    )
+    if confirmation_gate.get("decision") == "DOWNGRADE_TO_BUY_ALERT":
+        flow_text += " / ▲매수확인 보류: " + str(confirmation_gate.get("reason") or "")
+
     context = _collect_market_context(
         ticker=ticker,
         name=name,
@@ -891,6 +958,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         "flow_strength_5d": flow.flow_strength_5d,
     }
     context["freshness_gate"] = freshness_gate
+    context["confirmation_gate"] = confirmation_gate
     context["kiwoom_429_retry_count"] = session.retry_count
 
     if pre_gate_ok and pre_gate_decision == "PROCEED" and not needs_final_review:
@@ -952,6 +1020,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
             "flow_summary": flow_text,
             "freshness_gate": freshness_gate,
             "timing_gate": timing_gate,
+            "confirmation_gate": confirmation_gate,
             "jev_gate": jev_gate,
             "mail_sent": False,
             "dry_run": True,
@@ -989,6 +1058,8 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         "flow_strength_5d": flow.flow_strength_5d,
         "market_context": context,
         "freshness_gate": freshness_gate,
+        "timing_gate": timing_gate,
+        "confirmation_gate": confirmation_gate,
         "jev_pre_gate": pre_gate,
         "jev_gate": jev_gate,
         "kiwoom_429_retry_count": session.retry_count,

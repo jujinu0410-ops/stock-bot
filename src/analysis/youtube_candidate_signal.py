@@ -335,8 +335,12 @@ def combine_final_signal(
         )
 
     if flow.status == FLOW_POSITIVE:
-        final = FINAL_BUY_ALERT_STRONG
-        reason = "technical buy candidate + positive foreign/institution flow"
+        if tech.confirmed_06:
+            final = FINAL_BUY_ALERT_STRONG
+            reason = "0.6 ATR confirmed technical buy candidate + positive foreign/institution flow"
+        else:
+            final = FINAL_BUY_ALERT
+            reason = "0.5 ATR buy candidate + positive flow; waiting for 0.6 ATR confirmation"
     elif flow.status == FLOW_NEUTRAL:
         final = FINAL_BUY_ALERT
         reason = "technical buy candidate + neutral/mixed flow"
