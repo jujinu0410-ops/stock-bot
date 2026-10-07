@@ -144,6 +144,9 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
         elapsedMs: Date.now() - started,
         error: '',
         source: 'JEV_PRE_GATE',
+        jevPre: ycJevPreLog_(preGate),
+        jevFinal: 'SKIPPED_PRE_HOLD',
+        freshness: 'SKIPPED_PRE_HOLD',
       });
     }
     return;
@@ -207,6 +210,9 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
       elapsedMs: Date.now() - started,
       error: '',
       source: mailSent ? 'MAIL_SENT' : 'BACKEND_SUPPRESSED',
+      jevPre: ycJevPreLog_(body.jev_pre_gate || preGate),
+      jevFinal: ycJevFinalLog_(body),
+      freshness: ycFreshnessLog_(body),
     });
     return;
   }
@@ -224,6 +230,9 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
     elapsedMs: Date.now() - started,
     error: String(body.error || ('HTTP_' + http)),
     source: 'BACKEND_ERROR',
+    jevPre: ycJevPreLog_(preGate),
+    jevFinal: 'BACKEND_ERROR',
+    freshness: '',
   });
 }
 
@@ -412,6 +421,58 @@ function ycJevPreGateSummary_(gate) {
     ' 쨌 ' + String(gate && gate.reason || '');
 }
 
+function ycJevPreLog_(gate) {
+  if (!gate) return 'UNKNOWN';
+  const s = gate.summary || {};
+  const probability = s.probability == null
+    ? '-'
+    : Math.round(Number(s.probability) * 100) + '%';
+  return [
+    String(gate.decision || 'PROCEED'),
+    String(s.direction || 'UNKNOWN'),
+    String(s.stage || 'UNKNOWN'),
+    'u' + String(s.urgency == null ? '-' : s.urgency),
+    'p' + probability,
+    String(gate.reason || '')
+  ].join('|');
+}
+
+function ycJevFinalLog_(body) {
+  body = body || {};
+  const gate = body.jev_gate;
+  if (gate) {
+    return [
+      String(gate.decision || 'UNKNOWN'),
+      String(gate.mode || 'FINAL'),
+      String(gate.reason || '')
+    ].join('|');
+  }
+  if (body.suppressed_by_jev_pre_gate === true) return 'SKIPPED_PRE_HOLD';
+  if (body.suppressed_by_freshness_gate === true) return 'SKIPPED_FRESHNESS';
+  if (body.suppressed_non_mail_signal === true) return 'SKIPPED_FLOW';
+  if (body.suppressed_by_timing_gate === true) return 'SKIPPED_TIMING';
+  if (body.mail_sent === true) return 'SEND|NO_GATE_OBJECT';
+  return 'SKIPPED';
+}
+
+function ycFreshnessLog_(body) {
+  body = body || {};
+  const gate = body.freshness_gate;
+  if (!gate) {
+    return body.suppressed_by_jev_pre_gate === true ? 'SKIPPED_PRE_HOLD' : '';
+  }
+  const damage = Number(gate.damage_atr);
+  const damageText = isFinite(damage) ? damage.toFixed(2) + 'ATR' : '-';
+  const fresh = gate.fresh_price == null ? '-' : String(gate.fresh_price);
+  return [
+    String(gate.decision || 'UNKNOWN'),
+    String(gate.reason || ''),
+    String(gate.direction || 'UNKNOWN'),
+    'fresh=' + fresh,
+    'dATR=' + damageText
+  ].join('|');
+}
+
 function isMonitorEnabled_(ss) {
   const sheet = ss.getSheetByName(YC.CONFIG_SHEET);
   if (!sheet || sheet.getLastRow() < 2) return true;
@@ -428,6 +489,12 @@ function isMonitorEnabled_(ss) {
 function appendDispatchLog_(ss, item) {
   const sheet = ss.getSheetByName(YC.LOG_SHEET);
   if (!sheet) return;
+
+  const obsHeaders = sheet.getRange(1, 13, 1, 3).getDisplayValues()[0];
+  if (obsHeaders[0] !== 'JEV_PRE' || obsHeaders[1] !== 'JEV_FINAL' || obsHeaders[2] !== 'FRESHNESS') {
+    sheet.getRange(1, 13, 1, 3).setValues([['JEV_PRE', 'JEV_FINAL', 'FRESHNESS']]);
+  }
+
   sheet.appendRow([
     new Date(),
     item.ticker || '',
@@ -441,6 +508,9 @@ function appendDispatchLog_(ss, item) {
     item.elapsedMs || '',
     item.error || '',
     item.source || '',
+    item.jevPre || '',
+    item.jevFinal || '',
+    item.freshness || '',
   ]);
 }
 
