@@ -482,5 +482,3 @@ function checkSignalApiHealth() {
   const response = UrlFetchApp.fetch(apiUrl.replace(/\/$/, '') + '/health', {muteHttpExceptions: true});
   Logger.log(response.getResponseCode() + ' ' + response.getContentText());
 }
-
-[executed on device: ?섏쓽?명듃遺?(c8f070dd-f470-4bd3-a7e2-1facae42a08a)]
