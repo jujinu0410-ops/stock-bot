@@ -202,6 +202,57 @@ function collectIntelligenceCandidates_() {
         .replace(/[\u00a0\u200b\ufeff\u200e\u200f]/g, ' ')
         .replace(/[\u202a-\u202e\u2066-\u2069]/g, '');
 
+      // Authoritative V2 source: the explicit end-of-mail full mention list.
+      // Example:
+      // 📋 오늘 전체 언급 종목 (37개)
+      // 005930|삼성전자
+      // 000660|SK하이닉스
+      //
+      // This list is the candidate-pool source of truth. The top "장전 시황"
+      // block is only a catalyst/priority signal and may legitimately say
+      // "직접 언급 종목 없음" even when the full report mentions many stocks.
+      const fullHeading = body.match(/(?:^|\n)\s*(?:📋\s*)?오늘\s*전체\s*언급\s*종목\s*\(\s*(\d+)\s*개\s*\)[^\n]*/i);
+      if (fullHeading) {
+        structuredMailCount += 1;
+        const declaredCount = Number(fullHeading[1] || 0);
+        const fullSection = body.substring(fullHeading.index + fullHeading[0].length);
+        const fullLines = fullSection.split('\n').map(function(v) {
+          return String(v || '')
+            .replace(/[\u00a0\u200b\ufeff\u200e\u200f]/g, ' ')
+            .replace(/[\u202a-\u202e\u2066-\u2069]/g, '')
+            .replace(/^\s*[-*+•▪◦‣▶▷►]+\s*/, '')
+            .replace(/\*\*|__|`/g, '')
+            .trim();
+        });
+        const fullDateKey = Utilities.formatDate(message.getDate(), 'Asia/Seoul', 'yyyy-MM-dd');
+        const fullSeen = new Set();
+        let fullParsed = 0;
+
+        for (let fi = 0; fi < fullLines.length; fi++) {
+          const line = fullLines[fi];
+          if (!line) continue;
+
+          const pipe = line.match(/^(\d{6})\s*\|\s*(.{1,80}?)\s*$/);
+          if (!pipe) {
+            // Once the list has started, a new report/footer heading ends it.
+            if (fullParsed > 0 && /^(?:📺|🧾|📝|🔚|Generated\s+by|본\s*리포트는|분석\s*기준\s*:|#{1,6}\s+)/i.test(line)) break;
+            continue;
+          }
+
+          const code = normalizeCandidateCode_(pipe[1]);
+          const name = cleanCandidateName_(pipe[2]);
+          if (!code || !name || fullSeen.has(code)) continue;
+          addCandidateMention_(byCode, fullSeen, code, name, fullDateKey);
+          fullParsed += 1;
+          parsedCardCount += 1;
+        }
+
+        if (declaredCount > 0 && fullParsed !== declaredCount) {
+          throw new Error('FULL_MENTION_COUNT_MISMATCH_declared_' + declaredCount + '_parsed_' + fullParsed);
+        }
+        return;
+      }
+
       const headingRe = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:📌\s*)?(?:(?:오늘(?:의)?|주요|핵심|최종)\s*)?언급\s*(?:(?:[·ㆍ\/&+]\s*)?주목\s*)?종목(?:\s*(?:목록|리스트))?(?:\s*\([^\n)]{1,80}\))?[^\n]*/gi;
       let headingMatch = null;
       let hm;
