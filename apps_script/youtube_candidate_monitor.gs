@@ -41,7 +41,10 @@ function monitorYouTubeCandidates() {
     if (!sheet) throw new Error('CANDIDATES sheet not found');
 
     const lastRow = sheet.getLastRow();
-    if (lastRow < YC.DATA_START_ROW) return;
+    if (lastRow < YC.DATA_START_ROW) {
+      ycRefreshAlertOutcomes_(ss);
+      return;
+    }
 
     SpreadsheetApp.flush();
     const range = sheet.getRange(YC.DATA_START_ROW, 1, lastRow - 1, YC.LAST_COLUMN);
@@ -68,6 +71,9 @@ function monitorYouTubeCandidates() {
         });
       }
     });
+
+    // Post-alert SHADOW review only; never changes the live decision.
+    ycRefreshAlertOutcomes_(ss);
   } finally {
     lock.releaseLock();
   }
@@ -174,15 +180,28 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
     const mailSent = body.mail_sent === true;
 
     if (mailSent) {
-      // Only an actually delivered ????mail consumes LastDispatchKey.
+      // Only an actually delivered mail consumes LastDispatchKey.
+      const dispatchedAt = new Date();
       sheet.getRange(rowNumber, 21, 1, 5).setValues([[
         triggerKey,
-        new Date(),
+        dispatchedAt,
         String(body.final_signal || ''),
         String(body.flow_status || ''),
         String(body.flow_summary || ''),
       ]]);
       props.deleteProperty(backendHoldKey);
+
+      const freshness = body && body.freshness_gate ? body.freshness_gate : {};
+      const backendFreshPrice = Number(freshness.fresh_price);
+      ycRegisterAlertOutcome_(ss, {
+        alertTime: dispatchedAt,
+        ticker: code,
+        name: name,
+        signal: String(body.final_signal || ''),
+        triggerKey: triggerKey,
+        alertPrice: isFinite(backendFreshPrice) && backendFreshPrice > 0 ? backendFreshPrice : payload.current_price,
+        atr14: payload.atr14
+      });
     } else {
       // Keep LastDispatchKey untouched so a suppressed setup can mature later.
       // W:Y still shows the most recent backend judgement in the sheet.
