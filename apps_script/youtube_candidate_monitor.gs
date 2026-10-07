@@ -1,15 +1,16 @@
- * YouTube 언급종목 매수감시 - Google Sheets Apps Script
+﻿/*
+ * YouTube ?멸툒醫낅ぉ 留ㅼ닔媛먯떆 - Google Sheets Apps Script
  *
- * 역할
- * 1) CANDIDATES 탭을 5분마다 확인
- * 2) TechStatus가 BUY_CANDIDATE로 진입한 행만 HTTP backend 호출
- * 3) backend가 Kiwoom ka10059 수급 확인 + Gmail 발송
- * 4) 성공한 TriggerKey만 기록하여 같은 날 같은 신호 중복 호출 방지
+ * ??븷
+ * 1) CANDIDATES ??쓣 5遺꾨쭏???뺤씤
+ * 2) TechStatus媛 BUY_CANDIDATE濡?吏꾩엯???됰쭔 HTTP backend ?몄텧
+ * 3) backend媛 Kiwoom ka10059 ?섍툒 ?뺤씤 + Gmail 諛쒖넚
+ * 4) ?깃났??TriggerKey留?湲곕줉?섏뿬 媛숈? ??媛숈? ?좏샇 以묐났 ?몄텧 諛⑹?
  *
- * 보안
- * - Kiwoom 키를 시트/Apps Script에 저장하지 않음
- * - Script Properties에는 SIGNAL_API_URL / SIGNAL_API_TOKEN만 저장
- * - 주문 API 없음
+ * 蹂댁븞
+ * - Kiwoom ?ㅻ? ?쒗듃/Apps Script????ν븯吏 ?딆쓬
+ * - Script Properties?먮뒗 SIGNAL_API_URL / SIGNAL_API_TOKEN留????
+ * - 二쇰Ц API ?놁쓬
  */
 
 const YC = Object.freeze({
@@ -128,8 +129,8 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
 
   const preGate = ycJevPreGate_(payload);
   if (preGate.decision === 'HOLD') {
-    // PRE-GATE HOLD는 Cloud Run만 막고 15분 뒤 재심사한다.
-    // LastDispatchKey는 쓰지 않아 장중 신호가 강해질 기회를 보존한다.
+    // PRE-GATE HOLD??Cloud Run留?留됯퀬 15遺????ъ떖?ы븳??
+    // LastDispatchKey???곗? ?딆븘 ?μ쨷 ?좏샇媛 媛뺥빐吏?湲고쉶瑜?蹂댁〈?쒕떎.
     if (preGate.reason !== 'PRE_HOLD_COOLDOWN') {
       appendDispatchLog_(ss, {
         ticker: code,
@@ -170,7 +171,7 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
     const mailSent = body.mail_sent === true;
 
     if (mailSent) {
-      // Only an actually delivered △/▲ mail consumes LastDispatchKey.
+      // Only an actually delivered ????mail consumes LastDispatchKey.
       sheet.getRange(rowNumber, 21, 1, 5).setValues([[
         triggerKey,
         new Date(),
@@ -210,7 +211,7 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
     return;
   }
 
-  // 실패 시 LastDispatchKey를 쓰지 않는다. 다음 5분 트리거에서 자동 재시도한다.
+  // ?ㅽ뙣 ??LastDispatchKey瑜??곗? ?딅뒗?? ?ㅼ쓬 5遺??몃━嫄곗뿉???먮룞 ?ъ떆?꾪븳??
   appendDispatchLog_(ss, {
     ticker: code,
     name: name,
@@ -404,11 +405,11 @@ function ycJevNumber_(answer, field, fallback) {
 function ycJevPreGateSummary_(gate) {
   const s = gate && gate.summary ? gate.summary : {};
   return 'Jev PRE ' + String(gate && gate.decision || 'PROCEED') +
-    ' · ' + String(s.direction || 'UNKNOWN') +
+    ' 쨌 ' + String(s.direction || 'UNKNOWN') +
     ' / ' + String(s.stage || 'UNKNOWN') +
     ' / urgency ' + String(s.urgency == null ? '-' : s.urgency) +
     ' / proceed ' + Math.round(Number(s.probability == null ? 1 : s.probability) * 100) + '%' +
-    ' · ' + String(gate && gate.reason || '');
+    ' 쨌 ' + String(gate && gate.reason || '');
 }
 
 function isMonitorEnabled_(ss) {
@@ -452,7 +453,7 @@ function numberOrNull_(value) {
   return (typeof value === 'number' && isFinite(value)) ? value : null;
 }
 
-/* 최초 1회 실행: 5분 트리거 설치 */
+/* 理쒖큹 1???ㅽ뻾: 5遺??몃━嫄??ㅼ튂 */
 function installFiveMinuteTrigger() {
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'monitorYouTubeCandidates')
@@ -464,7 +465,7 @@ function installFiveMinuteTrigger() {
     .create();
 }
 
-/* 최초 1회 실행: Cloud Run URL/공유토큰 저장. 토큰은 시트 셀에 쓰지 않는다. */
+/* 理쒖큹 1???ㅽ뻾: Cloud Run URL/怨듭쑀?좏겙 ??? ?좏겙? ?쒗듃 ????곗? ?딅뒗?? */
 function setSignalApiConfig(apiUrl, apiToken) {
   if (!apiUrl || !apiToken) throw new Error('apiUrl/apiToken required');
   PropertiesService.getScriptProperties().setProperties({
@@ -473,7 +474,7 @@ function setSignalApiConfig(apiUrl, apiToken) {
   }, false);
 }
 
-/* 연결 확인용. 메일/키움 호출은 하지 않는다. */
+/* ?곌껐 ?뺤씤?? 硫붿씪/?ㅼ? ?몄텧? ?섏? ?딅뒗?? */
 function checkSignalApiHealth() {
   const props = PropertiesService.getScriptProperties();
   const apiUrl = String(props.getProperty('SIGNAL_API_URL') || '').trim();
@@ -482,4 +483,4 @@ function checkSignalApiHealth() {
   Logger.log(response.getResponseCode() + ' ' + response.getContentText());
 }
 
-[executed on device: 나의노트북 (c8f070dd-f470-4bd3-a7e2-1facae42a08a)]
+[executed on device: ?섏쓽?명듃遺?(c8f070dd-f470-4bd3-a7e2-1facae42a08a)]
