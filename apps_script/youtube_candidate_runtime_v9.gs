@@ -136,12 +136,66 @@ function hasPendingCandidateTechRefreshV9_() {
   });
 }
 
+function refreshPendingCandidateTechV9_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(YC.CANDIDATE_SHEET);
+  if (!sheet) return 'RECOVERY_NO_SHEET';
+
+  const lastRow = lastCandidateRowByCode_(sheet);
+  if (lastRow < YC.DATA_START_ROW) return 'RECOVERY_NO_ROWS';
+
+  const today = todayKeyV8_();
+  const data = sheet.getRange(
+    YC.DATA_START_ROW,
+    1,
+    lastRow - YC.DATA_START_ROW + 1,
+    26
+  ).getDisplayValues();
+
+  let attempted = 0;
+  let updated = 0;
+  let failed = 0;
+
+  data.forEach(function(r, idx) {
+    const active = String(r[0] || '').trim().toUpperCase();
+    const code = normalizeCandidateCode_(r[3]);
+    const note = String(r[25] || '');
+    if (active !== 'Y' || !code || note.indexOf('TECH_REFRESH_PENDING') < 0) return;
+
+    attempted += 1;
+    const rowNumber = YC.DATA_START_ROW + idx;
+    try {
+      const tech = fetchDailyTechnicalSnapshot_(code);
+      if (tech.staleDays > 4) throw new Error('STALE_DAILY_BAR_' + tech.staleDays);
+
+      sheet.getRange(rowNumber, 9, 1, 7).setValues([[
+        tech.referenceLow, tech.atr14, tech.ma20, tech.ma60,
+        tech.ma20Slope5d, tech.rsi14, tech.pullbackReady,
+      ]]);
+      sheet.getRange(rowNumber, 26).setValue(
+        'TECH_ASOF=' + today +
+        '; LAST_BAR=' + tech.lastDate +
+        '; MENTION_DAYS=1; RECOVERY=FULL_MENTION_LIST'
+      );
+      updated += 1;
+    } catch (err) {
+      sheet.getRange(rowNumber, 26).setValue(
+        'TECH_REFRESH_ERROR=' + String(err && err.message ? err.message : err) +
+        '; RECOVERY=FULL_MENTION_LIST'
+      );
+      failed += 1;
+    }
+  });
+
+  SpreadsheetApp.flush();
+  return 'RECOVERY_TECH attempted=' + attempted + '; updated=' + updated + '; failed=' + failed;
+}
+
 function scheduledCombinedTickV6() {
   const logStatus = cleanupDispatchLogOncePerDayV9_();
   let refreshStatus = '';
   if (hasPendingCandidateTechRefreshV9_()) {
-    refreshYouTubeCandidatePoolV2();
-    refreshStatus = 'RECOVERY_REFRESH_PENDING_TECH';
+    refreshStatus = refreshPendingCandidateTechV9_();
   } else {
     refreshStatus = maybeScheduledCandidateRefreshV6();
   }
