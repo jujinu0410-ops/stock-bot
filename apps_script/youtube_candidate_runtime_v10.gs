@@ -141,7 +141,7 @@ function parseFullMentionListV10_(rawBody) {
   };
 }
 
-function collectIntelligenceCandidates_() {
+function collectIntelligenceCandidatesFromMailV10_() {
   const query = 'subject:"경제 Intelligence" newer_than:' + YCI.LOOKBACK_DAYS + 'd -in:trash -in:spam';
   const threads = GmailApp.search(query, 0, YCI.MAX_THREADS);
   const byCode = {};

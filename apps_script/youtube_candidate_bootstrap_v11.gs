@@ -23,7 +23,8 @@ const YCB = Object.freeze({
     'youtube_candidate_runtime_v7.gs',
     'youtube_candidate_runtime_v8.gs',
     'youtube_candidate_runtime_v9.gs',
-    'youtube_candidate_runtime_v10.gs'
+    'youtube_candidate_runtime_v10.gs',
+    'youtube_chartnam_clipper_v1.gs'
   ]
 });
 
