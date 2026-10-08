@@ -233,6 +233,111 @@ def _fetch_45m_vwap_gate(ticker: str) -> Dict[str, Any]:
         return {"available": False, "reason": type(exc).__name__}
 
 
+def _analyze_45m_exit_risk_df(df_45m: Any, source: str = "") -> Dict[str, Any]:
+    """Confirm persistent 45m weakness for a held-position sell-prep warning."""
+    try:
+        if df_45m is None or len(df_45m) < 35:
+            return {"available": False, "reason": "INSUFFICIENT_45M_BARS", "source": source}
+
+        work = df_45m.copy()
+        close = work["Close"].astype(float)
+        volume = work["Volume"].astype(float).fillna(0.0)
+
+        delta = close.diff()
+        signed_volume = volume * 0.0
+        signed_volume = signed_volume.where(~(delta > 0), volume)
+        signed_volume = signed_volume.where(~(delta < 0), -volume)
+        obv = signed_volume.fillna(0.0).cumsum()
+        obv9 = obv.rolling(9).mean()
+
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        macd_signal = macd.ewm(span=9, adjust=False).mean()
+
+        calc = work[["Close"]].copy()
+        calc["obv"] = obv
+        calc["obv9"] = obv9
+        calc["macd"] = macd
+        calc["macd_signal"] = macd_signal
+        calc = calc.dropna(subset=["obv9", "macd", "macd_signal"])
+        if len(calc) < 3:
+            return {"available": False, "reason": "INSUFFICIENT_CALCULATED_45M_BARS", "source": source}
+
+        session_last = calc.groupby(calc.index.date).tail(1)
+        if len(session_last) < 2:
+            return {"available": False, "reason": "NEED_TWO_TRADING_SESSIONS", "source": source}
+
+        prev_session = session_last.iloc[-2]
+        curr_session = session_last.iloc[-1]
+        prev_date = session_last.index[-2].date().isoformat()
+        curr_date = session_last.index[-1].date().isoformat()
+
+        no_gold_two_sessions = bool(
+            float(prev_session["obv"]) <= float(prev_session["obv9"])
+            and float(curr_session["obv"]) <= float(curr_session["obv9"])
+        )
+        obv_session_falling = bool(
+            float(curr_session["obv"]) < float(prev_session["obv"])
+            and float(curr_session["obv9"]) < float(prev_session["obv9"])
+        )
+
+        recent = calc.tail(3)
+        macd_values = [float(v) for v in recent["macd"].tolist()]
+        macd_falling_3 = bool(macd_values[0] > macd_values[1] > macd_values[2])
+        macd_below_signal = bool(float(recent["macd"].iloc[-1]) < float(recent["macd_signal"].iloc[-1]))
+
+        warn = bool(
+            no_gold_two_sessions
+            and obv_session_falling
+            and macd_falling_3
+            and macd_below_signal
+        )
+        return {
+            "available": True,
+            "decision": "WARN" if warn else "PASS",
+            "reason": (
+                "PERSISTENT_45M_OBV_NO_GOLD_AND_MACD_FALLING"
+                if warn else "45M_PERSISTENT_WEAKNESS_NOT_CONFIRMED"
+            ),
+            "source": source,
+            "prev_session": prev_date,
+            "curr_session": curr_date,
+            "no_gold_two_sessions": no_gold_two_sessions,
+            "obv_session_falling": obv_session_falling,
+            "macd_falling_3": macd_falling_3,
+            "macd_below_signal": macd_below_signal,
+            "obv": float(curr_session["obv"]),
+            "obv9": float(curr_session["obv9"]),
+            "macd": float(recent["macd"].iloc[-1]),
+            "macd_signal": float(recent["macd_signal"].iloc[-1]),
+            "completed_bar": calc.index[-1].strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    except Exception as exc:
+        app.logger.warning("45m exit-risk analysis failed error=%s", exc)
+        return {"available": False, "reason": type(exc).__name__, "source": source}
+
+
+def _fetch_45m_exit_risk(ticker: str) -> Dict[str, Any]:
+    try:
+        now = datetime.now().astimezone()
+        slot = KRXCalendar.get_completed_45m_bar(now)
+        if not slot:
+            return {"available": False, "reason": "NO_COMPLETED_45M_BAR"}
+        cutoff = datetime.combine(
+            now.date(),
+            datetime.strptime(slot[2], "%H:%M").time(),
+            tzinfo=now.tzinfo,
+        )
+        df_45m, source, quality = get_strictly_sliced_45m_df(ticker, cutoff)
+        if df_45m is None or quality != "VALID":
+            return {"available": False, "reason": quality, "source": source}
+        return _analyze_45m_exit_risk_df(df_45m, source)
+    except Exception as exc:
+        app.logger.warning("45m exit-risk fetch failed ticker=%s error=%s", ticker, exc)
+        return {"available": False, "reason": type(exc).__name__}
+
+
 def _evaluate_entry_timing_veto(ticker: str) -> Dict[str, Any]:
     daily = _fetch_daily_obv_gate(ticker)
     intraday = _fetch_45m_vwap_gate(ticker)
@@ -1348,6 +1453,20 @@ def _held_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     name = str(payload.get("name") or ticker).strip()
     as_of = _parse_as_of(payload)
     context = _collect_market_context(ticker, name, as_of, include_flow=True)
+
+    regime = str(payload.get("regime") or "").strip().upper()
+    obv_dir = str(payload.get("obv_dir") or "").strip().upper()
+    obv9_dir = str(payload.get("obv9_dir") or "").strip().upper()
+    if regime in ("BEAR_CONFIRMED", "EARLY_WEAKENING") or (
+        obv_dir == "FALLING" and obv9_dir == "FALLING"
+    ):
+        context["technical_exit_risk"] = _fetch_45m_exit_risk(ticker)
+    else:
+        context["technical_exit_risk"] = {
+            "available": False,
+            "reason": "LOCAL_BEARISH_PREFILTER_NOT_MET",
+        }
+
     return {
         "ok": True,
         "ticker": ticker,

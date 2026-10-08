@@ -1,5 +1,6 @@
 import os
 import unittest
+import pandas as pd
 from unittest.mock import patch
 
 from services import youtube_signal_service as svc
@@ -76,6 +77,28 @@ class YouTubeSignalServiceTest(unittest.TestCase):
             alert,
         )
         self.assertEqual([b["minutes_after_alert"] for b in bars], [5, 30, 60])
+
+    def test_45m_exit_risk_warns_on_two_session_obv_and_falling_macd(self):
+        idx = list(pd.date_range("2026-10-07 09:45", periods=20, freq="45min"))
+        idx += list(pd.date_range("2026-10-08 09:45", periods=20, freq="45min"))
+        closes = [23000 - i * 80 for i in range(40)]
+        df = pd.DataFrame(
+            {
+                "Open": closes,
+                "High": [v + 50 for v in closes],
+                "Low": [v - 50 for v in closes],
+                "Close": closes,
+                "Volume": [1000 + i * 10 for i in range(40)],
+            },
+            index=pd.DatetimeIndex(idx),
+        )
+        out = svc._analyze_45m_exit_risk_df(df, "TEST")
+        self.assertTrue(out["available"])
+        self.assertEqual(out["decision"], "WARN")
+        self.assertTrue(out["no_gold_two_sessions"])
+        self.assertTrue(out["obv_session_falling"])
+        self.assertTrue(out["macd_falling_3"])
+        self.assertTrue(out["macd_below_signal"])
 
     def test_ticker_validation(self):
         self.assertEqual(svc._clean_ticker("007660"), "007660")
