@@ -314,6 +314,15 @@ def _parse_kiwoom_price(value: Any) -> float | None:
     return parsed if parsed > 0 else None
 
 
+def _parse_kiwoom_signed_number(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).strip().replace(",", "").replace("%", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 def _fetch_kiwoom_quote(
     session: RetryingKiwoomSession,
     token: str,
@@ -337,9 +346,17 @@ def _fetch_kiwoom_quote(
     current = _parse_kiwoom_price(payload.get("cur_prc"))
     if current is None:
         return {"available": False, "reason": "KA10001_CURRENT_PRICE_MISSING"}
+    change_pct_raw = _parse_kiwoom_signed_number(payload.get("flu_rt"))
+    change_amount = _parse_kiwoom_signed_number(payload.get("pred_pre"))
+    change_pct = change_pct_raw / 100.0 if change_pct_raw is not None else None
+    if change_pct is None and change_amount is not None:
+        prev_close = current - change_amount
+        if prev_close > 0:
+            change_pct = (current / prev_close) - 1.0
     return {
         "available": True,
         "current_price": current,
+        "change_pct": change_pct,
         "open": _parse_kiwoom_price(payload.get("open_pric")),
         "high": _parse_kiwoom_price(payload.get("high_pric")),
         "low": _parse_kiwoom_price(payload.get("low_pric")),
@@ -617,6 +634,75 @@ def _evaluate_kiwoom_freshness_gate(
         "direction": direction,
         "quote": quote,
         "minute_source": minute.get("source"),
+    }
+
+
+def _evaluate_etf_freshness(payload: Dict[str, Any]) -> Dict[str, Any]:
+    ticker = _clean_ticker(payload.get("ticker"))
+    stage = str(payload.get("stage") or "").strip()
+    if stage not in ("▲", "△"):
+        raise SignalServiceError("ETF_STAGE_NOT_UPWARD")
+
+    session = RetryingKiwoomSession(max_attempts=5)
+    token = _get_kiwoom_token(session)
+    quote = _fetch_kiwoom_quote(session, token, ticker)
+    minute = _fetch_kiwoom_minute_bars(session, token, ticker)
+
+    if not quote.get("available"):
+        return {"ok": True, "decision": "VETO", "reason": str(quote.get("reason") or "FRESH_QUOTE_UNAVAILABLE"), "ticker": ticker}
+    if not minute.get("available"):
+        return {"ok": True, "decision": "VETO", "reason": str(minute.get("reason") or "MINUTE_BARS_UNAVAILABLE"), "ticker": ticker}
+
+    fresh_price = float(quote["current_price"])
+    change_pct = quote.get("change_pct")
+    bars = list(minute.get("bars") or [])
+    recent = bars[-5:]
+    closes = [float(row["close"]) for row in recent]
+    p3 = float(bars[-4]["close"])
+
+    weighted = 0.0
+    volume_sum = 0.0
+    for row in recent:
+        vol = max(0.0, float(row.get("volume") or 0.0))
+        typical = (float(row.get("high") or row["close"]) + float(row.get("low") or row["close"]) + float(row["close"])) / 3.0
+        weighted += typical * vol
+        volume_sum += vol
+    vwap5 = weighted / volume_sum if volume_sum > 0 else sum(closes) / len(closes)
+    lower_steps = sum(1 for a, b in zip(closes, closes[1:]) if b < a)
+
+    if fresh_price >= p3 and fresh_price >= vwap5:
+        direction = "RISING"
+    elif fresh_price < p3 and fresh_price < vwap5:
+        direction = "FALLING"
+    else:
+        direction = "FLAT"
+
+    if change_pct is None:
+        decision, reason = "VETO", "LIVE_CHANGE_PCT_UNAVAILABLE"
+    elif stage == "▲" and change_pct < 0:
+        decision, reason = "VETO", "STRONG_UP_REQUIRES_NONNEGATIVE_DAY"
+    elif stage == "△" and change_pct <= -0.01:
+        decision, reason = "VETO", "EARLY_UP_DAY_DROP_BELOW_MINUS_1PCT"
+    elif direction == "FALLING":
+        decision, reason = "VETO", "RECENT_1M_FALLING"
+    else:
+        decision, reason = "PASS", "ETF_FRESH_SIGNAL_ALIVE"
+
+    return {
+        "ok": True,
+        "decision": decision,
+        "reason": reason,
+        "ticker": ticker,
+        "stage": stage,
+        "fresh_price": fresh_price,
+        "change_pct": change_pct,
+        "price_3m_ago": p3,
+        "vwap_5m": vwap5,
+        "direction": direction,
+        "lower_steps_5m": lower_steps,
+        "quote_source": quote.get("source"),
+        "minute_source": minute.get("source"),
+        "kiwoom_429_retry_count": session.retry_count,
     }
 
 
@@ -1217,7 +1303,7 @@ def health() -> Any:
         {
             "ok": True,
             "service": "youtube-signal-service",
-            "endpoints": ["/confirm", "/held-context", "/jev-gate", "/alert-outcome"],
+            "endpoints": ["/confirm", "/held-context", "/jev-gate", "/alert-outcome", "/etf-freshness"],
         }
     )
 
@@ -1267,6 +1353,22 @@ def jev_gate() -> Any:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         app.logger.exception("jev alert gate failed")
+        return jsonify({"ok": False, "error": f"UNEXPECTED:{type(exc).__name__}"}), 500
+
+
+@app.post("/etf-freshness")
+def etf_freshness() -> Any:
+    if not _secret_ok():
+        return jsonify({"ok": False, "error": "UNAUTHORIZED"}), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "INVALID_JSON"}), 400
+    try:
+        return jsonify(_evaluate_etf_freshness(payload)), 200
+    except SignalServiceError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("ETF freshness evaluation failed")
         return jsonify({"ok": False, "error": f"UNEXPECTED:{type(exc).__name__}"}), 500
 
 
