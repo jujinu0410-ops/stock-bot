@@ -62,6 +62,7 @@ ALLOWED_FINAL_SIGNALS = {FINAL_BUY_ALERT, FINAL_BUY_ALERT_STRONG}
 FRESHNESS_DAMAGE_ATR = 0.40
 FRESHNESS_SHARP_DROP_ATR = 0.20
 STRONG_MAX_INTRADAY_DROP_PCT = -0.05
+EARLY_ALERT_MAX_WEAK_DAY_PCT = -0.01
 # User-facing language is shared with the held-position monitor:
 # ▲ confirmed upward/buy condition, △ early upward/buy condition, · neutral watch.
 # Internal final-signal codes remain unchanged for compatibility.
@@ -323,6 +324,38 @@ def _parse_kiwoom_signed_number(value: Any) -> float | None:
         return None
 
 
+def _evaluate_early_alert_safety_gate(
+    final: FinalSignalAssessment,
+    freshness_gate: Dict[str, Any],
+    timing_gate: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Suppress △ when 45m trend is unavailable and the live day is already weak."""
+    if final.final_signal != FINAL_BUY_ALERT:
+        return {"decision": "NOT_APPLICABLE", "reason": "FINAL_SIGNAL_NOT_EARLY"}
+
+    vwap_45m = timing_gate.get("vwap_45m") or {}
+    if vwap_45m.get("available"):
+        return {"decision": "PASS", "reason": "45M_AVAILABLE"}
+
+    change_pct = freshness_gate.get("change_pct")
+    if change_pct is None:
+        quote = freshness_gate.get("quote") or {}
+        change_pct = quote.get("change_pct")
+
+    if change_pct is not None and float(change_pct) <= EARLY_ALERT_MAX_WEAK_DAY_PCT:
+        return {
+            "decision": "VETO",
+            "reason": "45M_UNAVAILABLE_AND_DAY_BELOW_MINUS_1PCT",
+            "change_pct": float(change_pct),
+        }
+
+    return {
+        "decision": "PASS",
+        "reason": "45M_UNAVAILABLE_BUT_DAY_NOT_TOO_WEAK",
+        "change_pct": change_pct,
+    }
+
+
 def _fetch_kiwoom_quote(
     session: RetryingKiwoomSession,
     token: str,
@@ -542,6 +575,7 @@ def _evaluate_kiwoom_freshness_gate(
     buy_trigger_05: float | None,
     session: RetryingKiwoomSession,
     token: str,
+    overheat_upper: float | None = None,
 ) -> Dict[str, Any]:
     quote = _fetch_kiwoom_quote(session, token, ticker)
     minute = _fetch_kiwoom_minute_bars(session, token, ticker)
@@ -601,7 +635,10 @@ def _evaluate_kiwoom_freshness_gate(
         )
     )
 
-    if buy_trigger_05 is not None and buy_trigger_05 > 0 and fresh_price < buy_trigger_05:
+    if overheat_upper is not None and overheat_upper > 0 and fresh_price >= overheat_upper:
+        decision = "VETO"
+        reason = "FRESH_PRICE_AT_OR_ABOVE_OVERHEAT"
+    elif buy_trigger_05 is not None and buy_trigger_05 > 0 and fresh_price < buy_trigger_05:
         decision = "VETO"
         reason = "FRESH_PRICE_BELOW_BUY_TRIGGER"
     elif damage_atr <= -FRESHNESS_DAMAGE_ATR:
@@ -632,6 +669,8 @@ def _evaluate_kiwoom_freshness_gate(
         "vwap_5m": vwap5,
         "lower_steps_5m": lower_steps,
         "direction": direction,
+        "overheat_upper": overheat_upper,
+        "change_pct": quote.get("change_pct"),
         "quote": quote,
         "minute_source": minute.get("source"),
     }
@@ -1020,11 +1059,13 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     signal_price = _as_float(payload, "current_price")
     atr14 = _as_float(payload, "atr14")
     buy_trigger_05 = _as_float(payload, "buy_trigger_05")
+    overheat_upper = _as_float(payload, "overheat_upper")
     freshness_gate = _evaluate_kiwoom_freshness_gate(
         ticker,
         signal_price=signal_price,
         atr14=atr14,
         buy_trigger_05=buy_trigger_05,
+        overheat_upper=overheat_upper,
         session=session,
         token=token,
     )
@@ -1078,7 +1119,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         buy_trigger_05=buy_trigger_05,
         confirm_trigger_06=confirm_trigger_06,
         confirmed_06=confirmed_06,
-        overheat=False,
+        overheat=bool(overheat_upper is not None and overheat_upper > 0 and fresh_price >= overheat_upper),
         reason="BUY_CANDIDATE supplied by Google Sheet monitor",
     )
     final = combine_final_signal(tech, flow)
@@ -1143,6 +1184,37 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     if confirmation_gate.get("decision") == "DOWNGRADE_TO_BUY_ALERT":
         flow_text += " / ▲매수확인 보류: " + str(confirmation_gate.get("reason") or "")
 
+    early_safety_gate = _evaluate_early_alert_safety_gate(
+        final,
+        freshness_gate,
+        timing_gate,
+    )
+    if early_safety_gate.get("decision") == "VETO":
+        app.logger.info(
+            "early alert safety veto ticker=%s reason=%s change_pct=%s",
+            ticker,
+            early_safety_gate.get("reason"),
+            early_safety_gate.get("change_pct"),
+        )
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "name": name,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": FINAL_WATCH_ONLY,
+            "original_final_signal": final.final_signal,
+            "flow_status": flow.status,
+            "flow_summary": flow_text,
+            "freshness_gate": freshness_gate,
+            "timing_gate": timing_gate,
+            "confirmation_gate": confirmation_gate,
+            "early_safety_gate": early_safety_gate,
+            "mail_sent": False,
+            "suppressed_by_early_safety_gate": True,
+            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        }
+
     context = _collect_market_context(
         ticker=ticker,
         name=name,
@@ -1160,6 +1232,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     context["freshness_gate"] = freshness_gate
     context["confirmation_gate"] = confirmation_gate
+    context["early_safety_gate"] = early_safety_gate
     context["kiwoom_429_retry_count"] = session.retry_count
 
     if pre_gate_ok and pre_gate_decision == "PROCEED" and not needs_final_review:

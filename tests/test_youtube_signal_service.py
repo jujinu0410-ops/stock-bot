@@ -194,6 +194,54 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertEqual(gate["reason"], "FRESH_SIGNAL_ALIVE")
         self.assertEqual(gate["direction"], "RISING")
 
+    @patch.object(svc, "_fetch_kiwoom_minute_bars")
+    @patch.object(svc, "_fetch_kiwoom_quote")
+    def test_freshness_veto_when_price_reaches_overheat_upper(self, quote, minute):
+        quote.return_value = {
+            "available": True,
+            "current_price": 228000.0,
+            "change_pct": -0.015,
+            "source": "KIWOOM_KA10001",
+        }
+        minute.return_value = {
+            "available": True,
+            "source": "KIWOOM_KA10080",
+            "bars": [
+                {"time": "093000", "close": 225000.0, "high": 225500.0, "low": 224500.0, "volume": 100},
+                {"time": "093100", "close": 226000.0, "high": 226500.0, "low": 225500.0, "volume": 120},
+                {"time": "093200", "close": 227000.0, "high": 227500.0, "low": 226500.0, "volume": 130},
+                {"time": "093300", "close": 227500.0, "high": 228000.0, "low": 227000.0, "volume": 140},
+                {"time": "093400", "close": 228000.0, "high": 228500.0, "low": 227500.0, "volume": 150},
+            ],
+        }
+        gate = svc._evaluate_kiwoom_freshness_gate(
+            "062040",
+            signal_price=228000.0,
+            atr14=12146.66361,
+            buy_trigger_05=209073.3318,
+            overheat_upper=225354.9954,
+            session=object(),
+            token="token",
+        )
+        self.assertEqual(gate["decision"], "VETO")
+        self.assertEqual(gate["reason"], "FRESH_PRICE_AT_OR_ABOVE_OVERHEAT")
+
+    def test_early_alert_veto_when_45m_unavailable_and_day_below_minus_1pct(self):
+        early = svc.FinalSignalAssessment(
+            svc.FINAL_BUY_ALERT,
+            svc.TECH_BUY_CANDIDATE,
+            "POSITIVE",
+            "UNAVAILABLE",
+            "early alert",
+        )
+        gate = svc._evaluate_early_alert_safety_gate(
+            early,
+            {"change_pct": -0.015},
+            {"vwap_45m": {"available": False, "reason": "UNAVAILABLE"}},
+        )
+        self.assertEqual(gate["decision"], "VETO")
+        self.assertEqual(gate["reason"], "45M_UNAVAILABLE_AND_DAY_BELOW_MINUS_1PCT")
+
     @patch.object(svc.KiwoomInvestorFlowReader, "fetch_stock_flow")
     @patch.object(svc, "_evaluate_kiwoom_freshness_gate")
     @patch.object(svc, "_get_kiwoom_token")
