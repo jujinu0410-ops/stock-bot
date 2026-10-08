@@ -1,4 +1,4 @@
-"""Daily 3-candle reversal patterns for SHADOW confirmation.
+"""Daily 3-candle reversal patterns for direct one-step signal modification.
 
 Source-derived rules:
 - 8 named patterns (4 bullish, 4 bearish)
@@ -224,5 +224,5 @@ def detect_daily_reversal_patterns(bars: Sequence[Dict[str, Any]]) -> Dict[str, 
         "pretrend": "DOWN" if down_pre else "UP" if up_pre else "NONE",
         "last_date": str(b3.get("date") or ""),
         "thresholds": {k: round(v, 6) for k, v in t.items()},
-        "mode": "SHADOW_CONFIRMATION_ONLY",
+        "mode": "DIRECT_MODIFIER_V1",
     }

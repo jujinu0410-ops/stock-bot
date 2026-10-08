@@ -457,6 +457,101 @@ def _apply_strong_confirmation_gate(
     }
 
 
+def _apply_daily_pattern_signal_modifier(
+    final: FinalSignalAssessment,
+    daily_pattern: Dict[str, Any],
+    tech: TechnicalAssessment,
+    freshness_gate: Dict[str, Any],
+    timing_gate: Dict[str, Any],
+) -> tuple[FinalSignalAssessment, Dict[str, Any]]:
+    """Let completed daily reversal patterns directly move an existing signal by one step.
+
+    Hard guards are never bypassed. A bullish pattern may upgrade △ to ▲ only
+    when +0.6 ATR is already confirmed, flow is NEUTRAL (not negative), and the
+    completed 45m VWAP trend is available and bullish. A bearish pattern can
+    downgrade ▲→△ or △→WATCH_ONLY.
+    """
+    if not daily_pattern.get("available"):
+        return final, {"decision": "NO_EFFECT", "reason": "PATTERN_UNAVAILABLE"}
+
+    bias = str(daily_pattern.get("bias") or "NONE").upper()
+    labels = list(daily_pattern.get("labels") or [])
+    if bias == "BEAR":
+        if final.final_signal == FINAL_BUY_ALERT_STRONG:
+            changed = FinalSignalAssessment(
+                FINAL_BUY_ALERT,
+                final.tech_status,
+                final.flow_status,
+                final.market_regime,
+                final.reason + "; daily bearish reversal pattern downgraded strong buy alert",
+            )
+            return changed, {
+                "decision": "DOWNGRADE",
+                "reason": "DAILY_BEAR_PATTERN_STRONG_TO_EARLY",
+                "bias": bias,
+                "labels": labels,
+            }
+        if final.final_signal == FINAL_BUY_ALERT:
+            changed = FinalSignalAssessment(
+                FINAL_WATCH_ONLY,
+                final.tech_status,
+                final.flow_status,
+                final.market_regime,
+                final.reason + "; daily bearish reversal pattern downgraded buy alert to watch",
+            )
+            return changed, {
+                "decision": "DOWNGRADE",
+                "reason": "DAILY_BEAR_PATTERN_EARLY_TO_WATCH",
+                "bias": bias,
+                "labels": labels,
+            }
+
+    if (
+        bias == "BULL"
+        and final.final_signal == FINAL_BUY_ALERT
+        and tech.confirmed_06
+        and final.flow_status == "NEUTRAL"
+    ):
+        vwap_45m = timing_gate.get("vwap_45m") or {}
+        quote = freshness_gate.get("quote") or {}
+        fresh_price = _parse_kiwoom_price(freshness_gate.get("fresh_price"))
+        open_price = _parse_kiwoom_price(quote.get("open"))
+        intraday_change_pct = (
+            (fresh_price - open_price) / open_price
+            if fresh_price and open_price else None
+        )
+        strong_day_ok = (
+            intraday_change_pct is None
+            or intraday_change_pct > STRONG_MAX_INTRADAY_DROP_PCT
+        )
+        if (
+            freshness_gate.get("decision") == "PASS"
+            and vwap_45m.get("available")
+            and vwap_45m.get("gold")
+            and strong_day_ok
+        ):
+            changed = FinalSignalAssessment(
+                FINAL_BUY_ALERT_STRONG,
+                final.tech_status,
+                final.flow_status,
+                final.market_regime,
+                final.reason + "; daily bullish reversal pattern + 0.6ATR + 45m uptrend upgraded signal",
+            )
+            return changed, {
+                "decision": "UPGRADE",
+                "reason": "DAILY_BULL_PATTERN_NEUTRAL_FLOW_TO_STRONG",
+                "bias": bias,
+                "labels": labels,
+            }
+
+    return final, {
+        "decision": "NO_EFFECT",
+        "reason": "PATTERN_CONDITIONS_NOT_MET",
+        "bias": bias,
+        "labels": labels,
+    }
+
+
 def _parse_kiwoom_price(value: Any) -> float | None:
     if value in (None, ""):
         return None
@@ -1045,6 +1140,7 @@ def _collect_market_context(
     as_of: date,
     now: datetime | None = None,
     include_flow: bool = True,
+    daily_reversal_pattern: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     now = now or datetime.now().astimezone()
     errors: List[str] = []
@@ -1068,7 +1164,8 @@ def _collect_market_context(
     disclosures = _disclosure_context(ticker, name, as_of)
     news = _news_context(name, ticker, now)
     catalyst = assess_catalyst(disclosures, news, now=now)
-    daily_reversal_pattern = _fetch_daily_reversal_pattern(ticker)
+    if daily_reversal_pattern is None:
+        daily_reversal_pattern = _fetch_daily_reversal_pattern(ticker)
 
     flow.pop("_flow_obj", None)
     return {
@@ -1116,7 +1213,7 @@ def _context_html(context: Dict[str, Any]) -> str:
             '<div style="margin-top:8px;font-size:12px"><b>일봉 반전패턴</b>: '
             + escape(bias_ko)
             + (' · ' + escape(', '.join(str(x) for x in labels)) if labels else '')
-            + '<br><span style="color:#64748b">참고용 보조신호 — 패턴만으로 매매하지 않음</span></div>'
+            + '<br><span style="color:#64748b">보조신호 — 단독 매매신호는 아니며 기존 신호를 1단계 조정할 수 있음</span></div>'
         )
 
     if disclosures:
@@ -1355,6 +1452,39 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     if confirmation_gate.get("decision") == "DOWNGRADE_TO_BUY_ALERT":
         flow_text += " / ▲매수확인 보류: " + str(confirmation_gate.get("reason") or "")
 
+    daily_pattern = _fetch_daily_reversal_pattern(ticker)
+    final, pattern_signal_gate = _apply_daily_pattern_signal_modifier(
+        final,
+        daily_pattern,
+        tech,
+        freshness_gate,
+        timing_gate,
+    )
+    if pattern_signal_gate.get("decision") == "DOWNGRADE":
+        flow_text += " / 일봉 하락반전 패턴으로 신호 한 단계 하향"
+    elif pattern_signal_gate.get("decision") == "UPGRADE":
+        flow_text += " / 일봉 상승반전 패턴으로 신호 한 단계 상향"
+
+    if final.final_signal not in ALLOWED_FINAL_SIGNALS:
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "name": name,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": final.final_signal,
+            "flow_status": flow.status,
+            "flow_summary": flow_text,
+            "freshness_gate": freshness_gate,
+            "timing_gate": timing_gate,
+            "confirmation_gate": confirmation_gate,
+            "pattern_signal_gate": pattern_signal_gate,
+            "daily_reversal_pattern": daily_pattern,
+            "mail_sent": False,
+            "suppressed_by_daily_pattern": True,
+            "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        }
+
     early_safety_gate = _evaluate_early_alert_safety_gate(
         final,
         freshness_gate,
@@ -1391,6 +1521,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         name=name,
         as_of=as_of,
         include_flow=False,
+        daily_reversal_pattern=daily_pattern,
     )
     context["flow"] = {
         "status": flow.status,
@@ -1404,6 +1535,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     context["freshness_gate"] = freshness_gate
     context["confirmation_gate"] = confirmation_gate
     context["early_safety_gate"] = early_safety_gate
+    context["pattern_signal_gate"] = pattern_signal_gate
     context["kiwoom_429_retry_count"] = session.retry_count
 
     if pre_gate_ok and pre_gate_decision == "PROCEED" and not needs_final_review:
@@ -1466,6 +1598,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
             "freshness_gate": freshness_gate,
             "timing_gate": timing_gate,
             "confirmation_gate": confirmation_gate,
+            "pattern_signal_gate": pattern_signal_gate,
             "jev_gate": jev_gate,
             "mail_sent": False,
             "dry_run": True,
@@ -1505,6 +1638,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         "freshness_gate": freshness_gate,
         "timing_gate": timing_gate,
         "confirmation_gate": confirmation_gate,
+        "pattern_signal_gate": pattern_signal_gate,
         "jev_pre_gate": pre_gate,
         "jev_gate": jev_gate,
         "kiwoom_429_retry_count": session.retry_count,

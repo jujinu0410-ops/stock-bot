@@ -265,6 +265,79 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertEqual(gate["decision"], "VETO")
         self.assertEqual(gate["reason"], "45M_UNAVAILABLE_AND_DAY_BELOW_MINUS_1PCT")
 
+    def test_daily_bear_pattern_downgrades_strong_to_early(self):
+        final = svc.FinalSignalAssessment(
+            svc.FINAL_BUY_ALERT_STRONG,
+            svc.TECH_BUY_CANDIDATE,
+            "POSITIVE",
+            "UNAVAILABLE",
+            "strong",
+        )
+        tech = svc.TechnicalAssessment(
+            svc.TECH_BUY_CANDIDATE, None, None, 100.0, 110.0, True, False, "ok"
+        )
+        changed, gate = svc._apply_daily_pattern_signal_modifier(
+            final,
+            {"available": True, "bias": "BEAR", "labels": ["석별형"]},
+            tech,
+            {"decision": "PASS", "fresh_price": 120.0, "quote": {"open": 118.0}},
+            {"vwap_45m": {"available": True, "gold": True}},
+        )
+        self.assertEqual(changed.final_signal, svc.FINAL_BUY_ALERT)
+        self.assertEqual(gate["decision"], "DOWNGRADE")
+
+    def test_daily_bear_pattern_downgrades_early_to_watch(self):
+        final = svc.FinalSignalAssessment(
+            svc.FINAL_BUY_ALERT,
+            svc.TECH_BUY_CANDIDATE,
+            "POSITIVE",
+            "UNAVAILABLE",
+            "early",
+        )
+        tech = svc.TechnicalAssessment(
+            svc.TECH_BUY_CANDIDATE, None, None, 100.0, 110.0, False, False, "ok"
+        )
+        changed, gate = svc._apply_daily_pattern_signal_modifier(
+            final,
+            {"available": True, "bias": "BEAR", "labels": ["흑삼병"]},
+            tech,
+            {"decision": "PASS", "fresh_price": 105.0, "quote": {"open": 106.0}},
+            {"vwap_45m": {"available": True, "gold": True}},
+        )
+        self.assertEqual(changed.final_signal, svc.FINAL_WATCH_ONLY)
+        self.assertEqual(gate["decision"], "DOWNGRADE")
+
+    def test_daily_bull_pattern_upgrades_neutral_flow_only_with_06_and_45m(self):
+        final = svc.FinalSignalAssessment(
+            svc.FINAL_BUY_ALERT,
+            svc.TECH_BUY_CANDIDATE,
+            "NEUTRAL",
+            "UNAVAILABLE",
+            "early",
+        )
+        tech = svc.TechnicalAssessment(
+            svc.TECH_BUY_CANDIDATE, None, None, 100.0, 110.0, True, False, "ok"
+        )
+        changed, gate = svc._apply_daily_pattern_signal_modifier(
+            final,
+            {"available": True, "bias": "BULL", "labels": ["샛별형"]},
+            tech,
+            {"decision": "PASS", "fresh_price": 120.0, "quote": {"open": 118.0}},
+            {"vwap_45m": {"available": True, "gold": True}},
+        )
+        self.assertEqual(changed.final_signal, svc.FINAL_BUY_ALERT_STRONG)
+        self.assertEqual(gate["decision"], "UPGRADE")
+
+        blocked, blocked_gate = svc._apply_daily_pattern_signal_modifier(
+            final,
+            {"available": True, "bias": "BULL", "labels": ["샛별형"]},
+            tech,
+            {"decision": "PASS", "fresh_price": 100.0, "quote": {"open": 110.0}},
+            {"vwap_45m": {"available": True, "gold": True}},
+        )
+        self.assertEqual(blocked.final_signal, svc.FINAL_BUY_ALERT)
+        self.assertEqual(blocked_gate["decision"], "NO_EFFECT")
+
     @patch.object(svc.KiwoomInvestorFlowReader, "fetch_stock_flow")
     @patch.object(svc, "_evaluate_kiwoom_freshness_gate")
     @patch.object(svc, "_get_kiwoom_token")
