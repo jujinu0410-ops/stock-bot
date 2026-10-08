@@ -57,6 +57,9 @@ function parsePremarketBlockV10_(rawBody) {
   });
 
   if (stocks.length < YCV10.MIN_PREMARKET_STOCKS) {
+    if (/직접\s*언급\s*종목\s*없음|언급\s*종목\s*없음|종목\s*없음/i.test(section)) {
+      return {found:true, stocks:[]};
+    }
     throw new Error('PREMARKET_V10_PARSE_EMPTY');
   }
   if (stocks.length > YCV10.MAX_PREMARKET_STOCKS) {
@@ -66,12 +69,49 @@ function parsePremarketBlockV10_(rawBody) {
   return {found: true, stocks: stocks};
 }
 
+
+function parseFullMentionListV10_(rawBody) {
+  const body = String(rawBody || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\u200b/g, '');
+
+  const heading = body.match(/(?:^|\n)\s*(?:📋\s*)?오늘\s*전체\s*언급\s*종목\s*\(\s*(\d+)\s*개\s*\)[^\n]*/i);
+  if (!heading) return {found:false, stocks:[], declared:0};
+
+  const declared = Number(heading[1] || 0);
+  const tail = body.substring(heading.index + heading[0].length);
+  const stocks = [];
+  const seen = new Set();
+
+  tail.split('\n').forEach(function(rawLine) {
+    const line = String(rawLine || '').trim();
+    if (!line) return;
+
+    const m = line.match(/^(\d{6})\s*\|\s*([^|\n]{1,80})\s*$/);
+    if (!m) return;
+
+    const code = normalizeCandidateCode_(m[1]);
+    const name = String(m[2] || '').trim();
+    if (!code || !name) return;
+    if (seen.has(code)) throw new Error('FULL_MENTION_V10_DUPLICATE_CODE:' + code);
+    seen.add(code);
+    stocks.push({code:code, name:name, reason:''});
+  });
+
+  if (declared !== stocks.length) {
+    throw new Error('FULL_MENTION_V10_COUNT_MISMATCH_declared_' + declared + '_parsed_' + stocks.length);
+  }
+  return {found:true, stocks:stocks, declared:declared};
+}
+
 function collectIntelligenceCandidates_() {
   const query = 'subject:"경제 Intelligence" newer_than:' + YCI.LOOKBACK_DAYS + 'd -in:trash -in:spam';
   const threads = GmailApp.search(query, 0, YCI.MAX_THREADS);
   const byCode = {};
   const today = todayKeyV8_();
-  const todayPremarketCodes = new Set();
+  const todayMentionCodes = new Set();
   let structuredMailCount = 0;
   let parsedStockCount = 0;
 
@@ -80,7 +120,8 @@ function collectIntelligenceCandidates_() {
       const subject = String(message.getSubject() || '');
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
 
-      const parsed = parsePremarketBlockV10_(message.getPlainBody());
+      const fullParsed = parseFullMentionListV10_(message.getPlainBody());
+      const parsed = fullParsed.found ? fullParsed : parsePremarketBlockV10_(message.getPlainBody());
       if (!parsed.found) return;
 
       structuredMailCount += 1;
@@ -112,13 +153,13 @@ function collectIntelligenceCandidates_() {
           byCode[code].nameTrusted = true;
           byCode[code].sourceTag = YCV10.RUNTIME_TAG;
         }
-        if (dateKey === today) todayPremarketCodes.add(code);
+        if (dateKey === today) todayMentionCodes.add(code);
       });
     });
   });
 
   if (structuredMailCount > 0 && parsedStockCount === 0) {
-    throw new Error('PREMARKET_V10_EMPTY_WITH_STRUCTURED_MAILS_' + structuredMailCount);
+    throw new Error('CANDIDATE_V10_EMPTY_WITH_STRUCTURED_MAILS_' + structuredMailCount);
   }
 
   /*
@@ -145,7 +186,7 @@ function collectIntelligenceCandidates_() {
       if (isExpiredMentionV8_(lastSeen, today)) return;
       if (byCode[code]) return;
 
-      if (lastSeen === today && !todayPremarketCodes.has(code)) {
+      if (lastSeen === today && !todayMentionCodes.has(code)) {
         return;
       }
 
