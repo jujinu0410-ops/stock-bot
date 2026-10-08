@@ -131,6 +131,7 @@ function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
     pullback_ready: row[14] === true,
     buy_trigger_05: numberOrNull_(row[15]),
     confirm_trigger_06: numberOrNull_(row[16]),
+    overheat_upper: numberOrNull_(row[17]),
   };
 
   const preGate = ycJevPreGate_(payload);
