@@ -10,7 +10,7 @@
  */
 
 const YCB = Object.freeze({
-  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/ca073d91214d7ed68035028d9f553239d14f72a2/apps_script/',
+  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/0349df112e949bf954199e0965236df2f509c8ff/apps_script/',
   FILES: [
     'youtube_candidate_monitor.gs',
     'youtube_candidate_outcome.gs',
@@ -112,7 +112,7 @@ function ycInstallTriggers() {
 
   SpreadsheetApp.getUi().alert(
     '설치 완료',
-    '후보메일: [경제 Intelligence]의 "장전 시황" CODE|NAME|reason 블록만 수집합니다.\n' +
+    '후보메일: [경제 Intelligence]의 "오늘 전체 언급 종목" 목록을 후보군 정본으로 수집합니다. 장전 시황은 우선순위 신호로만 사용합니다.\n' +
     '후보 유효기간: 마지막 직접언급일부터 한 달이며 재언급 시 다시 한 달 연장됩니다.\n' +
     '만료 후보 행은 신규 종목에 재사용합니다.\n' +
     'DISPATCH_LOG: 최근 90일, 최대 2,000건만 유지하며 하루 한 번 자동 정리합니다.\n' +
