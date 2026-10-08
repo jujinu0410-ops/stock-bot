@@ -1,12 +1,11 @@
 /*
- * Runtime V10: PREMARKET_ONLY Gmail ingest.
+ * Runtime V10: canonical YouTube all-stocks Gmail ingest.
  *
  * Purpose:
- * - parse ONLY the "장전 시황" section from [경제 Intelligence] mails
- * - accept explicit CODE|NAME|reason lines only
+ * - use [YT_ALL_STOCKS_BEGIN] ... [YT_ALL_STOCKS_END] as the source of truth
+ * - accept explicit CODE|NAME lines inside that machine-readable block
  * - keep the one-calendar-month rolling pool
- * - reject same-day sheet carryover that is not present in today's premarket section
- *   so a previous YT_ALL_STOCKS contamination cannot persist as a fresh mention
+ * - retain the old heading/premarket parsers only as backward-compatible fallbacks
  *
  * Loaded after runtime_v9 so collectIntelligenceCandidates_() here is canonical.
  */
@@ -15,7 +14,7 @@ const YCV10 = Object.freeze({
   TIMEZONE: 'Asia/Seoul',
   MAX_PREMARKET_STOCKS: 30,
   MIN_PREMARKET_STOCKS: 1,
-  RUNTIME_TAG: 'PREMARKET_V10',
+  RUNTIME_TAG: 'YT_ALL_STOCKS_V10',
 });
 
 function parsePremarketBlockV10_(rawBody) {
@@ -77,15 +76,36 @@ function parseFullMentionListV10_(rawBody) {
     .replace(/\u00a0/g, ' ')
     .replace(/\u200b/g, '');
 
-  const heading = body.match(/(?:^|\n)\s*(?:📋\s*)?오늘\s*전체\s*언급\s*종목\s*\(\s*(\d+)\s*개\s*\)[^\n]*/i);
-  if (!heading) return {found:false, stocks:[], declared:0};
+  const beginToken = '[YT_ALL_STOCKS_BEGIN]';
+  const endToken = '[YT_ALL_STOCKS_END]';
+  const begin = body.indexOf(beginToken);
+  const end = body.indexOf(endToken, begin >= 0 ? begin + beginToken.length : 0);
 
-  const declared = Number(heading[1] || 0);
-  const tail = body.substring(heading.index + heading[0].length);
+  let section = '';
+  let declared = 0;
+  let source = '';
+
+  if (begin >= 0 && end > begin) {
+    section = body.substring(begin + beginToken.length, end);
+    source = 'YT_ALL_STOCKS_MARKERS';
+
+    const before = body.substring(Math.max(0, begin - 500), begin);
+    const countMatch = before.match(/오늘\s*(?:유튜브\s*)?전체\s*언급\s*종목\s*\(\s*(\d+)\s*개\s*\)/i);
+    if (countMatch) declared = Number(countMatch[1] || 0);
+  } else {
+    // Backward-compatible fallback for already delivered legacy mails.
+    const heading = body.match(/(?:^|\n)\s*(?:📋\s*)?오늘\s*(?:유튜브\s*)?전체\s*언급\s*종목\s*\(\s*(\d+)\s*개\s*\)[^\n]*/i);
+    if (!heading) return {found:false, stocks:[], declared:0, source:''};
+
+    declared = Number(heading[1] || 0);
+    section = body.substring(heading.index + heading[0].length);
+    source = 'LEGACY_HEADING';
+  }
+
   const stocks = [];
   const seen = new Set();
 
-  tail.split('\n').forEach(function(rawLine) {
+  section.split('\n').forEach(function(rawLine) {
     const line = String(rawLine || '').trim();
     if (!line) return;
 
@@ -95,15 +115,30 @@ function parseFullMentionListV10_(rawBody) {
     const code = normalizeCandidateCode_(m[1]);
     const name = String(m[2] || '').trim();
     if (!code || !name) return;
-    if (seen.has(code)) throw new Error('FULL_MENTION_V10_DUPLICATE_CODE:' + code);
+
+    if (seen.has(code)) {
+      throw new Error('YT_ALL_STOCKS_V10_DUPLICATE_CODE:' + code);
+    }
     seen.add(code);
     stocks.push({code:code, name:name, reason:''});
   });
 
-  if (declared !== stocks.length) {
-    throw new Error('FULL_MENTION_V10_COUNT_MISMATCH_declared_' + declared + '_parsed_' + stocks.length);
+  if (stocks.length === 0) {
+    throw new Error('YT_ALL_STOCKS_V10_PARSE_EMPTY');
   }
-  return {found:true, stocks:stocks, declared:declared};
+  if (declared > 0 && declared !== stocks.length) {
+    throw new Error(
+      'YT_ALL_STOCKS_V10_COUNT_MISMATCH_declared_' +
+      declared + '_parsed_' + stocks.length
+    );
+  }
+
+  return {
+    found:true,
+    stocks:stocks,
+    declared:declared || stocks.length,
+    source:source
+  };
 }
 
 function collectIntelligenceCandidates_() {
@@ -132,7 +167,7 @@ function collectIntelligenceCandidates_() {
         const code = stock.code;
         const sourceName = stock.name;
         if (seenThisMessage.has(code)) {
-          throw new Error('PREMARKET_V10_DUPLICATE_MESSAGE_CODE:' + code);
+          throw new Error('CANDIDATE_V10_DUPLICATE_MESSAGE_CODE:' + code);
         }
         seenThisMessage.add(code);
         parsedStockCount += 1;
