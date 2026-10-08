@@ -1105,12 +1105,18 @@ def _context_html(context: Dict[str, Any]) -> str:
     ]
     if daily_pattern.get("available"):
         labels = daily_pattern.get("labels") or []
-        bias = str(daily_pattern.get("bias") or "NONE")
+        bias = str(daily_pattern.get("bias") or "NONE").upper()
+        bias_ko = {
+            "BULL": "상승반전",
+            "BEAR": "하락반전",
+            "MIXED": "혼재",
+            "NONE": "해당 없음",
+        }.get(bias, bias)
         rows.append(
             '<div style="margin-top:8px;font-size:12px"><b>일봉 반전패턴</b>: '
-            + escape(bias)
-            + (' · ' + escape(', '.join(str(x) for x in labels)) if labels else ' · 없음')
-            + '<br><span style="color:#64748b">SHADOW 보조근거 — 패턴 단독 매매신호 아님</span></div>'
+            + escape(bias_ko)
+            + (' · ' + escape(', '.join(str(x) for x in labels)) if labels else '')
+            + '<br><span style="color:#64748b">참고용 보조신호 — 패턴만으로 매매하지 않음</span></div>'
         )
 
     if disclosures:
