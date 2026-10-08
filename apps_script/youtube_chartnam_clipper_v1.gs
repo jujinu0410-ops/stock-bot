@@ -90,6 +90,68 @@ function ycGetChartnamSheet_() {
   return sheet;
 }
 
+/*
+ * YouTube can send ytInitialData as an object literal or a JavaScript-escaped
+ * quoted JSON string (e.g. '\x7b\x22responseContext\x22...') to UrlFetchApp.
+ * Decode only known string escapes; do NOT eval untrusted page JavaScript.
+ */
+function ycParseChartnamInitialData_(page) {
+  const m=/(?:var\s+)?ytInitialData\s*=\s*/.exec(String(page||''));
+  if (!m) throw new Error('CHARTNAM_INITIAL_DATA_MISSING');
+  let i=m.index+m[0].length;
+  while (/\s/.test(page.charAt(i))) i++;
+  if (page.slice(i,i+11)==='JSON.parse(') {
+    i+=11;
+    while (/\s/.test(page.charAt(i))) i++;
+  }
+  const first=page.charAt(i);
+  if (first==='{' || first==='[') {
+    let depth=0,quoted=false,escaped=false,end=-1;
+    for (let j=i;j<page.length;j++) {
+      const c=page.charAt(j);
+      if (quoted) {
+        if (escaped) escaped=false;
+        else if (c==='\\') escaped=true;
+        else if (c==='"') quoted=false;
+      } else if (c==='"') quoted=true;
+      else if (c==='{' || c==='[') depth++;
+      else if (c==='}' || c===']') {
+        if (--depth===0) {end=j+1;break;}
+      }
+    }
+    if (end<0) throw new Error('CHARTNAM_BAD_JSON_BOUNDARY');
+    return JSON.parse(page.slice(i,end));
+  }
+  if (first!=='"' && first!=="'") {
+    throw new Error('CHARTNAM_UNSUPPORTED_INITIAL_DATA:'+String(first).slice(0,6));
+  }
+  const quote=first;
+  let output='',closed=false;
+  for (i++;i<page.length;i++) {
+    const c=page.charAt(i);
+    if (c===quote) {closed=true;break;}
+    if (c!=='\\') {output+=c;continue;}
+    if (++i>=page.length) break;
+    const e=page.charAt(i);
+    if (e==='x' || e==='u') {
+      const n=e==='x'?2:4;
+      const hex=page.slice(i+1,i+1+n);
+      if (!new RegExp('^[0-9a-fA-F]{'+n+'}$').test(hex)) {
+        throw new Error('CHARTNAM_BAD_HEX_ESCAPE');
+      }
+      output+=String.fromCharCode(parseInt(hex,16));
+      i+=n;
+    } else {
+      const escapes={'n':'\n','r':'\r','t':'\t','b':'\b','f':'\f','v':'\v','0':'\0'};
+      output+=Object.prototype.hasOwnProperty.call(escapes,e)?escapes[e]:e;
+    }
+  }
+  if (!closed) throw new Error('CHARTNAM_UNTERMINATED_JS_STRING');
+  const parsed=JSON.parse(output);
+  if (!parsed || typeof parsed!=='object') throw new Error('CHARTNAM_INITIAL_DATA_NOT_OBJECT');
+  return parsed;
+}
+
 function ycFetchChartnam_() {
   const opts = {
     method:'get',muteHttpExceptions:true,followRedirects:true,
@@ -98,25 +160,7 @@ function ycFetchChartnam_() {
   const res = UrlFetchApp.fetch(YCC.POST_URL,opts);
   if (res.getResponseCode() !== 200) throw new Error('CHARTNAM_HTTP_'+res.getResponseCode());
   const html = res.getContentText('UTF-8');
-  const match = /(?:var\s+)?ytInitialData\s*=\s*/.exec(html);
-  if (!match) throw new Error('CHARTNAM_INITIAL_DATA_MISSING');
-  // Balanced JSON scanner: semicolons/braces inside YouTube strings are safe.
-  const offset = match.index+match[0].length;
-  let depth=0, quoted=false, escaped=false, end=-1;
-  for (let i=offset;i<html.length;i++) {
-    const c=html.charAt(i);
-    if (quoted) {
-      if (escaped) escaped=false;
-      else if (c==='\\') escaped=true;
-      else if (c==='"') quoted=false;
-      continue;
-    }
-    if (c==='"') quoted=true;
-    else if (c==='{') depth++;
-    else if (c==='}' && --depth===0) {end=i+1;break;}
-  }
-  if (end < 0) throw new Error('CHARTNAM_BAD_JSON_BOUNDARY');
-  const initial=JSON.parse(html.slice(offset,end));
+  const initial=ycParseChartnamInitialData_(html);
   const posts=new Map();
   function text(value) {
     if (!value || typeof value!=='object') return '';

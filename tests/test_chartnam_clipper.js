@@ -60,4 +60,12 @@ const again=context.collectIntelligenceCandidates_();
 assert.equal(Object.keys(again).length,3); // duplicate code does not multiply rows
 assert.equal(again['411080'].mentionDays,1);
 assert.equal(context.ycParseChartnamText_('신규상장 예정\n· 기업(123456)').length,0);
-console.log('PASS chartnam parser, exact code union, idempotent candidate pool; 7 assertions groups');
+const payload=JSON.stringify({responseContext:{},items:[{backstagePostRenderer:{postId:'post123'}}]});
+const jsEscaped='ytInitialData = \''+
+  Array.from(payload).map(ch=>'\\x'+ch.charCodeAt(0).toString(16).padStart(2,'0')).join('')+
+  '\';';
+assert.equal(context.ycParseChartnamInitialData_('ytInitialData = '+payload+';').items[0].backstagePostRenderer.postId,'post123');
+assert.equal(context.ycParseChartnamInitialData_(jsEscaped).items[0].backstagePostRenderer.postId,'post123');
+assert.equal(context.ycParseChartnamInitialData_('ytInitialData = '+JSON.stringify(payload)+';').items[0].backstagePostRenderer.postId,'post123');
+assert.equal(context.ycParseChartnamInitialData_('ytInitialData = JSON.parse('+JSON.stringify(payload)+');').items[0].backstagePostRenderer.postId,'post123');
+console.log('PASS chartnam parse variants (object, JS hex, quoted, JSON.parse), union and duplicates');
