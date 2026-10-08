@@ -40,6 +40,7 @@ from src.runtime.krx_calendar import KRXCalendar
 from src.analysis.market_catalyst_context import assess_catalyst, plain_text
 from src.analysis.youtube_candidate_review import describe_flow
 from src.analysis.youtube_alert_outcome import evaluate_youtube_alert_outcome
+from src.analysis.daily_reversal_patterns import detect_daily_reversal_patterns
 from src.analysis.youtube_candidate_signal import (
     FINAL_BUY_ALERT,
     FINAL_BUY_ALERT_STRONG,
@@ -194,6 +195,52 @@ def _fetch_daily_obv_gate(ticker: str) -> Dict[str, Any]:
     except Exception as exc:
         app.logger.warning("daily OBV gate failed ticker=%s error=%s", ticker, exc)
         return {"available": False, "reason": type(exc).__name__}
+
+
+def _fetch_daily_reversal_pattern(ticker: str) -> Dict[str, Any]:
+    """Completed-daily 3-candle reversal pattern context from Naver fchart."""
+    url = (
+        "https://fchart.stock.naver.com/sise.nhn"
+        f"?symbol={ticker}&timeframe=day&count=90&requestType=0"
+    )
+    try:
+        res = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code != 200:
+            return {"available": False, "reason": f"HTTP_{res.status_code}"}
+        text = res.content.decode("cp949", errors="replace")
+        if text.lstrip().startswith("<?xml") and "?>" in text:
+            text = text[text.find("?>") + 2:]
+        root = ET.fromstring(text)
+        bars: List[Dict[str, Any]] = []
+        now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+        for item in root.iter("item"):
+            parts = str(item.attrib.get("data") or "").split("|")
+            if len(parts) < 6:
+                continue
+            try:
+                ymd = str(parts[0])
+                bar_date = date(int(ymd[:4]), int(ymd[4:6]), int(ymd[6:8]))
+                # The video rules require a confirmed day-3 close.  Never use today's
+                # still-forming daily candle before a conservative 16:00 KST cutoff.
+                if bar_date == now_kst.date() and now_kst.hour < 16:
+                    continue
+                bars.append({
+                    "date": bar_date.isoformat(),
+                    "open": float(parts[1]),
+                    "high": float(parts[2]),
+                    "low": float(parts[3]),
+                    "close": float(parts[4]),
+                    "volume": float(parts[5]),
+                })
+            except (TypeError, ValueError):
+                continue
+        out = detect_daily_reversal_patterns(bars)
+        out["source"] = "NAVER_FCHART_COMPLETED_DAILY"
+        out["ticker"] = ticker
+        return out
+    except Exception as exc:
+        app.logger.warning("daily reversal pattern failed ticker=%s error=%s", ticker, exc)
+        return {"available": False, "reason": type(exc).__name__, "ticker": ticker}
 
 
 def _fetch_45m_vwap_gate(ticker: str) -> Dict[str, Any]:
@@ -1021,6 +1068,7 @@ def _collect_market_context(
     disclosures = _disclosure_context(ticker, name, as_of)
     news = _news_context(name, ticker, now)
     catalyst = assess_catalyst(disclosures, news, now=now)
+    daily_reversal_pattern = _fetch_daily_reversal_pattern(ticker)
 
     flow.pop("_flow_obj", None)
     return {
@@ -1028,6 +1076,7 @@ def _collect_market_context(
         "disclosures": disclosures,
         "news": news,
         "catalyst": catalyst,
+        "daily_reversal_pattern": daily_reversal_pattern,
         "kiwoom_429_retry_count": retry_count,
         "errors": errors,
     }
@@ -1038,6 +1087,7 @@ def _context_html(context: Dict[str, Any]) -> str:
     flow = context.get("flow") or {}
     disclosures = context.get("disclosures") or []
     news = context.get("news") or []
+    daily_pattern = context.get("daily_reversal_pattern") or {}
 
     def num(v: Any) -> str:
         try:
@@ -1053,6 +1103,16 @@ def _context_html(context: Dict[str, Any]) -> str:
         f'수급: <b>{escape(str(flow.get("status") or "UNAVAILABLE"))}</b> · '
         f'외국인5일 {num(flow.get("foreign_5d"))} / 기관5일 {num(flow.get("institution_5d"))}</div>',
     ]
+    if daily_pattern.get("available"):
+        labels = daily_pattern.get("labels") or []
+        bias = str(daily_pattern.get("bias") or "NONE")
+        rows.append(
+            '<div style="margin-top:8px;font-size:12px"><b>일봉 반전패턴</b>: '
+            + escape(bias)
+            + (' · ' + escape(', '.join(str(x) for x in labels)) if labels else ' · 없음')
+            + '<br><span style="color:#64748b">SHADOW 보조근거 — 패턴 단독 매매신호 아님</span></div>'
+        )
+
     if disclosures:
         rows.append('<div style="margin-top:8px;font-size:12px"><b>DART</b><br>')
         for d in disclosures[:3]:
