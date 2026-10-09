@@ -30,8 +30,15 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertEqual(res.status_code, 401)
         self.assertEqual(res.get_json()["error"], "UNAUTHORIZED")
 
+    @patch.object(svc, "_krx_session_status")
     @patch.object(svc, "_confirm")
-    def test_confirm_passes_only_authenticated_payload(self, mocked):
+    def test_confirm_passes_only_authenticated_payload(self, mocked, krx_status):
+        krx_status.return_value = {
+            "date": "2026-10-08",
+            "is_trading_day": True,
+            "reason": "TRADING_DAY",
+            "timezone": "Asia/Seoul",
+        }
         mocked.return_value = {
             "ok": True,
             "ticker": "007660",
@@ -46,6 +53,35 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertTrue(res.get_json()["ok"])
         mocked.assert_called_once()
+
+    def test_krx_session_status_closes_hangul_day(self):
+        status = svc._krx_session_status("2026-10-09")
+        self.assertFalse(status["is_trading_day"])
+        self.assertEqual(status["reason"], "KRX_CLOSED")
+
+    def test_krx_session_status_opens_next_trading_monday(self):
+        status = svc._krx_session_status("2026-10-12")
+        self.assertTrue(status["is_trading_day"])
+        self.assertEqual(status["reason"], "TRADING_DAY")
+
+    @patch.object(svc, "_krx_session_status")
+    def test_confirm_holiday_fail_closed_before_signal_engine(self, krx_status):
+        krx_status.return_value = {
+            "date": "2026-10-09",
+            "is_trading_day": False,
+            "reason": "KRX_CLOSED",
+            "timezone": "Asia/Seoul",
+        }
+        res = self.client.post(
+            "/confirm",
+            headers={"X-StockBot-Token": "test-token"},
+            json={"ticker": "010140", "tech_status": "BUY_CANDIDATE"},
+        )
+        body = res.get_json()
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(body["suppressed_by_krx_closed"])
+        self.assertFalse(body["mail_sent"])
+        self.assertEqual(body["reason"], "KRX_MARKET_CLOSED")
 
     def test_alert_outcome_requires_shared_token(self):
         res = self.client.post(

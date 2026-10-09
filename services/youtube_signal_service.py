@@ -1689,21 +1689,57 @@ def _jev_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
     return evaluate_jev_alert_gate(enriched)
 
 
+def _krx_session_status(dt_input: Any = None) -> Dict[str, Any]:
+    now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    target = dt_input or now_kst.date()
+    try:
+        d = KRXCalendar.parse_to_date(target)
+    except Exception:
+        d = now_kst.date()
+    is_trading = KRXCalendar.is_krx_trading_day(d)
+    return {
+        "date": d.isoformat(),
+        "is_trading_day": bool(is_trading),
+        "reason": "TRADING_DAY" if is_trading else "KRX_CLOSED",
+        "timezone": "Asia/Seoul",
+    }
+
+
 @app.get("/health")
 def health() -> Any:
     return jsonify(
         {
             "ok": True,
             "service": "youtube-signal-service",
-            "endpoints": ["/confirm", "/held-context", "/jev-gate", "/alert-outcome", "/etf-freshness"],
+            "endpoints": ["/confirm", "/held-context", "/jev-gate", "/alert-outcome", "/etf-freshness", "/krx-session"],
         }
     )
+
+
+@app.post("/krx-session")
+def krx_session() -> Any:
+    if not _secret_ok():
+        return jsonify({"ok": False, "error": "UNAUTHORIZED"}), 401
+    payload = request.get_json(silent=True) or {}
+    status = _krx_session_status(payload.get("date"))
+    return jsonify({"ok": True, **status})
 
 
 @app.post("/confirm")
 def confirm() -> Any:
     if not _secret_ok():
         return jsonify({"ok": False, "error": "UNAUTHORIZED"}), 401
+    session_status = _krx_session_status()
+    if not session_status["is_trading_day"]:
+        return jsonify({
+            "ok": True,
+            "final_signal": FINAL_WATCH_ONLY,
+            "mail_sent": False,
+            "suppressed_by_krx_closed": True,
+            "reason": "KRX_MARKET_CLOSED",
+            "krx_session": session_status,
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        })
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "INVALID_JSON"}), 400
@@ -1752,6 +1788,14 @@ def jev_gate() -> Any:
 def etf_freshness() -> Any:
     if not _secret_ok():
         return jsonify({"ok": False, "error": "UNAUTHORIZED"}), 401
+    session_status = _krx_session_status()
+    if not session_status["is_trading_day"]:
+        return jsonify({
+            "ok": True,
+            "decision": "VETO",
+            "reason": "KRX_MARKET_CLOSED",
+            "krx_session": session_status,
+        })
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "INVALID_JSON"}), 400
