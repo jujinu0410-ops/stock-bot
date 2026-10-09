@@ -34,6 +34,9 @@ function monitorYouTubeCandidates() {
 
   const started = Date.now();
   try {
+    const now = new Date();
+    if (!ycIsKrxMarketSession_(now)) return;
+
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     if (!isMonitorEnabled_(ss)) return;
 
@@ -77,6 +80,56 @@ function monitorYouTubeCandidates() {
   } finally {
     lock.releaseLock();
   }
+}
+
+function ycIsKrxMarketSession_(now) {
+  const tz = 'Asia/Seoul';
+  const dow = Utilities.formatDate(now, tz, 'EEE');
+  const hhmm = Number(Utilities.formatDate(now, tz, 'HHmm'));
+  if (dow === 'Sat' || dow === 'Sun' || hhmm < 900 || hhmm > 1530) return false;
+
+  const day = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+  const props = PropertiesService.getScriptProperties();
+  const cacheKey = 'KRX_SESSION_CACHE_V1';
+  const cachedRaw = String(props.getProperty(cacheKey) || '').trim();
+  if (cachedRaw) {
+    try {
+      const cached = JSON.parse(cachedRaw);
+      if (cached && cached.date === day && typeof cached.isTradingDay === 'boolean') {
+        return cached.isTradingDay === true;
+      }
+    } catch (e) {
+      props.deleteProperty(cacheKey);
+    }
+  }
+
+  const apiUrl = String(props.getProperty('SIGNAL_API_URL') || '').trim().replace(/\/$/, '');
+  const apiToken = String(props.getProperty('SIGNAL_API_TOKEN') || '').trim();
+  if (!apiUrl || !apiToken) return false;
+
+  try {
+    const res = UrlFetchApp.fetch(apiUrl + '/krx-session', {
+      method:'post',
+      contentType:'application/json',
+      headers:{'X-StockBot-Token':apiToken},
+      payload:JSON.stringify({date:day}),
+      muteHttpExceptions:true,
+      followRedirects:true
+    });
+    const http = res.getResponseCode();
+    let body = {};
+    try { body = JSON.parse(res.getContentText() || '{}'); } catch (e) { body = {}; }
+    if (http >= 200 && http < 300 && body && body.ok === true && typeof body.is_trading_day === 'boolean') {
+      const cached = {
+        date:day,
+        isTradingDay:body.is_trading_day === true,
+        reason:String(body.reason || '')
+      };
+      props.setProperty(cacheKey, JSON.stringify(cached));
+      return cached.isTradingDay;
+    }
+  } catch (e) {}
+  return false; // fail closed: no intraday buy alert when the KRX session cannot be verified.
 }
 
 function processCandidateRow_(ss, sheet, rowNumber, row, displayRow, started) {
