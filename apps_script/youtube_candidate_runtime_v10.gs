@@ -83,6 +83,7 @@ function parseFullMentionListV10_(rawBody) {
 
   let section = '';
   let declared = 0;
+  let hasDeclaredCount = false;
   let source = '';
 
   if (begin >= 0 && end > begin) {
@@ -91,13 +92,17 @@ function parseFullMentionListV10_(rawBody) {
 
     const before = body.substring(Math.max(0, begin - 500), begin);
     const countMatch = before.match(/오늘\s*(?:유튜브\s*)?전체\s*언급\s*종목\s*\(\s*(\d+)\s*개\s*\)/i);
-    if (countMatch) declared = Number(countMatch[1] || 0);
+    if (countMatch) {
+      declared = Number(countMatch[1]);
+      hasDeclaredCount = true;
+    }
   } else {
     // Backward-compatible fallback for already delivered legacy mails.
     const heading = body.match(/(?:^|\n)\s*(?:📋\s*)?오늘\s*(?:유튜브\s*)?전체\s*언급\s*종목\s*\(\s*(\d+)\s*개\s*\)[^\n]*/i);
     if (!heading) return {found:false, stocks:[], declared:0, source:''};
 
-    declared = Number(heading[1] || 0);
+    declared = Number(heading[1]);
+    hasDeclaredCount = true;
     section = body.substring(heading.index + heading[0].length);
     source = 'LEGACY_HEADING';
   }
@@ -123,10 +128,12 @@ function parseFullMentionListV10_(rawBody) {
     stocks.push({code:code, name:name, reason:''});
   });
 
-  if (stocks.length === 0) {
+  // An explicitly declared 0-stock report with an empty block is valid NO_DATA.
+  // Malformed/nonempty blocks still fail closed instead of silently losing stocks.
+  if (stocks.length === 0 && !(hasDeclaredCount && declared === 0 && section.trim() === '')) {
     throw new Error('YT_ALL_STOCKS_V10_PARSE_EMPTY');
   }
-  if (declared > 0 && declared !== stocks.length) {
+  if (hasDeclaredCount && declared !== stocks.length) {
     throw new Error(
       'YT_ALL_STOCKS_V10_COUNT_MISMATCH_declared_' +
       declared + '_parsed_' + stocks.length
@@ -136,7 +143,7 @@ function parseFullMentionListV10_(rawBody) {
   return {
     found:true,
     stocks:stocks,
-    declared:declared || stocks.length,
+    declared:hasDeclaredCount ? declared : stocks.length,
     source:source
   };
 }
@@ -148,6 +155,7 @@ function collectIntelligenceCandidates_() {
   const today = todayKeyV8_();
   const todayMentionCodes = new Set();
   let structuredMailCount = 0;
+  let zeroStockMailCount = 0;
   let parsedStockCount = 0;
 
   threads.forEach(function(thread) {
@@ -160,6 +168,7 @@ function collectIntelligenceCandidates_() {
       if (!parsed.found) return;
 
       structuredMailCount += 1;
+      if (parsed.stocks.length === 0) zeroStockMailCount += 1;
       const dateKey = Utilities.formatDate(message.getDate(), YCV10.TIMEZONE, 'yyyy-MM-dd');
       const seenThisMessage = new Set();
 
@@ -193,7 +202,9 @@ function collectIntelligenceCandidates_() {
     });
   });
 
-  if (structuredMailCount > 0 && parsedStockCount === 0) {
+  // Only explicit, correctly formed NO_DATA blocks may contribute zero stocks.
+  // Keep existing valid TTL candidates; do not deactivate or relabel them.
+  if (structuredMailCount > 0 && parsedStockCount === 0 && zeroStockMailCount === 0) {
     throw new Error('CANDIDATE_V10_EMPTY_WITH_STRUCTURED_MAILS_' + structuredMailCount);
   }
 
