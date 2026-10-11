@@ -283,7 +283,14 @@ function refreshYouTubeCandidatePoolV2() {
     const aliasMap = loadStockAliasMapV8_(ss);
     const activeCodes = new Set();
 
-    Object.keys(pool).sort().forEach(function(code) {
+    // Process newly mentioned stocks first, so delayed morning reports become
+    // monitorable before the older rolling-pool daily technical refresh finishes.
+    const orderedCodes = Object.keys(pool).sort(function(a, b) {
+      const aNew = ymdFromAnyV8_(pool[a].lastSeen) === today ? 0 : 1;
+      const bNew = ymdFromAnyV8_(pool[b].lastSeen) === today ? 0 : 1;
+      return aNew - bNew || a.localeCompare(b);
+    });
+    orderedCodes.forEach(function(code) {
       const item = pool[code];
       const identity = resolveNaverIdentity_(code, item.name);
       const prior = existing[code] || null;
