@@ -160,6 +160,9 @@ function collectIntelligenceCandidatesFromMailV10_() {
     thread.getMessages().forEach(function(message) {
       const subject = String(message.getSubject() || '');
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
+      // Never treat a portfolio-derived correction as a new economic video
+      // mention. Only the actual Economic Stage A/B report is authoritative.
+      if (/보완.*보유종목\s*영상\s*연계/i.test(subject)) return;
 
       const fullParsed = parseFullMentionListV10_(message.getPlainBody());
       const parsed = fullParsed.found ? fullParsed : parsePremarketBlockV10_(message.getPlainBody());
