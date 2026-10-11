@@ -193,14 +193,20 @@ function refreshPendingCandidateTechV9_() {
 
 function scheduledCombinedTickV6() {
   const logStatus = cleanupDispatchLogOncePerDayV9_();
-  let refreshStatus = '';
-  if (hasPendingCandidateTechRefreshV9_()) {
-    refreshStatus = refreshPendingCandidateTechV9_();
-  } else {
-    refreshStatus = maybeScheduledCandidateRefreshV6();
+  // A new Intelligence mail has priority over pending technical recovery.
+  // Once the mail has been ingested, use later ticks to repair pending rows.
+  const refreshStatus = maybeScheduledCandidateRefreshV6();
+  let recoveryStatus = 'NO_PENDING';
+  if (
+    refreshStatus !== 'COLLECTED_TODAY' &&
+    refreshStatus !== 'RETRY_REFRESH_NOT_CONFIRMED' &&
+    hasPendingCandidateTechRefreshV9_()
+  ) {
+    recoveryStatus = refreshPendingCandidateTechV9_();
   }
   const monitorStatus = scheduledCandidateMonitorV5();
-  return 'LOG=' + logStatus + '; REFRESH=' + refreshStatus + '; MONITOR=' + monitorStatus;
+  return 'LOG=' + logStatus + '; REFRESH=' + refreshStatus +
+    '; RECOVERY=' + recoveryStatus + '; MONITOR=' + monitorStatus;
 }
 
 /* Override V5 manual refresh so the user's normal refresh action also performs
