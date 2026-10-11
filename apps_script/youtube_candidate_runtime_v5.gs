@@ -27,6 +27,7 @@ const YCV5 = Object.freeze({
   COLLECTED_DATE_KEY: 'YOUTUBE_MAIL_COLLECTED_DATE',
   COLLECTED_AT_KEY: 'YOUTUBE_MAIL_COLLECTED_AT',
   COLLECTED_SUBJECT_KEY: 'YOUTUBE_MAIL_COLLECTED_SUBJECT',
+  COLLECTED_MESSAGE_ID_KEY: 'YOUTUBE_MAIL_COLLECTED_MESSAGE_ID',
   MARKET_PROBE_CODE: '005930',
 });
 
@@ -68,11 +69,17 @@ function findTodayIntelligenceMailV5_() {
         newest = {
           subject: subject,
           date: message.getDate(),
+          message: message,
         };
       }
     });
   });
 
+  if (newest && newest.message) {
+    newest.id = newest.message.getId();
+    newest.body = String(newest.message.getPlainBody() || '');
+    delete newest.message;
+  }
   return newest;
 }
 
@@ -83,6 +90,7 @@ function markTodayCollectionDoneV5_(mailInfo) {
     [YCV5.COLLECTED_DATE_KEY]: parts.dateKey,
     [YCV5.COLLECTED_AT_KEY]: new Date().toISOString(),
     [YCV5.COLLECTED_SUBJECT_KEY]: String(mailInfo && mailInfo.subject ? mailInfo.subject : ''),
+    [YCV5.COLLECTED_MESSAGE_ID_KEY]: String(mailInfo && mailInfo.id ? mailInfo.id : ''),
   }, false);
 }
 
@@ -111,12 +119,20 @@ function scheduledCandidateRefreshV5() {
   }
 
   const props = PropertiesService.getScriptProperties();
-  if (String(props.getProperty(YCV5.COLLECTED_DATE_KEY) || '') === parts.dateKey) {
-    return 'SKIP_ALREADY_COLLECTED_TODAY';
-  }
-
   const mailInfo = findTodayIntelligenceMailV5_();
   if (!mailInfo) return 'WAIT_TODAY_MAIL';
+  const prevId = String(props.getProperty(YCV5.COLLECTED_MESSAGE_ID_KEY) || '');
+  if (String(props.getProperty(YCV5.COLLECTED_DATE_KEY) || '') === parts.dateKey && prevId && prevId === mailInfo.id) {
+    return 'SKIP_NO_NEW_MAIL';
+  }
+
+  // A valid empty report does not require a full technical refresh. Remember
+  // its message ID so a later corrective/normal report is still collected.
+  const fullList = parseFullMentionListV10_(mailInfo.body);
+  if (fullList.found && fullList.declared === 0 && fullList.stocks.length === 0) {
+    markTodayCollectionDoneV5_(mailInfo);
+    return 'SKIP_VALID_NO_DATA_0';
+  }
 
   const before = String(props.getProperty('LAST_CANDIDATE_REFRESH_AT') || '');
   refreshYouTubeCandidatePoolV2();
