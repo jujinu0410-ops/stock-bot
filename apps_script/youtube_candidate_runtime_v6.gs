@@ -2,16 +2,15 @@
  * Runtime V6: self-healing candidate-mail polling.
  *
  * The proven 5-minute monitor trigger also checks whether today's Intelligence
- * mail still needs to be collected. Gmail polling is throttled to once every
- * 30 minutes, so candidate ingestion no longer depends on a separate 30-minute
- * trigger. The legacy 30-minute trigger remains safe because both paths share
- * the same throttle/collected-date properties.
+ * mail has changed. Gmail is checked every 5 minutes, but the expensive full
+ * technical refresh runs only for a new Intelligence message.
+ * The legacy 30-minute trigger uses the same throttle/message-ID state.
  */
 
 const YCV6 = Object.freeze({
   LAST_POLL_AT_KEY: 'YOUTUBE_MAIL_LAST_POLL_AT',
   LAST_POLL_STATUS_KEY: 'YOUTUBE_MAIL_LAST_POLL_STATUS',
-  POLL_INTERVAL_MS: 30 * 60 * 1000,
+  POLL_INTERVAL_MS: 4 * 60 * 1000,
 });
 
 function maybeScheduledCandidateRefreshV6() {
@@ -23,10 +22,6 @@ function maybeScheduledCandidateRefreshV6() {
   }
 
   const props = PropertiesService.getScriptProperties();
-  if (String(props.getProperty(YCV5.COLLECTED_DATE_KEY) || '') === parts.dateKey) {
-    return 'SKIP_ALREADY_COLLECTED_TODAY';
-  }
-
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return 'SKIP_POLL_LOCKED';
 
@@ -63,8 +58,8 @@ function maybeScheduledCandidateRefreshV6() {
 
 /*
  * Main scheduled tick. Candidate-mail collection piggybacks on the already
- * proven 5-minute monitor trigger, while actual Gmail scans remain 30-minute
- * throttled. Buy-signal monitoring keeps the V5 market/time guards.
+ * proven 5-minute monitor trigger, while actual Gmail scans run every ~5 minutes.
+ * Buy-signal monitoring keeps the V5 market/time guards.
  */
 function scheduledCombinedTickV6() {
   const refreshStatus = maybeScheduledCandidateRefreshV6();
