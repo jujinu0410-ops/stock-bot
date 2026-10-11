@@ -124,7 +124,13 @@ function parseFullMentionListV10_(rawBody) {
   });
 
   if (stocks.length === 0) {
-    throw new Error('YT_ALL_STOCKS_V10_PARSE_EMPTY');
+    // A deliberately empty canonical block (NO_DATA) is a valid daily status.
+    // It must NOT abort ingestion of earlier non-empty mails in the TTL window.
+    // Declared nonzero + empty stays an error; do not hide malformed feeds.
+    if (declared > 0) {
+      throw new Error('YT_ALL_STOCKS_V10_PARSE_EMPTY_DECLARED_' + declared);
+    }
+    return {found:true, stocks:[], declared:0, source:source + '_NO_DATA'};
   }
   if (declared > 0 && declared !== stocks.length) {
     throw new Error(
@@ -194,7 +200,9 @@ function collectIntelligenceCandidatesFromMailV10_() {
   });
 
   if (structuredMailCount > 0 && parsedStockCount === 0) {
-    throw new Error('CANDIDATE_V10_EMPTY_WITH_STRUCTURED_MAILS_' + structuredMailCount);
+    // Every valid report may legitimately contain zero direct mentions.
+    // Preserve TTL carryovers, but never manufacture a new daily mention.
+    Logger.log('CANDIDATE_V10_VALID_NO_DATA_MAILS=' + structuredMailCount);
   }
 
   /*
