@@ -10,7 +10,7 @@
  */
 
 const YCB = Object.freeze({
-  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/8f65cdbcad325db32b5efae1ecb14c2ed04b75c1/apps_script/',
+  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/550bb8c3fe2c69cb9775c0d1669431dacf9e1243/apps_script/',
   FILES: [
     'youtube_candidate_monitor.gs',
     'youtube_candidate_outcome.gs',
@@ -82,7 +82,9 @@ function ycCleanupLogsNow() {
 }
 
 function ycScheduledRefresh() {
-  return ycLoadRuntimeAndRun_('maybeScheduledCandidateRefreshV6');
+  // Legacy 30-minute trigger: kept as a no-op until next reinstall.
+  // The main 5-minute combined tick performs fast mail polling and monitoring.
+  return 'SKIP_LEGACY_REFRESH_5MIN_COMBINED_ACTIVE';
 }
 
 function ycScheduledMonitor() {
@@ -108,7 +110,6 @@ function ycInstallTriggers() {
   });
 
   ScriptApp.newTrigger('ycScheduledMonitor').timeBased().everyMinutes(5).create();
-  ScriptApp.newTrigger('ycScheduledRefresh').timeBased().everyMinutes(30).create();
 
   SpreadsheetApp.getUi().alert(
     '설치 완료',
@@ -116,6 +117,7 @@ function ycInstallTriggers() {
     '후보 유효기간: 마지막 직접언급일부터 한 달이며 재언급 시 다시 한 달 연장됩니다.\n' +
     '만료 후보 행은 신규 종목에 재사용합니다.\n' +
     'DISPATCH_LOG: 최근 90일, 최대 2,000건만 유지하며 하루 한 번 자동 정리합니다.\n' +
+    '후보메일: 장중 5분마다 신규 메일을 확인하고, 새 메일이 왔을 때만 후보를 갱신합니다.\n' +
     '매수신호: 평일 장중 5분마다 계속 감시합니다.',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
