@@ -42,6 +42,7 @@ from src.analysis.youtube_candidate_review import describe_flow
 from src.analysis.youtube_alert_outcome import evaluate_youtube_alert_outcome
 from src.analysis.daily_reversal_patterns import detect_daily_reversal_patterns
 from src.analysis.early_obv_recovery import evaluate_early_obv_recovery
+from src.analysis.held_obv15_warning import analyze_obv15_sell_warning
 from src.analysis.youtube_candidate_signal import (
     FINAL_BUY_ALERT,
     FINAL_BUY_ALERT_STRONG,
@@ -1801,6 +1802,87 @@ def _held_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _held_obv15(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Low-cost dedicated held-position OBV15 check; no DART/news/JEV."""
+    ticker = _clean_ticker(payload.get("ticker"))
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    if not KRXCalendar.is_krx_trading_day(now.date()):
+        return {"ok": True, "decision": "UNAVAILABLE", "reason": "KRX_MARKET_CLOSED"}
+
+    atr14 = _as_float(payload, "atr14")
+    if atr14 is None or atr14 <= 0:
+        return {"ok": True, "decision": "UNAVAILABLE", "reason": "ATR14_MISSING"}
+    slot = KRXCalendar.get_completed_45m_bar(now)
+
+    def previous_cutoff() -> datetime:
+        previous = now.date() - timedelta(days=1)
+        for _ in range(14):
+            if KRXCalendar.is_krx_trading_day(previous):
+                return datetime.combine(
+                    previous, datetime.strptime("15:00", "%H:%M").time(),
+                    tzinfo=now.tzinfo,
+                )
+            previous -= timedelta(days=1)
+        raise SignalServiceError("PREVIOUS_KRX_DAY_NOT_FOUND")
+
+    cutoff = (
+        datetime.combine(
+            now.date(), datetime.strptime(slot[2], "%H:%M").time(),
+            tzinfo=now.tzinfo,
+        ) if slot else previous_cutoff()
+    )
+    df, source, quality = get_strictly_sliced_45m_df(ticker, cutoff)
+    if (df is None or quality != "VALID") and slot:
+        cutoff = previous_cutoff()
+        df, source, quality = get_strictly_sliced_45m_df(ticker, cutoff)
+    if df is None or quality != "VALID":
+        return {
+            "ok": True, "decision": "UNAVAILABLE", "reason": quality,
+            "source": source,
+        }
+
+    # Historical OBV must qualify before making any Kiwoom token / live calls.
+    preliminary = analyze_obv15_sell_warning(
+        df, [], today=now.date(), fresh_price=1.0, atr14=atr14
+    )
+    if preliminary.get("consecutive_no_gold_bars", 0) < 15 or not (
+        preliminary.get("recent_obv_down") and preliminary.get("recent_obv9_down")
+    ):
+        return {
+            "ok": True, **preliminary, "source": source, "ticker": ticker
+        }
+
+    try:
+        session = RetryingKiwoomSession()
+        token = _get_kiwoom_token(session)
+        quote = _fetch_kiwoom_quote(session, token, ticker)
+        minutes = _fetch_kiwoom_minute_bars(
+            session, token, ticker, limit=65, base_date=now.date()
+        )
+        if not quote.get("available") or not minutes.get("available"):
+            return {
+                "ok": True, "decision": "UNAVAILABLE",
+                "reason": "KIWOOM_LIVE_EVIDENCE_UNAVAILABLE",
+                "source": source, "ticker": ticker,
+            }
+        fresh_price = float(quote["current_price"])
+        result = analyze_obv15_sell_warning(
+            df, minutes["bars"], today=now.date(),
+            fresh_price=fresh_price, atr14=atr14
+        )
+    except Exception as exc:
+        app.logger.warning("OBV15 held live verification failed ticker=%s error=%s", ticker, exc)
+        return {
+            "ok": True, "decision": "UNAVAILABLE",
+            "reason": "KIWOOM_LIVE_VERIFICATION_FAILED",
+            "source": source, "ticker": ticker,
+        }
+    return {
+        "ok": True, **result, "source": source,
+        "ticker": ticker, "as_of": now.isoformat(timespec="seconds"),
+    }
+
+
 def _jev_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Shared, fail-open delivery gate for YouTube, held, and ETF alerts."""
     ticker = _clean_ticker(payload.get("ticker"))
@@ -1832,7 +1914,7 @@ def health() -> Any:
         {
             "ok": True,
             "service": "youtube-signal-service",
-            "endpoints": ["/confirm", "/held-context", "/jev-gate", "/alert-outcome", "/etf-freshness", "/krx-session"],
+            "endpoints": ["/confirm", "/held-context", "/held-obv15", "/jev-gate", "/alert-outcome", "/etf-freshness", "/krx-session"],
         }
     )
 
@@ -1870,6 +1952,22 @@ def confirm() -> Any:
         return jsonify({"ok": False, "error": str(exc)}), 503
     except Exception as exc:
         app.logger.exception("youtube signal confirmation failed")
+        return jsonify({"ok": False, "error": f"UNEXPECTED:{type(exc).__name__}"}), 500
+
+
+@app.post("/held-obv15")
+def held_obv15() -> Any:
+    if not _secret_ok():
+        return jsonify({"ok": False, "error": "UNAUTHORIZED"}), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "INVALID_JSON"}), 400
+    try:
+        return jsonify(_held_obv15(payload)), 200
+    except SignalServiceError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+    except Exception as exc:
+        app.logger.exception("held OBV15 check failed")
         return jsonify({"ok": False, "error": f"UNEXPECTED:{type(exc).__name__}"}), 500
 
 
