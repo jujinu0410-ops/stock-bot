@@ -84,11 +84,22 @@ def evaluate_early_obv_recovery(
             return None
         return None
 
+    latest_completed_time = (
+        datetime.strptime(str(current_completed[-1]["time"]), "%H:%M").time()
+        if current_completed else None
+    )
     live = []
     for bar in ordered:
         stamp = get_minute_time(bar)
-        if stamp and stamp.date() == today and (9, 0) <= (stamp.hour, stamp.minute) <= (15, 30):
-            live.append(bar)
+        if not stamp or stamp.date() != today:
+            continue
+        if not ((9, 0) <= (stamp.hour, stamp.minute) <= (15, 30)):
+            continue
+        # Do not double-count minutes already represented by a completed 45m
+        # candle. Today's unfinished candle alone supplies provisional volume.
+        if latest_completed_time and stamp.time() < latest_completed_time:
+            continue
+        live.append(bar)
     if len(live) < 6:
         return result("VETO", "PRIOR_45M_OBV_DOWN_AND_LIVE_MINUTES_INSUFFICIENT", **evidence)
 
