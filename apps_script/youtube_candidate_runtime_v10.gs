@@ -148,6 +148,15 @@ function parseFullMentionListV10_(rawBody) {
   };
 }
 
+function isRejectedIntelligenceMailV10_(message) {
+  // The 2026-10-12 manually assembled 4-stock "held-position bridge" mail
+  // is NOT a valid economy-channel stock mention report.
+  const id = String(message && message.getId ? message.getId() : '');
+  const subject = String(message && message.getSubject ? message.getSubject() : '');
+  return id === '1a12d56f94f6e45f' ||
+    subject.indexOf('보완·보유종목 영상 연계') >= 0;
+}
+
 function collectIntelligenceCandidates_() {
   const query = 'subject:"경제 Intelligence" newer_than:' + YCI.LOOKBACK_DAYS + 'd -in:trash -in:spam';
   const threads = GmailApp.search(query, 0, YCI.MAX_THREADS);
@@ -162,6 +171,7 @@ function collectIntelligenceCandidates_() {
     thread.getMessages().forEach(function(message) {
       const subject = String(message.getSubject() || '');
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
+      if (isRejectedIntelligenceMailV10_(message)) return;
 
       const fullParsed = parseFullMentionListV10_(message.getPlainBody());
       const parsed = fullParsed.found ? fullParsed : parsePremarketBlockV10_(message.getPlainBody());
