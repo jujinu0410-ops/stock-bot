@@ -139,9 +139,20 @@ function parseFullMentionListV10_(rawBody) {
     );
   }
 
+  // Historical/delisted stock identifiers must not enter live buy monitoring.
+  // 000010: historical Choheung/Shinhan Bank, 008560: Meritz Securities
+  // (delisted in 2023). Validate declared count BEFORE this tradeability gate.
+  const retiredCodes = new Set(['000010', '008560']);
+  const tradableStocks = stocks.filter(function(stock) {
+    return !retiredCodes.has(stock.code);
+  });
+  if (tradableStocks.length !== stocks.length) {
+    Logger.log('YT_ALL_STOCKS_V10_RETIRED_CODES_SKIPPED=' + (stocks.length - tradableStocks.length));
+  }
+
   return {
     found:true,
-    stocks:stocks,
+    stocks:tradableStocks,
     declared:declared || stocks.length,
     source:source
   };
