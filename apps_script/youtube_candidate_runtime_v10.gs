@@ -173,6 +173,12 @@ function collectIntelligenceCandidates_() {
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
       if (isRejectedIntelligenceMailV10_(message)) return;
 
+      // Never backfill an Intelligence email sent from 12:00 KST onward,
+      // even if it appears in a later day's 35-day rolling Gmail lookup.
+      // Keep this independent of the morning trigger window.
+      const sentHHmm = Number(Utilities.formatDate(message.getDate(), YCV10.TIMEZONE, 'HHmm'));
+      if (!isFinite(sentHHmm) || sentHHmm >= 1200) return;
+
       const fullParsed = parseFullMentionListV10_(message.getPlainBody());
       const parsed = fullParsed.found ? fullParsed : parsePremarketBlockV10_(message.getPlainBody());
       if (!parsed.found) return;
