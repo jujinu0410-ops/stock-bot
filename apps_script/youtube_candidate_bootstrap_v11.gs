@@ -10,7 +10,7 @@
  */
 
 const YCB = Object.freeze({
-  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/13aab9f71c9b364ced5d48138c0f0dc090384e63/apps_script/',
+  RAW_BASE: 'https://raw.githubusercontent.com/jujinu0410-ops/stock-bot/9b89191a64ec2b790d64d66e04f22e86cc749bfd/apps_script/',
   FILES: [
     'youtube_candidate_monitor.gs',
     'youtube_candidate_outcome.gs',
