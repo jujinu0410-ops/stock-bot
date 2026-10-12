@@ -25,6 +25,28 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertIn("/jev-gate", res.get_json()["endpoints"])
         self.assertIn("/alert-outcome", res.get_json()["endpoints"])
 
+    def test_held_obv15_requires_shared_token(self):
+        res = self.client.post("/held-obv15", json={"ticker": "010140", "atr14": 900})
+        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.get_json()["error"], "UNAUTHORIZED")
+
+    @patch.object(svc, "_held_obv15")
+    def test_held_obv15_response_is_rule_only_no_orders(self, mocked):
+        mocked.return_value = {
+            "ok": True, "ticker": "010140", "decision": "WARN",
+            "consecutive_no_gold_bars": 15,
+            "reason": "15_COMPLETED_45M_BARS_NO_GOLD_OBV_OBV9_FALLING_NO_LIVE_RECOVERY",
+        }
+        res = self.client.post(
+            "/held-obv15",
+            headers={"X-StockBot-Token": "test-token"},
+            json={"ticker": "010140", "atr14": 900},
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json()["decision"], "WARN")
+        mocked.assert_called_once()
+        self.assertNotIn("order", res.get_json())
+
     def test_confirm_requires_shared_token(self):
         res = self.client.post("/confirm", json={"ticker": "007660", "tech_status": "BUY_CANDIDATE"})
         self.assertEqual(res.status_code, 401)
