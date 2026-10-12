@@ -177,7 +177,9 @@ function collectIntelligenceCandidates_() {
       // even if it appears in a later day's 35-day rolling Gmail lookup.
       // Keep this independent of the morning trigger window.
       const sentHHmm = Number(Utilities.formatDate(message.getDate(), YCV10.TIMEZONE, 'HHmm'));
-      if (!isFinite(sentHHmm) || sentHHmm >= 1200) return;
+      const sentWeekday = Utilities.formatDate(message.getDate(), YCV10.TIMEZONE, 'EEE');
+      if (!isFinite(sentHHmm) || sentHHmm >= 1200 ||
+          sentWeekday === 'Sat' || sentWeekday === 'Sun') return;
 
       const fullParsed = parseFullMentionListV10_(message.getPlainBody());
       const parsed = fullParsed.found ? fullParsed : parsePremarketBlockV10_(message.getPlainBody());
