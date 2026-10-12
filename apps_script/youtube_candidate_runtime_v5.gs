@@ -1,12 +1,10 @@
 /*
  * Runtime V5: trading-day schedule guards.
  *
- * Scheduled candidate-mail collection:
- * - weekdays only
- * - 08:00~15:30 Asia/Seoul
- * - every 30 minutes via bootstrap trigger
- * - once today's [경제 Intelligence] mail is found and refresh succeeds,
- *   stop collecting for the rest of that Seoul calendar day
+ * Scheduled candidate-mail collection (independent of market session):
+ * - follow new Intelligence mail IDs even after the closing bell / on holidays
+ * - catch up on delayed mail from the previous two days
+ * - ingest once per new message ID; never start intraday buy monitoring outside market
  *
  * Scheduled buy-signal monitoring:
  * - weekdays only
@@ -20,8 +18,6 @@
 
 const YCV5 = Object.freeze({
   TIMEZONE: 'Asia/Seoul',
-  COLLECTION_START_MINUTE: 8 * 60,
-  COLLECTION_END_MINUTE: 15 * 60 + 30,
   MONITOR_START_MINUTE: 9 * 60,
   MONITOR_END_MINUTE: 15 * 60 + 30,
   COLLECTED_DATE_KEY: 'YOUTUBE_MAIL_COLLECTED_DATE',
@@ -54,8 +50,8 @@ function isWithinMinuteWindowV5_(parts, startMinute, endMinute) {
 }
 
 function findTodayIntelligenceMailV5_() {
-  const parts = seoulNowPartsV5_(new Date());
-  const query = 'subject:"경제 Intelligence" newer_than:2d -in:trash -in:spam';
+  // The latest eligible mail may have arrived after market close yesterday.
+  const query = 'subject:"경제 Intelligence" newer_than:3d -in:trash -in:spam';
   const threads = GmailApp.search(query, 0, 20);
   let newest = null;
 
@@ -64,8 +60,6 @@ function findTodayIntelligenceMailV5_() {
       const subject = String(message.getSubject() || '');
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
       if (isRejectedIntelligenceMailV10_(message)) return;
-      const messageDateKey = Utilities.formatDate(message.getDate(), YCV5.TIMEZONE, 'yyyy-MM-dd');
-      if (messageDateKey !== parts.dateKey) return;
       if (!newest || message.getDate().getTime() > newest.date.getTime()) {
         newest = {
           subject: subject,
@@ -110,20 +104,13 @@ function isKrMarketOpenV5_() {
   }
 }
 
-/* Scheduled 30-minute candidate-mail collector. */
+/* Scheduled candidate-mail collector: independent from market hours. */
 function scheduledCandidateRefreshV5() {
-  const now = new Date();
-  const parts = seoulNowPartsV5_(now);
-  if (!isWeekdayV5_(parts)) return 'SKIP_NON_WEEKDAY';
-  if (!isWithinMinuteWindowV5_(parts, YCV5.COLLECTION_START_MINUTE, YCV5.COLLECTION_END_MINUTE)) {
-    return 'SKIP_OUTSIDE_COLLECTION_WINDOW';
-  }
-
   const props = PropertiesService.getScriptProperties();
   const mailInfo = findTodayIntelligenceMailV5_();
   if (!mailInfo) return 'WAIT_TODAY_MAIL';
   const prevId = String(props.getProperty(YCV5.COLLECTED_MESSAGE_ID_KEY) || '');
-  if (String(props.getProperty(YCV5.COLLECTED_DATE_KEY) || '') === parts.dateKey && prevId && prevId === mailInfo.id) {
+  if (prevId && prevId === mailInfo.id) {
     return 'SKIP_NO_NEW_MAIL';
   }
 
