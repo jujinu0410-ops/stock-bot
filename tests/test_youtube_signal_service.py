@@ -169,13 +169,40 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         )
         final, gate = svc._apply_strong_confirmation_gate(
             strong,
-            {"fresh_price": 214000, "quote": {"open": 231000}},
-            {"vwap_45m": {"available": True, "gold": False, "state": "VWAP_DEAD"}},
+            {"fresh_price": 214000, "quote": {"open": 231000, "change_pct": -0.075}},
+            {"vwap_45m": {"available": True, "gold": False, "vwap9": 220000, "state": "VWAP_DEAD"}},
         )
         self.assertEqual(final.final_signal, svc.FINAL_BUY_ALERT)
         self.assertEqual(gate["decision"], "DOWNGRADE_TO_BUY_ALERT")
         self.assertIn("45M_VWAP_NOT_GOLD", gate["reason"])
         self.assertIn("INTRADAY_DROP_GE_5PCT", gate["reason"])
+        self.assertIn("PREVCLOSE_DROP_GE_5PCT", gate["reason"])
+
+    def test_strong_confirmation_gate_downgrades_gap_drop_even_if_open_flat(self):
+        strong = svc.FinalSignalAssessment(
+            svc.FINAL_BUY_ALERT_STRONG, svc.TECH_BUY_CANDIDATE,
+            "POSITIVE", "UNAVAILABLE", "confirmed"
+        )
+        final, gate = svc._apply_strong_confirmation_gate(
+            strong,
+            {"fresh_price": 159800.0, "quote": {"open": 159500.0, "change_pct": -0.0533}},
+            {"vwap_45m": {"available": True, "gold": True, "vwap9": 158000.0}},
+        )
+        self.assertEqual(final.final_signal, svc.FINAL_BUY_ALERT)
+        self.assertIn("PREVCLOSE_DROP_GE_5PCT", gate["reason"])
+
+    def test_strong_confirmation_gate_downgrades_when_price_below_45m_vwap9(self):
+        strong = svc.FinalSignalAssessment(
+            svc.FINAL_BUY_ALERT_STRONG, svc.TECH_BUY_CANDIDATE,
+            "POSITIVE", "UNAVAILABLE", "confirmed"
+        )
+        final, gate = svc._apply_strong_confirmation_gate(
+            strong,
+            {"fresh_price": 159800.0, "quote": {"open": 159500.0, "change_pct": 0.003}},
+            {"vwap_45m": {"available": True, "gold": True, "vwap9": 164000.0}},
+        )
+        self.assertEqual(final.final_signal, svc.FINAL_BUY_ALERT)
+        self.assertIn("PRICE_BELOW_45M_VWAP9", gate["reason"])
 
     def test_strong_confirmation_gate_passes_when_45m_uptrend_and_no_crash(self):
         strong = svc.FinalSignalAssessment(
@@ -187,8 +214,8 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         )
         final, gate = svc._apply_strong_confirmation_gate(
             strong,
-            {"fresh_price": 105000, "quote": {"open": 104000}},
-            {"vwap_45m": {"available": True, "gold": True, "state": "VWAP_GOLD"}},
+            {"fresh_price": 105000, "quote": {"open": 104000, "change_pct": 0.015}},
+            {"vwap_45m": {"available": True, "gold": True, "vwap9": 104500, "state": "VWAP_GOLD"}},
         )
         self.assertEqual(final.final_signal, svc.FINAL_BUY_ALERT_STRONG)
         self.assertEqual(gate["decision"], "PASS_STRONG")
@@ -225,6 +252,31 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         )
         self.assertEqual(gate["decision"], "VETO")
         self.assertEqual(gate["reason"], "FRESH_PRICE_BELOW_BUY_TRIGGER")
+
+    @patch.object(svc, "_fetch_kiwoom_minute_bars")
+    @patch.object(svc, "_fetch_kiwoom_quote")
+    def test_freshness_veto_s_oil_minus_5pct_despite_rising_one_minute_bars(self, quote, minute):
+        quote.return_value = {
+            "available": True, "current_price": 159800.0,
+            "open": 159500.0, "change_pct": -0.0533, "source": "KIWOOM_KA10001"
+        }
+        minute.return_value = {
+            "available": True, "source": "KIWOOM_KA10080",
+            "bars": [
+                {"time": "095400", "close": 159000, "high": 159100, "low": 158900, "volume": 100},
+                {"time": "095500", "close": 159200, "high": 159300, "low": 159100, "volume": 150},
+                {"time": "095600", "close": 159400, "high": 159500, "low": 159300, "volume": 150},
+                {"time": "095700", "close": 159600, "high": 159700, "low": 159500, "volume": 150},
+                {"time": "095800", "close": 159800, "high": 159900, "low": 159700, "volume": 150},
+            ]
+        }
+        gate = svc._evaluate_kiwoom_freshness_gate(
+            "010950", signal_price=159700, atr14=9800,
+            buy_trigger_05=152093, session=object(), token="token",
+        )
+        self.assertEqual(gate["decision"], "VETO")
+        self.assertEqual(gate["reason"], "PREVCLOSE_DROP_GE_5PCT")
+        self.assertEqual(gate["quote"]["change_pct"], -0.0533)
 
     @patch.object(svc, "_fetch_kiwoom_minute_bars")
     @patch.object(svc, "_fetch_kiwoom_quote")
