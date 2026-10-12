@@ -1527,6 +1527,21 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     timing_gate = _evaluate_entry_timing_veto(ticker)
+    # Genuine live OBV recovery can precede a new 45m close. A lagging
+    # daily/45m dual-dead reading must not blackout a volume-backed 09:15 rally.
+    if (
+        timing_gate.get("decision") == "VETO"
+        and early_obv_gate.get("reason") in (
+            "LIVE_PARTIAL_OBV_GOLD_WITH_VOLUME",
+            "MEANINGFUL_PRICE_AND_VOLUME_OBV_RECOVERY",
+        )
+    ):
+        timing_gate = {
+            **timing_gate,
+            "original_decision": "VETO",
+            "decision": "PASS",
+            "reason": "VERIFIED_LIVE_OBV_RECOVERY_OVERRIDES_LAGGING_CROSS",
+        }
     if timing_gate.get("decision") == "VETO":
         app.logger.info(
             "entry timing veto ticker=%s final=%s reason=%s",
