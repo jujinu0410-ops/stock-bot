@@ -41,6 +41,7 @@ from src.analysis.market_catalyst_context import assess_catalyst, plain_text
 from src.analysis.youtube_candidate_review import describe_flow
 from src.analysis.youtube_alert_outcome import evaluate_youtube_alert_outcome
 from src.analysis.daily_reversal_patterns import detect_daily_reversal_patterns
+from src.analysis.early_obv_recovery import evaluate_early_obv_recovery
 from src.analysis.youtube_candidate_signal import (
     FINAL_BUY_ALERT,
     FINAL_BUY_ALERT_STRONG,
@@ -246,7 +247,7 @@ def _fetch_daily_reversal_pattern(ticker: str) -> Dict[str, Any]:
 def _fetch_45m_vwap_gate(ticker: str) -> Dict[str, Any]:
     """VWAP9/26 on the latest completed KRX 45m bar only."""
     try:
-        now = datetime.now().astimezone()
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
         slot = KRXCalendar.get_completed_45m_bar(now)
         if not slot:
             return {"available": False, "reason": "NO_COMPLETED_45M_BAR"}
@@ -369,7 +370,7 @@ def _analyze_45m_exit_risk_df(df_45m: Any, source: str = "") -> Dict[str, Any]:
 
 def _fetch_45m_exit_risk(ticker: str) -> Dict[str, Any]:
     try:
-        now = datetime.now().astimezone()
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
         slot = KRXCalendar.get_completed_45m_bar(now)
         if not slot:
             return {"available": False, "reason": "NO_COMPLETED_45M_BAR"}
@@ -385,6 +386,66 @@ def _fetch_45m_exit_risk(ticker: str) -> Dict[str, Any]:
     except Exception as exc:
         app.logger.warning("45m exit-risk fetch failed ticker=%s error=%s", ticker, exc)
         return {"available": False, "reason": type(exc).__name__}
+
+
+def _evaluate_early_obv_recovery_gate(
+    ticker: str,
+    *,
+    minute_bars: List[Dict[str, Any]],
+    fresh_price: float,
+    atr14: float | None,
+) -> Dict[str, Any]:
+    """Evidence from yesterday's completed 45m bars plus today's live minutes.
+
+    The current 45m bar may remain open: important 09:05-09:45 signals are
+    allowed if OBV recovers or price/volume rise meaningfully.
+    """
+    now = datetime.now(ZoneInfo("Asia/Seoul"))
+    slot = KRXCalendar.get_completed_45m_bar(now)
+    def previous_session_cutoff() -> datetime:
+        previous_day = now.date() - timedelta(days=1)
+        for _ in range(12):
+            if KRXCalendar.is_krx_trading_day(previous_day):
+                break
+            previous_day -= timedelta(days=1)
+        return datetime.combine(
+            previous_day, datetime.strptime("15:00", "%H:%M").time(), tzinfo=now.tzinfo
+        )
+    if slot:
+        cutoff = datetime.combine(
+            now.date(), datetime.strptime(slot[2], "%H:%M").time(), tzinfo=now.tzinfo
+        )
+    else:
+        cutoff = previous_session_cutoff()
+    try:
+        df, source, quality = get_strictly_sliced_45m_df(ticker, cutoff)
+        if df is None or quality != "VALID":
+            # Prior completed bars remain useful when today's latest 45m
+            # candle is not yet published. No time blackout is introduced.
+            if slot:
+                cutoff = previous_session_cutoff()
+                df, source, quality = get_strictly_sliced_45m_df(ticker, cutoff)
+        if df is None or quality != "VALID":
+            return {"decision": "UNAVAILABLE", "reason": quality, "source": source}
+        history = [
+            {
+                "date": stamp.date().isoformat(),
+                "time": stamp.strftime("%H:%M"),
+                "close": float(row["Close"]),
+                "volume": float(row["Volume"]),
+            }
+            for stamp, row in df.iterrows()
+        ]
+        evidence = evaluate_early_obv_recovery(
+            history, minute_bars, today=now.date(),
+            fresh_price=fresh_price, atr14=float(atr14 or 0),
+        )
+        evidence["source"] = source
+        evidence["last_completed_45m"] = df.index[-1].strftime("%Y-%m-%d %H:%M")
+        return evidence
+    except Exception as exc:
+        app.logger.warning("early OBV gate failed ticker=%s error=%s", ticker, exc)
+        return {"decision": "UNAVAILABLE", "reason": type(exc).__name__}
 
 
 def _evaluate_entry_timing_veto(ticker: str) -> Dict[str, Any]:
@@ -837,7 +898,7 @@ def _evaluate_kiwoom_freshness_gate(
     overheat_upper: float | None = None,
 ) -> Dict[str, Any]:
     quote = _fetch_kiwoom_quote(session, token, ticker)
-    minute = _fetch_kiwoom_minute_bars(session, token, ticker)
+    minute = _fetch_kiwoom_minute_bars(session, token, ticker, limit=65)
 
     if signal_price is None or signal_price <= 0 or atr14 is None or atr14 <= 0:
         return {
@@ -937,6 +998,7 @@ def _evaluate_kiwoom_freshness_gate(
         "change_pct": quote.get("change_pct"),
         "quote": quote,
         "minute_source": minute.get("source"),
+        "_minute_bars": minute.get("bars") or [],
     }
 
 
@@ -1380,6 +1442,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     fresh_price = float(freshness_gate["fresh_price"])
+    live_minute_bars = freshness_gate.pop("_minute_bars", [])
     effective_payload = dict(payload)
     effective_payload["signal_price"] = signal_price
     effective_payload["current_price"] = fresh_price
@@ -1435,6 +1498,31 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
             "suppressed_non_mail_signal": True,
             "kiwoom_429_retry_count": session.retry_count,
             "processed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
+        }
+
+    early_obv_gate = _evaluate_early_obv_recovery_gate(
+        ticker, minute_bars=live_minute_bars, fresh_price=fresh_price, atr14=atr14
+    )
+    if early_obv_gate.get("decision") == "VETO":
+        app.logger.info(
+            "early OBV persistent weakness veto ticker=%s reason=%s", ticker,
+            early_obv_gate.get("reason"),
+        )
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "name": name,
+            "trigger_key": str(payload.get("trigger_key") or ""),
+            "final_signal": FINAL_WATCH_ONLY,
+            "original_final_signal": final.final_signal,
+            "flow_status": flow.status,
+            "flow_summary": flow_text,
+            "freshness_gate": freshness_gate,
+            "early_obv_gate": early_obv_gate,
+            "mail_sent": False,
+            "suppressed_by_early_obv_gate": True,
+            "processed_at": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(timespec="seconds"),
             "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
         }
 
@@ -1552,6 +1640,7 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
     context["freshness_gate"] = freshness_gate
     context["confirmation_gate"] = confirmation_gate
     context["early_safety_gate"] = early_safety_gate
+    context["early_obv_gate"] = early_obv_gate
     context["pattern_signal_gate"] = pattern_signal_gate
     context["kiwoom_429_retry_count"] = session.retry_count
 
