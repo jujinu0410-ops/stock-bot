@@ -65,7 +65,8 @@ def analyze_obv15_sell_warning(
         for ts, row in df.iterrows()
     ]
     live = evaluate_early_obv_recovery(
-        history, minute_bars, today=today, fresh_price=fresh_price, atr14=atr14
+        history, minute_bars, today=today, fresh_price=fresh_price, atr14=atr14,
+        require_prior_weakness=False
     )
     details["live_recovery"] = live
     if live.get("reason") in {
