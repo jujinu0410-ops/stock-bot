@@ -1,10 +1,9 @@
 /*
  * Runtime V6: self-healing candidate-mail polling.
  *
- * The proven 5-minute trigger also checks new or delayed Intelligence emails.
- * Gmail polling cadence: 5 min from 06:00-18:00 on weekdays, 30 min in the
- * evening, hourly overnight/weekends. Only new message IDs cause refresh.
- * Intraday buy-signal monitoring is still restricted to open KRX sessions.
+ * The proven 5-minute trigger checks for new Intelligence mail only
+ * on weekdays 08:00-11:59 KST. No afternoon/evening/next-day catch-up.
+ * Intraday buy-signal monitoring remains restricted to open KRX sessions.
  */
 
 const YCV6 = Object.freeze({
@@ -16,10 +15,10 @@ const YCV6 = Object.freeze({
 function maybeScheduledCandidateRefreshV6() {
   const now = new Date();
   const parts = seoulNowPartsV5_(now);
-  const weekday = isWeekdayV5_(parts);
-  const fast = weekday && isWithinMinuteWindowV5_(parts, 6 * 60, 18 * 60);
-  const evening = weekday && isWithinMinuteWindowV5_(parts, 18 * 60 + 1, 23 * 60 + 59);
-  const intervalMs = fast ? 4 * 60 * 1000 : (evening ? 29 * 60 * 1000 : 59 * 60 * 1000);
+  if (!isWeekdayV5_(parts)) return 'SKIP_NON_WEEKDAY';
+  if (!isWithinMinuteWindowV5_(parts, YCV5.COLLECTION_START_MINUTE, YCV5.COLLECTION_END_MINUTE)) {
+    return 'SKIP_AFTER_MORNING_CUTOFF';
+  }
 
   const props = PropertiesService.getScriptProperties();
   const lock = LockService.getScriptLock();
@@ -29,7 +28,7 @@ function maybeScheduledCandidateRefreshV6() {
   try {
     const lastPoll = String(props.getProperty(YCV6.LAST_POLL_AT_KEY) || '');
     const lastMs = lastPoll ? Date.parse(lastPoll) : NaN;
-    if (isFinite(lastMs) && now.getTime() - lastMs < intervalMs) {
+    if (isFinite(lastMs) && now.getTime() - lastMs < YCV6.POLL_INTERVAL_MS) {
       return 'SKIP_REFRESH_THROTTLED';
     }
     attemptIso = now.toISOString();
@@ -58,8 +57,8 @@ function maybeScheduledCandidateRefreshV6() {
 
 /*
  * Main scheduled tick. Candidate-mail collection piggybacks on the already
- * proven 5-minute trigger. Email ingestion can run after close/weekends;
- * buy-signal monitoring keeps the V5 market/time guards.
+ * proven 5-minute trigger. Email ingestion stops at noon KST;
+ * buy-signal monitoring retains separate market-open guards.
  */
 function scheduledCombinedTickV6() {
   const refreshStatus = maybeScheduledCandidateRefreshV6();
