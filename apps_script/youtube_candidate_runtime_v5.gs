@@ -63,6 +63,7 @@ function findTodayIntelligenceMailV5_() {
     thread.getMessages().forEach(function(message) {
       const subject = String(message.getSubject() || '');
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
+      if (isRejectedIntelligenceMailV10_(message)) return;
       const messageDateKey = Utilities.formatDate(message.getDate(), YCV5.TIMEZONE, 'yyyy-MM-dd');
       if (messageDateKey !== parts.dateKey) return;
       if (!newest || message.getDate().getTime() > newest.date.getTime()) {
