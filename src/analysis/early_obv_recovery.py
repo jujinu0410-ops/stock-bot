@@ -17,6 +17,7 @@ def evaluate_early_obv_recovery(
     today: date,
     fresh_price: float,
     atr14: float,
+    require_prior_weakness: bool = True,
 ) -> dict[str, Any]:
     def result(decision: str, reason: str, **kw: Any) -> dict[str, Any]:
         return {"decision": decision, "reason": reason, **kw}
@@ -61,7 +62,7 @@ def evaluate_early_obv_recovery(
         "prior_obv_down_4": obv_falling,
         "prior_obv9_down_4": obv9_falling,
     }
-    if not persistent_weakness:
+    if not persistent_weakness and require_prior_weakness:
         return result("PASS", "PRIOR_45M_OBV_NOT_PERSISTENTLY_WEAK", **evidence)
 
     current_completed = [x for x in enriched if str(x["date"]) == today.isoformat()]
