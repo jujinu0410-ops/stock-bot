@@ -258,6 +258,8 @@ def _fetch_45m_vwap_gate(ticker: str) -> Dict[str, Any]:
         df_45m, source, quality = get_strictly_sliced_45m_df(ticker, cutoff)
         if df_45m is None or quality != "VALID" or len(df_45m) < 26:
             return {"available": False, "reason": quality, "source": source}
+        if df_45m.index[-1].date() != cutoff.date():
+            return {"available": False, "reason": "45M_BAR_NOT_TODAY", "source": source}
         typical_price = (df_45m["High"] + df_45m["Low"] + df_45m["Close"]) / 3.0
         tp_vol = typical_price * df_45m["Volume"]
         vol9 = df_45m["Volume"].rolling(9).sum()
@@ -428,11 +430,19 @@ def _apply_strong_confirmation_gate(
     quote = freshness_gate.get("quote") or {}
     fresh_price = _parse_kiwoom_price(freshness_gate.get("fresh_price"))
     open_price = _parse_kiwoom_price(quote.get("open"))
+    prevclose_change_pct = quote.get("change_pct")
     intraday_change_pct = None
+    if prevclose_change_pct is None:
+        reasons.append("PREVCLOSE_CHANGE_UNAVAILABLE")
+    elif float(prevclose_change_pct) <= STRONG_MAX_INTRADAY_DROP_PCT:
+        reasons.append("PREVCLOSE_DROP_GE_5PCT")
     if fresh_price and open_price:
         intraday_change_pct = (fresh_price - open_price) / open_price
         if intraday_change_pct <= STRONG_MAX_INTRADAY_DROP_PCT:
             reasons.append("INTRADAY_DROP_GE_5PCT")
+    vwap9 = _parse_kiwoom_price(vwap_45m.get("vwap9"))
+    if vwap_45m.get("available") and (vwap9 is None or fresh_price is None or fresh_price < vwap9):
+        reasons.append("PRICE_BELOW_45M_VWAP9_OR_UNAVAILABLE")
 
     if reasons:
         downgraded = FinalSignalAssessment(
@@ -446,6 +456,7 @@ def _apply_strong_confirmation_gate(
             "decision": "DOWNGRADE_TO_BUY_ALERT",
             "reason": "|".join(reasons),
             "intraday_change_pct": intraday_change_pct,
+            "prevclose_change_pct": prevclose_change_pct,
             "vwap_45m": vwap_45m,
         }
 
@@ -453,6 +464,7 @@ def _apply_strong_confirmation_gate(
         "decision": "PASS_STRONG",
         "reason": "CONFIRMED_06_AND_45M_UPTREND",
         "intraday_change_pct": intraday_change_pct,
+        "prevclose_change_pct": prevclose_change_pct,
         "vwap_45m": vwap_45m,
     }
 
@@ -882,7 +894,12 @@ def _evaluate_kiwoom_freshness_gate(
         )
     )
 
-    if overheat_upper is not None and overheat_upper > 0 and fresh_price >= overheat_upper:
+    if quote.get("change_pct") is not None and float(quote["change_pct"]) <= STRONG_MAX_INTRADAY_DROP_PCT:
+        # A recent one-minute rebound cannot override an intraday loss >= 5%
+        # relative to the previous close (including opening-gap losses).
+        decision = "VETO"
+        reason = "PREVCLOSE_DROP_GE_5PCT"
+    elif overheat_upper is not None and overheat_upper > 0 and fresh_price >= overheat_upper:
         decision = "VETO"
         reason = "FRESH_PRICE_AT_OR_ABOVE_OVERHEAT"
     elif buy_trigger_05 is not None and buy_trigger_05 > 0 and fresh_price < buy_trigger_05:
