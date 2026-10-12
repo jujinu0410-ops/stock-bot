@@ -1,10 +1,9 @@
 /*
  * Runtime V5: trading-day schedule guards.
  *
- * Scheduled candidate-mail collection (independent of market session):
- * - follow new Intelligence mail IDs even after the closing bell / on holidays
- * - catch up on delayed mail from the previous two days
- * - ingest once per new message ID; never start intraday buy monitoring outside market
+ * Candidate-mail collection: weekdays 08:00-11:59 Korea time only.
+ * A mail arriving from 12:00 onward is ignored permanently, including
+ * following-day catch-up. New morning mail IDs can refresh the candidate pool.
  *
  * Scheduled buy-signal monitoring:
  * - weekdays only
@@ -18,6 +17,8 @@
 
 const YCV5 = Object.freeze({
   TIMEZONE: 'Asia/Seoul',
+  COLLECTION_START_MINUTE: 8 * 60,
+  COLLECTION_END_MINUTE: 12 * 60 - 1,
   MONITOR_START_MINUTE: 9 * 60,
   MONITOR_END_MINUTE: 15 * 60 + 30,
   COLLECTED_DATE_KEY: 'YOUTUBE_MAIL_COLLECTED_DATE',
@@ -50,8 +51,8 @@ function isWithinMinuteWindowV5_(parts, startMinute, endMinute) {
 }
 
 function findTodayIntelligenceMailV5_() {
-  // The latest eligible mail may have arrived after market close yesterday.
-  const query = 'subject:"경제 Intelligence" newer_than:3d -in:trash -in:spam';
+  const parts = seoulNowPartsV5_(new Date());
+  const query = 'subject:"경제 Intelligence" newer_than:2d -in:trash -in:spam';
   const threads = GmailApp.search(query, 0, 20);
   let newest = null;
 
@@ -60,6 +61,9 @@ function findTodayIntelligenceMailV5_() {
       const subject = String(message.getSubject() || '');
       if (subject.indexOf(YCI.SUBJECT_PREFIX) !== 0) return;
       if (isRejectedIntelligenceMailV10_(message)) return;
+      const messageDateKey = Utilities.formatDate(message.getDate(), YCV5.TIMEZONE, 'yyyy-MM-dd');
+      if (messageDateKey !== parts.dateKey) return;
+      if (Number(Utilities.formatDate(message.getDate(), YCV5.TIMEZONE, 'HHmm')) >= 1200) return;
       if (!newest || message.getDate().getTime() > newest.date.getTime()) {
         newest = {
           subject: subject,
@@ -104,8 +108,13 @@ function isKrMarketOpenV5_() {
   }
 }
 
-/* Scheduled candidate-mail collector: independent from market hours. */
+/* Scheduled candidate-mail collector: weekday 08:00-11:59 only. */
 function scheduledCandidateRefreshV5() {
+  const parts = seoulNowPartsV5_(new Date());
+  if (!isWeekdayV5_(parts)) return 'SKIP_NON_WEEKDAY';
+  if (!isWithinMinuteWindowV5_(parts, YCV5.COLLECTION_START_MINUTE, YCV5.COLLECTION_END_MINUTE)) {
+    return 'SKIP_AFTER_MORNING_CUTOFF';
+  }
   const props = PropertiesService.getScriptProperties();
   const mailInfo = findTodayIntelligenceMailV5_();
   if (!mailInfo) return 'WAIT_TODAY_MAIL';
@@ -131,10 +140,15 @@ function scheduledCandidateRefreshV5() {
   return 'COLLECTED_TODAY';
 }
 
-/* Manual refresh: always run immediately. If today's mail is present and the
- * refresh succeeds, count it as today's completed collection.
+/* Manual candidate refresh also respects the same morning cutoff.
+ * Recovering technicals later is a separate operation.
  */
 function manualCandidateRefreshV5() {
+  const parts = seoulNowPartsV5_(new Date());
+  if (!isWeekdayV5_(parts) ||
+      !isWithinMinuteWindowV5_(parts, YCV5.COLLECTION_START_MINUTE, YCV5.COLLECTION_END_MINUTE)) {
+    return 'SKIP_AFTER_MORNING_CUTOFF';
+  }
   const props = PropertiesService.getScriptProperties();
   const before = String(props.getProperty('LAST_CANDIDATE_REFRESH_AT') || '');
   const mailInfo = findTodayIntelligenceMailV5_();
