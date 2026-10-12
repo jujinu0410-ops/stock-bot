@@ -487,6 +487,54 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         fetch_flow.assert_not_called()
 
     @patch.object(svc, "_jev_gate")
+    @patch.object(svc, "_evaluate_entry_timing_veto")
+    @patch.object(svc, "_evaluate_early_obv_recovery_gate")
+    @patch.object(svc.KiwoomInvestorFlowReader, "fetch_stock_flow")
+    @patch.object(svc, "_evaluate_kiwoom_freshness_gate")
+    @patch.object(svc, "_get_kiwoom_token")
+    def test_persistent_early_obv_down_blocks_jev_pre_gate_proceed(
+        self, token, freshness, flow, obv, timing, jev,
+    ):
+        token.return_value = "test-token"
+        freshness.return_value = {
+            "decision": "PASS",
+            "fresh_price": 222000.0,
+            "_minute_bars": [],
+            "quote": {"change_pct": -0.018},
+        }
+        flow.return_value = [
+            {
+                "dt": f"202609{day:02d}",
+                "foreign_amount": 100.0,
+                "institution_amount": 200.0,
+                "turnover_amount": 1000.0,
+            }
+            for day in range(1, 21)
+        ]
+        obv.return_value = {
+            "decision": "VETO",
+            "reason": "PERSISTENT_45M_OBV_DOWN_WITHOUT_MEANINGFUL_RECOVERY",
+        }
+        result = svc._confirm({
+            "ticker": "062040", "name": "산일전기",
+            "tech_status": "BUY_CANDIDATE",
+            "current_price": 222000.0, "atr14": 12240.0,
+            "buy_trigger_05": 209122.0,
+            "confirm_trigger_06": 210346.0,
+            "as_of_date": "2026-10-12",
+            "jev_pre_gate": {
+                "status": "OK", "decision": "PROCEED",
+                "needs_final_review": False,
+            },
+        })
+        self.assertFalse(result["mail_sent"])
+        self.assertTrue(result["suppressed_by_early_obv_gate"])
+        self.assertEqual(result["final_signal"], svc.FINAL_WATCH_ONLY)
+        self.assertEqual(result["early_obv_gate"]["decision"], "VETO")
+        timing.assert_not_called()
+        jev.assert_not_called()
+
+    @patch.object(svc, "_jev_gate")
     def test_jev_gate_uses_existing_shared_token(self, mocked):
         mocked.return_value = {"ok": True, "status": "NOT_CONFIGURED", "decision": "SEND"}
         res = self.client.post(
