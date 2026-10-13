@@ -72,9 +72,9 @@ def _pct(raw: Any) -> float | None:
 
 def _direction(raw: Any) -> int:
     pct = _pct(raw)
-    # Ignore <0.5% movement. Direction evidence is based on verified close-to-now
-    # market proxy quotes, not the mere fact that a sheet updated today.
-    return 1 if pct is not None and pct >= 0.005 else -1 if pct is not None and pct <= -0.005 else 0
+    # Use the verified market direction itself. Do not invent an unrequested
+    # percentage threshold; exactly zero or unavailable is neutral.
+    return 1 if pct is not None and pct > 0 else -1 if pct is not None and pct < 0 else 0
 
 def evaluate_signal(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Common decision protocol, independent of which sheet supplied the ticker.

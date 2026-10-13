@@ -66,9 +66,9 @@ class UnifiedSignalEngineTests(unittest.TestCase):
         r=evaluate_signal({"stage":"△","market":"NASDAQ","market_pct":0.07})
         self.assertEqual(r["confidence_adjustment"],0)
 
-    def test_small_move_not_considered_trend(self):
+    def test_small_positive_move_is_positive_direction(self):
         r=evaluate_signal({"stage":"△","market":"KOSPI","market_pct":0.003})
-        self.assertEqual(r["confidence_adjustment"],0)
+        self.assertEqual(r["confidence_adjustment"],1)
 
     def test_source_ticker_normalizers(self):
         self.assertEqual(clean_code("KRX:069500"),"069500")

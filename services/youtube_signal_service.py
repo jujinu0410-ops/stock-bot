@@ -1914,7 +1914,7 @@ def _unified_evaluate(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     ticker = _clean_ticker(payload.get('ticker'))
     market = str(payload.get('market') or '').strip().upper()
-    if market in ('KOSPI', 'KOSPI200', 'KRX', '코스피'):
+    if market in ('KOSPI', 'KOSPI200', '코스피'):
         market, proxy = 'KOSPI', '069500'
     elif market in ('KOSDAQ', 'KOSDAQ150', '코스닥'):
         market, proxy = 'KOSDAQ', '229200'
