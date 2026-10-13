@@ -10,7 +10,8 @@
 - `UNIFIED_CONTROL!B2=ACTIVE`, `STATUS=ACTIVE_COMPLETE`, `HEALTH=OK`.
 - 활성 목록: 보유 5 + ETF 30 + YouTube 170, 중복 4, **고유 201종목**.
 - 첫 실제 예약실행: `universe=201, evaluated=201, sent=51, errors=0, cursor=202`.
-- Gmail 통합신호 **3통**, 20+20+11종목. 이벤트 ID 51개 모두 고유.
+- 두 번째 예약실행: `universe=201, evaluated=201, sent=71, errors=0, cursor=202`.
+- 두 실행에서 Gmail 통합신호 **총 7통** (3+4), 발송처리 이벤트 **총 122개**, 이벤트 ID 122개 모두 고유.
 - 기존 KODEX200의 MARKET_CRASH 7% 경보는 동일 단계 중복 재발송하지 않음.
 - 전환 후 별도 보유종목/ETF/유튜브 신호 메일은 최초 검증 시점까지 추가 발송되지 않음.
 - 원본 확인: `ETF_WATCHLIST!K` 수식, `REGIME!Q:R` 수식, YouTube `CANDIDATES!W:Y` 기존 분석값 보존.
