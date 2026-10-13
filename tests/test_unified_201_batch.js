@@ -1,6 +1,8 @@
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 function simulate(permanentErrors) {
  const storage=new Map(),groups=[], attempts={},stats={fetch:0,retry:0,records:0};
+ storage.set('UM2_CURSOR_SLOT','PREVIEW:'+String(Math.floor(Date.now()/300000)));
+ storage.set('UM2_CURSOR','8');
  const props={getProperty:k=>storage.get(k)||null,setProperty:(k,v)=>storage.set(k,String(v)),setProperties:d=>Object.entries(d).forEach(([k,v])=>storage.set(k,String(v))),deleteProperty:k=>storage.delete(k)};
  const book={getSheetByName:s=>({getRange:()=>({setValues:()=>{}})})};
  const ctx={console,Date,Utilities:{formatDate:()=> '2026-10-13',sleep:()=>{}},

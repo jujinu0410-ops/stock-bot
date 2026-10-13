@@ -88,6 +88,12 @@ function umUniverse_(now) {
   });
   return result;
 }
+function umCursorStart_(props,mode,slot) {
+  // PREVIEW and ACTIVE may run in the same 5-minute slot; never let the
+  // small preview cursor skip the priority head of a 201-symbol active scan.
+  return props.getProperty('UM2_CURSOR_SLOT')===mode+':'+slot ?
+    Number(props.getProperty('UM2_CURSOR')||0) : 0;
+}
 function umPlan_(item,result,old,now) {
   const day=umDay_(now),slot=Math.floor(now.getTime()/300000);
   const state=old&&old.day===day?JSON.parse(JSON.stringify(old)):{day:day,sent:{},count:0};
@@ -278,7 +284,7 @@ function umTick5m() {
     const legacy=mode==='ACTIVE'?umLegacySeed_(book,props,now):{};
     let evaluated=0,sent=0,errors=0;const audit=[],allPlans=[];
     // Resume a long tick from its cursor; priority risks always head a new slot.
-    let cursor=Number(props.getProperty('UM2_CURSOR_SLOT')===slot?props.getProperty('UM2_CURSOR')||0:0);
+    let cursor=Number(props.getProperty('UM2_CURSOR_SLOT')===mode+':'+slot?props.getProperty('UM2_CURSOR')||0:0);
     for(;cursor<universe.length;cursor+=UM.BATCH) {
       if(Date.now()-start>UM.MAX_RUNTIME)break;
       const batch=universe.slice(cursor,cursor+UM.BATCH),reqs=batch.map(x=>umRequest_(x,props)),responses=UrlFetchApp.fetchAll(reqs),plans=[];
@@ -309,7 +315,7 @@ function umTick5m() {
       // Collect the pass's alerts before mailing. One email per 4 symbols
       // would flood the inbox during market-wide sell-offs.
       if(plans.length)allPlans.push.apply(allPlans,plans);
-      props.setProperties({UM2_CURSOR_SLOT:slot,UM2_CURSOR:String(cursor+UM.BATCH)});
+      props.setProperties({UM2_CURSOR_SLOT:mode+':'+slot,UM2_CURSOR:String(cursor+UM.BATCH)});
     }
     if(mode==='ACTIVE'&&allPlans.length){
       // Keep Gmail's draft/receipt reconciliation and per-ticker event ids.

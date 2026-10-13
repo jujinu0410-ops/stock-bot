@@ -139,5 +139,10 @@ function ycCheckApiHealth() {
 
 function ycUnifiedActive_() {
   const sh=SpreadsheetApp.openById("15WgSe4yOSBqSt6YTRQEETD_Hs6J1WL2Hop9RlzFCGkw").getSheetByName("UNIFIED_CONTROL");
-  return !!sh && String(sh.getRange("B2").getValue())==="ACTIVE";
+  if(!sh || String(sh.getRange("B2").getValue())!=="ACTIVE") return false;
+  const hhmm=Number(Utilities.formatDate(new Date(),'Asia/Seoul','HHmm'));
+  // Unified quote verification covers only 09:00-15:30. Keep the existing
+  // candidate runner outside regular hours until NXT live-trade evidence,
+  // per-ticker eligibility and session-aware 45m checks are verified.
+  return hhmm>=900 && hhmm<=1530;
 }
