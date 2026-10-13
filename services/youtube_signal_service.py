@@ -43,6 +43,7 @@ from src.analysis.youtube_alert_outcome import evaluate_youtube_alert_outcome
 from src.analysis.daily_reversal_patterns import detect_daily_reversal_patterns
 from src.analysis.early_obv_recovery import evaluate_early_obv_recovery
 from src.analysis.held_obv15_warning import analyze_obv15_sell_warning
+from services.unified_signal_engine import evaluate_signal, clean_code
 from src.analysis.youtube_candidate_signal import (
     FINAL_BUY_ALERT,
     FINAL_BUY_ALERT_STRONG,
@@ -1905,6 +1906,58 @@ def _held_obv15(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _unified_evaluate(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """One common source-neutral rule, fed by real Kiwoom market/sector prices.
+
+    This API is advisory during migration: no mails, no orders, no mutations.
+    The original signal stage remains technically unchanged by market context.
+    """
+    ticker = _clean_ticker(payload.get('ticker'))
+    market = str(payload.get('market') or '').strip().upper()
+    if market in ('KOSPI', 'KOSPI200', 'KRX', '코스피'):
+        market, proxy = 'KOSPI', '069500'
+    elif market in ('KOSDAQ', 'KOSDAQ150', '코스닥'):
+        market, proxy = 'KOSDAQ', '229200'
+    else:
+        market, proxy = 'UNKNOWN', ''
+    sector_etf = clean_code(payload.get('sector_etf_code'))
+    if sector_etf == ticker:  # A ticker cannot confirm its own sector trend.
+        sector_etf = ''
+    if payload.get('source') not in ('HELD', 'ETF', 'YOUTUBE'):
+        raise SignalServiceError('UNIFIED_SOURCE_REQUIRED')
+    session = RetryingKiwoomSession(max_attempts=4)
+    token = _get_kiwoom_token(session)
+    codes = [code for code in (ticker, proxy, sector_etf) if code]
+    verified_quotes = {}
+    for code in dict.fromkeys(codes):
+        verified_quotes[code] = _fetch_kiwoom_quote(session, token, code)
+    ticker_quote = verified_quotes.get(ticker) or {}
+    proxy_quote = verified_quotes.get(proxy) or {}
+    sector_quote = verified_quotes.get(sector_etf) or {}
+    # A missing context quote is NEUTRAL, never invented as an uptrend.
+    core = evaluate_signal({
+        **payload,
+        'ticker': ticker,
+        'market': market,
+        'market_pct': proxy_quote.get('change_pct') if proxy_quote.get('available') else None,
+        'sector_etf_pct': sector_quote.get('change_pct') if sector_quote.get('available') else None,
+        'live_verified': ticker_quote.get('available') is True and
+            ticker_quote.get('change_pct') is not None,
+    })
+    return {
+        **core,
+        'as_of': datetime.now(ZoneInfo('Asia/Seoul')).isoformat(timespec='seconds'),
+        'live_price': ticker_quote.get('current_price'),
+        'live_change_pct': ticker_quote.get('change_pct'),
+        'live_price_source': ticker_quote.get('source'),
+        'market_proxy': proxy,
+        'market_proxy_source': proxy_quote.get('source'),
+        'sector_etf': sector_etf,
+        'sector_quote_source': sector_quote.get('source'),
+        'kiwoom_429_retry_count': session.retry_count,
+    }
+
+
 def _jev_gate(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Shared, fail-open delivery gate for YouTube, held, and ETF alerts."""
     ticker = _clean_ticker(payload.get("ticker"))
@@ -1936,7 +1989,7 @@ def health() -> Any:
         {
             "ok": True,
             "service": "youtube-signal-service",
-            "endpoints": ["/confirm", "/held-context", "/held-obv15", "/jev-gate", "/alert-outcome", "/etf-freshness", "/krx-session"],
+            "endpoints": ["/confirm", "/held-context", "/held-obv15", "/jev-gate", "/alert-outcome", "/etf-freshness", "/krx-session", "/unified-signal"],
         }
     )
 
@@ -1991,6 +2044,22 @@ def held_obv15() -> Any:
     except Exception as exc:
         app.logger.exception("held OBV15 check failed")
         return jsonify({"ok": False, "error": f"UNEXPECTED:{type(exc).__name__}"}), 500
+
+
+@app.post("/unified-signal")
+def unified_signal() -> Any:
+    if not _secret_ok():
+        return jsonify({'ok': False, 'error': 'UNAUTHORIZED'}), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'ok': False, 'error': 'INVALID_JSON'}), 400
+    try:
+        return jsonify(_unified_evaluate(payload)), 200
+    except SignalServiceError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
+    except Exception:
+        app.logger.exception('unified signal evaluation failed')
+        return jsonify({'ok': False, 'error': 'UNIFIED_EVALUATION_FAILED'}), 503
 
 
 @app.post("/held-context")
