@@ -30,7 +30,7 @@ assert.equal(step([row('△ 상승조짐')],'09:35').length,0);
 assert.equal(step([row('△ 상승조짐')],'09:40').length,0); // already sent today
 assert.equal(step([row('▼ 하락확인',false)],'09:45').length,0);
 assert.equal(step([row('▼ 하락확인')],'09:50').length,0);
-assert.equal(step([row('▼ 하락확인')],'09:55').length,1);
+assert.equal(step([row('▼ 하락확인')],'09:55').length,0); // not held: downside is silent
 const holdPlan=sandbox.ewPlan_([row('△ 상승조짐')],{day:'2026-10-06',items:{'069500':{stage:'△',count:1,sent:{}}}},at('10:00'));
 gateDecision='HOLD';assert.equal(sandbox.ewApplyJevGate_(holdPlan,at('10:00')).length,0);assert.equal(holdPlan.state.items['069500'].held['△'],true);
 const sendPlan=sandbox.ewPlan_([row('△ 상승조짐')],{day:'2026-10-06',items:{'069500':{stage:'△',count:1,sent:{}}}},at('10:05'));
@@ -43,9 +43,12 @@ const next=sandbox.ewPlan_([row('▲ 상승확인')],state,new Date('2026-10-07T
 const next2=sandbox.ewPlan_([row('▲ 상승확인')],next.state,new Date('2026-10-07T09:10:00+09:00'));assert.equal(next2.alerts.length,1);
 triggers=['hmTick5m','ewHourly','ewTick5m'].map(h=>({getHandlerFunction:()=>h}));sandbox.ewInstall();assert.deepEqual(triggers.map(t=>t.getHandlerFunction()),['hmTick5m','ewTick5m']);
 // Tick integration: unsuccessful mail must not consume the alert.
-sandbox.ewInSession_=()=>true;sandbox.ewRows_=()=>[row('▽ 하락조짐')];
-sandbox.ewPlan_=()=>({state:{day:'test',items:{'069500':{stage:'▽',count:2,sent:{}}}},alerts:[row('▽ 하락조짐')]});
+sandbox.ewInSession_=()=>true;sandbox.ewRows_=()=>[row('△ 상승조짐')];
+sandbox.ewPlan_=()=>({state:{day:'test',items:{'069500':{stage:'△',count:2,sent:{}}}},alerts:[row('△ 상승조짐')]});
 throwMail=true;const before=saved;assert.throws(()=>sandbox.ewTick5m(),/quota/);assert.equal(saved,before);assert.equal(released,1);
 throwMail=false;sandbox.ewTick5m();assert.equal(mails.length,1);assert.notEqual(saved,before);assert.equal(released,2);
 sandbox.ewInSession_=()=>false;sandbox.ewTick5m();assert.equal(mails.length,1);
-console.log('PASS: market hours, 2 polls, neutral, stale data, daily dedup, trigger migration, send failure retry');
+// Defense in depth: even injected downside alerts never reach mail or Jev.
+const onlyDown={state:{items:{'069500':{stage:'▼',count:2,sent:{}}}},alerts:[row('▼ 하락확인')]};
+assert.equal(sandbox.ewApplyJevGate_(onlyDown,at('10:30')).length,0);
+console.log('PASS: market hours, upward-only ETF alerts, down suppressed, daily dedup, send retry');

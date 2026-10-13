@@ -116,7 +116,8 @@ function ewPlan_(rows, previous, now) {
     const count=stage && stage===old.stage ? Math.min(EW.CONFIRM_CYCLES,(old.count||0)+1) : stage ? 1 : 0;
     const next={stage:stage,count:count,slot:slot,sent:Object.assign({},old.sent||{})};
     state.items[r.code]=next;
-    if (r.valid && stage && count>=EW.CONFIRM_CYCLES && !next.sent[stage] && !next.held?.[stage]) {
+    if (r.valid && (stage.charCodeAt(0)===0x25B2 || stage.charCodeAt(0)===0x25B3)
+        && count>=EW.CONFIRM_CYCLES && !next.sent[stage] && !next.held?.[stage]) {
       alerts.push(r);
     }
   });
@@ -126,6 +127,9 @@ function ewApplyJevGate_(plan,now) {
   const delivered=[]; const held=[];
   (plan.alerts||[]).forEach(r => {
     const stage=ewStage_(r.signal);
+    // ETF-only candidates notify on upside only; all downside belongs to HELD.
+    // Defense in depth: even a hand-built alert list cannot send a down signal.
+    if (stage.charCodeAt(0)!==0x25B2 && stage.charCodeAt(0)!==0x25B3) return;
     const item=plan.state.items[r.code] || (plan.state.items[r.code]={stage:stage,count:EW.CONFIRM_CYCLES,sent:{}});
     const events=[{key:'ETF_SIGNAL_'+stage,level:/^[▲▼]/.test(stage)?'STRONG':'WATCH',title:r.signal,message:r.sector+' ETF 기술신호'}];
 
@@ -286,8 +290,9 @@ function ewTick5m() {
     const props=PropertiesService.getScriptProperties();
     const previous=JSON.parse(props.getProperty(EW.STATE_KEY)||'{}');
     const rows=ewRows_(now);
-    // Mandatory market-risk path runs first, even when normal ETF delivery is filtered.
-    const risk=ewMarketRiskCheck_(rows,now);
+    // ETF-only watchlist is for BUY opportunities; never send index-fall alerts.
+    // Held positions still receive down/risk warnings via the HELD engine.
+    const risk={status:'DISABLED_BUY_ONLY_POLICY'};
     ewMarketRiskHealth_(risk,now);
     const plan=ewPlan_(rows,previous,now);
     const delivered=ewApplyJevGate_(plan,now);

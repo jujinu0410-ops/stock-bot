@@ -33,9 +33,9 @@ function simulate(permanentErrors) {
 }
 let a=simulate(false);
 assert.equal(a.result.universe,201);assert.equal(a.result.evaluated,201);assert.equal(a.result.errors,0);
-assert.equal(a.result.sent,85);assert.deepEqual(a.groups,[20,20,20,20,5]);
+assert.equal(a.result.sent,0);assert.deepEqual(a.groups,[]);
 assert.equal(a.stats.records,201);assert(a.storage.has('UM2_COMPLETED_ACTIVE'));
-console.log('PASS 201 items, 85 events, 5 bounded grouped emails, 0 errors, no source sheet writes');
+console.log('PASS 201 watch-only symbols, no non-held risk mails, no source sheet writes');
 let b=simulate(true);
 assert(b.result.errors>0);assert(!b.storage.has('UM2_COMPLETED_ACTIVE'));
 assert(!b.storage.has('UM2_CURSOR_SLOT'));assert(!b.storage.has('UM2_CURSOR'));

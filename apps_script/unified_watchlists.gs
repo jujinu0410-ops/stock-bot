@@ -107,6 +107,13 @@ function umPlan_(item,result,old,now) {
   if(item.stop_price&&result.live_price>item.stop_price)delete state.sent.STOP_BREACH;
   const candidates=[];
   if(result.send_allowed===true)(result.events||[]).forEach(function(e){
+    // One shared calculation, source-aware notifications only:
+    // HELD -> both directions / stop / OBV risk; other watchlists -> BUY only.
+    const isHeld=(item.sources||[]).indexOf('HELD')>=0;
+    if(!isHeld && !(
+      (e.key==='BUY_SETUP' && e.stage==='BUY_SETUP') ||
+      (e.key==='BUY_CONFIRMED' && e.stage==='BUY_CONFIRMED')
+    ))return;
     const key=e.key+(e.key==='MARKET_CRASH'?':'+e.level:'');
     if(state.sent[key])return;
     if(e.key==='STOP_BREACH'&&state.lastStopAt&&now.getTime()-Date.parse(state.lastStopAt)<30*60000)return;
