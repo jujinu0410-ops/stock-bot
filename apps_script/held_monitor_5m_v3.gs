@@ -48,7 +48,9 @@ const HM = Object.freeze({
 
   GATE_VERSION: 3,
   CONFIRM_CYCLES: 2,
-  STOP_COOLDOWN_MINUTES: 30
+  STOP_COOLDOWN_MINUTES: 30,
+  SELL_PREP_RECHECK_MINUTES: 45,
+  OBV15_RECHECK_MINUTES: 30
 });
 
 function hmSetAlertEmail(email) {
@@ -203,6 +205,20 @@ function hmEvaluate_(enforceMarketWindow) {
 
       const gated = hmGateEvents_(prev, cur, rawEvents, now);
       cur.gateState = gated.gateState;
+      // Independently verify a 15-completed-bar OBV downtrend before sending.
+      // Does not require BEAR_CONFIRMED, MACD, or today's first completed bar.
+      if (hmObv15Due_(cur, cur.gateState, now)) {
+        const obv15 = hmFetchObv15_(cur, now);
+        cur.gateState.lastObv15CheckAt = now.toISOString();
+        cur.gateState.lastObv15Reason = String(obv15.reason || '');
+        if (String(obv15.decision || '').toUpperCase() === 'WARN') {
+          gated.mailEvents.push(hmEvent_(
+            'OBV15_WARNING', 'RISK', '단기 매도 경고',
+            '45분봉 OBV가 ' + Number(obv15.consecutive_no_gold_bars || 15) +
+            '봉 연속 골드 없이 약세이며, OBV·OBV9가 동반 하락하고 현재 실시간 매수세 회복도 확인되지 않았습니다. 충동매수·추가매수를 서두르지 말고 손절선과 비중 축소 기준을 먼저 점검하십시오.'
+          ));
+        }
+      }
       cur.lastAlertKey = prev ? (prev.lastAlertKey || '') : '';
       cur.lastAlertAt = prev ? (prev.lastAlertAt || '') : '';
 
@@ -225,21 +241,29 @@ function hmEvaluate_(enforceMarketWindow) {
         } else {
           // Only PRE-GATE survivors pay for Cloud Run + Kiwoom/DART/news context.
           const marketContext = hmFetchMarketContext_(cur, gated.mailEvents, now);
-          const jevGate = jevPreGate.needs_final_review
-            ? hmJevEvaluateAlert_(cur, gated.mailEvents, marketContext, now, 'HELD')
-            : hmJevPromotePreGate_(jevPreGate);
-          const alert = {
-            cur: cur,
-            events: gated.mailEvents,
-            marketContext: marketContext,
-            jevGate: jevGate
-          };
-          if (hmJevAllowsAlert_(gated.mailEvents, jevGate)) {
-            pendingAlerts.push(alert);
-          } else {
-            // Final Jev held this non-critical survivor.
-            cur.gateState = hmMarkGateSent_(cur.gateState, cur, gated.mailEvents, now);
-            hmAppendJevGateLog_(ss, [alert], now);
+          const hadSellPrepCheck = !!hmFindEvent_(gated.mailEvents, 'SELL_PREP_CHECK');
+          const effectiveEvents = hmResolveSellPrepEvents_(gated.mailEvents, marketContext);
+          if (hadSellPrepCheck) {
+            cur.gateState.lastSellPrepCheckAt = now.toISOString();
+          }
+
+          if (effectiveEvents.length > 0) {
+            const jevGate = jevPreGate.needs_final_review
+              ? hmJevEvaluateAlert_(cur, effectiveEvents, marketContext, now, 'HELD')
+              : hmJevPromotePreGate_(jevPreGate);
+            const alert = {
+              cur: cur,
+              events: effectiveEvents,
+              marketContext: marketContext,
+              jevGate: jevGate
+            };
+            if (hmJevAllowsAlert_(effectiveEvents, jevGate)) {
+              pendingAlerts.push(alert);
+            } else {
+              // Final Jev held this non-critical survivor.
+              cur.gateState = hmMarkGateSent_(cur.gateState, cur, effectiveEvents, now);
+              hmAppendJevGateLog_(ss, [alert], now);
+            }
           }
         }
       }
@@ -558,6 +582,106 @@ function hmAlertKey_(events) {
  * - 손절선 침범: 즉시, 단 30분 cooldown
  * - 동일 5분 tick 다종목: 메일 1통으로 묶음
  */
+function hmObv15Due_(cur, gateState, now) {
+  if (!cur || cur.dataQuality !== 'VALID' || cur.price == null ||
+      cur.atr14 == null || cur.atr14 <= 0) return false;
+  // 45-minute OBV15 is an independent safety check. Do not gate it on
+  // 5-minute OBV direction/cross; /held-obv15 validates closed 45m bars
+  // and live recovery itself before returning WARN.
+  const today = hmDateKey_(now);
+  const g = gateState || {};
+  if (g.sent && g.sent[today + ':OBV15_WARN']) return false;
+  const liveDataMissing = [
+    'LIVE_RECOVERY_DATA_INSUFFICIENT',
+    'KIWOOM_LIVE_EVIDENCE_UNAVAILABLE',
+    'KIWOOM_LIVE_VERIFICATION_FAILED'
+  ].indexOf(String(g.lastObv15Reason || '')) >= 0;
+  return hmCooldownPassed_(
+    g.lastObv15CheckAt, now, liveDataMissing ? 5 : HM.OBV15_RECHECK_MINUTES
+  );
+}
+
+function hmFetchObv15_(cur, now) {
+  const props = PropertiesService.getScriptProperties();
+  const url = String(props.getProperty(HM.PROP_API_URL) || '').trim().replace(/\/$/, '');
+  const token = String(props.getProperty(HM.PROP_API_TOKEN) || '').trim();
+  if (!url || !token) return {decision:'UNAVAILABLE', reason:'SIGNAL_API_NOT_CONFIGURED'};
+  try {
+    const res = UrlFetchApp.fetch(url + '/held-obv15', {
+      method:'post',
+      contentType:'application/json',
+      headers:{'X-StockBot-Token':token},
+      payload:JSON.stringify({
+        ticker:cur.ticker, name:cur.name, atr14:cur.atr14,
+        as_of_date:hmDateKey_(now)
+      }),
+      muteHttpExceptions:true,
+      followRedirects:true
+    });
+    if (res.getResponseCode() !== 200) {
+      return {decision:'UNAVAILABLE', reason:'HTTP_' + res.getResponseCode()};
+    }
+    const body = JSON.parse(res.getContentText() || '{}');
+    return body && body.ok === true ? body :
+      {decision:'UNAVAILABLE', reason:'INVALID_API_RESULT'};
+  } catch (e) {
+    console.warn('Held OBV15 query failed for ' + cur.ticker + ': ' + String(e));
+    return {decision:'UNAVAILABLE', reason:'NETWORK_OR_PARSE_FAILURE'};
+  }
+}
+
+function hmSellPrepReviewTime_(now) {
+  const hhmm = Number(Utilities.formatDate(now, HM.TZ, 'HHmm'));
+  return hhmm >= 1030 && hhmm <= HM.MARKET_END;
+}
+
+function hmSellPrepLocalCandidate_(cur) {
+  return cur &&
+    cur.dataQuality === 'VALID' &&
+    cur.regime === 'BEAR_CONFIRMED' &&
+    cur.obvDir === 'FALLING' &&
+    cur.obv9Dir === 'FALLING' &&
+    cur.obvRel === 'DEAD';
+}
+
+function hmResolveSellPrepEvents_(events, marketContext) {
+  const list = Array.isArray(events) ? events.slice() : [];
+  const hasCheck = !!hmFindEvent_(list, 'SELL_PREP_CHECK');
+  if (!hasCheck) return list;
+
+  const risk = marketContext && marketContext.technical_exit_risk
+    ? marketContext.technical_exit_risk
+    : {};
+  const pattern = marketContext && marketContext.daily_reversal_pattern
+    ? marketContext.daily_reversal_pattern
+    : {};
+  const withoutCheck = list.filter(function(e) { return e.key !== 'SELL_PREP_CHECK'; });
+  const riskWarn = String(risk.decision || '').toUpperCase() === 'WARN';
+  const bearPattern = !!pattern.available && String(pattern.bias || '').toUpperCase() === 'BEAR';
+  if (!riskWarn && !bearPattern) return withoutCheck;
+
+  let message = '';
+  if (riskWarn && bearPattern) {
+    const labels = Array.isArray(pattern.labels) ? pattern.labels.join(', ') : '';
+    message = '일봉 하락반전' + (labels ? '(' + labels + ')' : '') +
+      '과 45분 OBV·MACD 지속 약화가 함께 확인됐습니다. 손절선·비중 축소 기준을 우선 점검하십시오.';
+  } else if (bearPattern) {
+    const labels = Array.isArray(pattern.labels) ? pattern.labels.join(', ') : '';
+    message = '일봉 하락반전 패턴' + (labels ? '(' + labels + ')' : '') +
+      '이 확인됐습니다. 45분 약세 확정 전이라도 매도 대비 기준을 미리 점검하십시오.';
+  } else {
+    message = '45분 OBV가 최근 2거래일 골드 없이 약화되고 MACD가 최근 3개 완료봉 연속 하락했습니다. 손절선·비중 축소 기준을 미리 점검하십시오.';
+  }
+
+  withoutCheck.push(hmEvent_(
+    'SELL_PREP_WARNING',
+    'RISK',
+    '매도 대비',
+    message
+  ));
+  return hmUniqueEvents_(withoutCheck);
+}
+
 function hmGateEvents_(prev, cur, rawEvents, now) {
   const today = hmDateKey_(now);
   let g = hmCloneGateState_(prev && prev.gateState ? prev.gateState : {});
@@ -576,10 +700,9 @@ function hmGateEvents_(prev, cur, rawEvents, now) {
   }
 
   if (g.date !== today) {
-    const oldStage = g.stage || 'NONE';
+    // New trading date must be confirmed from fresh intraday polls only.
+    // Never carry yesterday's stage as the first confirmation of today.
     g = hmNewGateState_(today);
-    g.stage = oldStage;
-    g.stageCount = oldStage === 'NONE' ? 0 : 1;
   }
 
   const stage = hmStageFromCur_(cur);
@@ -634,13 +757,28 @@ function hmGateEvents_(prev, cur, rawEvents, now) {
     }
   }
 
-  // 4) ±1.0 ATR은 강한 가격 사건이라 하루 1회. ±0.5 ATR 단독메일은 완전 억제.
+  // 4) 지속 약세는 상태전환이 없어도 45분봉 OBV+MACD로 하루 1회 "매도 대비" 점검.
+  if (
+    hmSellPrepReviewTime_(now) &&
+    hmSellPrepLocalCandidate_(cur) &&
+    !g.sent[today + ':SELL_PREP'] &&
+    hmCooldownPassed_(g.lastSellPrepCheckAt, now, HM.SELL_PREP_RECHECK_MINUTES)
+  ) {
+    mailEvents.push(hmEvent_(
+      'SELL_PREP_CHECK',
+      'RISK',
+      '매도 대비 점검',
+      '지속 약세 상태입니다. 45분 OBV·MACD 지속 약화를 재확인합니다.'
+    ));
+  }
+
+  // 5) ±1.0 ATR은 강한 가격 사건이라 하루 1회. ±0.5 ATR 단독메일은 완전 억제.
   const atrUp = hmFindEvent_(rawEvents, 'ATR_UP_1_0');
   const atrDown = hmFindEvent_(rawEvents, 'ATR_DOWN_1_0');
   if (atrUp && !g.sent[today + ':ATR_UP_1_0']) mailEvents.push(atrUp);
   if (atrDown && !g.sent[today + ':ATR_DOWN_1_0']) mailEvents.push(atrDown);
 
-  // 5) 크로스·VWAP9/OBV 단기방향·데이터품질 이벤트는 단독 메일 금지.
+  // 6) 크로스·VWAP9/OBV 단기방향·데이터품질 이벤트는 단독 메일 금지.
   //    다만 이미 다른 중요 이벤트로 메일이 나갈 때는 설명용으로 같은 방향의 보조 이벤트를 최대 2개 포함.
   if (mailEvents.length > 0) {
     const aux = rawEvents.filter(function(e) {
@@ -660,6 +798,7 @@ function hmMailEvents_(events) {
   const allowed = [
     'SIGNAL_EARLY_UP', 'SIGNAL_CONF_UP', 'BASE_PAIR_UP',
     'SIGNAL_EARLY_DOWN', 'SIGNAL_CONF_DOWN', 'BASE_PAIR_DOWN',
+    'SELL_PREP_CHECK', 'SELL_PREP_WARNING', 'OBV15_WARNING',
     'ATR_DOWN_1_0', 'STOP_BREACH', 'STOP_BREACH_INITIAL'
   ];
   return (Array.isArray(events) ? events : []).filter(function(e) {
@@ -672,7 +811,7 @@ function hmPreviewMailPolicy() {
     ['관찰·일반 변화', ['INFO', 'STOP_RECOVER_CONFIRMED', 'ATR_UP_1_0', 'VWAP_GOLD_CROSS'], 0],
     ['매수조짐', ['SIGNAL_EARLY_UP'], 1],
     ['매수확인', ['SIGNAL_CONF_UP'], 1],
-    ['하락 위험', ['SIGNAL_EARLY_DOWN', 'SIGNAL_CONF_DOWN', 'BASE_PAIR_DOWN', 'ATR_DOWN_1_0'], 4],
+    ['하락 위험', ['SIGNAL_EARLY_DOWN', 'SIGNAL_CONF_DOWN', 'BASE_PAIR_DOWN', 'SELL_PREP_CHECK', 'SELL_PREP_WARNING', 'OBV15_WARNING', 'ATR_DOWN_1_0'], 7],
     ['손절 위험', ['STOP_BREACH', 'STOP_BREACH_INITIAL'], 2]
   ];
   checks.forEach(function(c) {
@@ -695,6 +834,8 @@ function hmMarkGateSent_(gateState, cur, events, now) {
     if (e.key === 'SIGNAL_EARLY_DOWN') g.sent[today + ':EARLY_DOWN'] = true;
     if (e.key === 'BASE_PAIR_UP') g.sent[today + ':BASE_PAIR_UP'] = true;
     if (e.key === 'BASE_PAIR_DOWN') g.sent[today + ':BASE_PAIR_DOWN'] = true;
+    if (e.key === 'SELL_PREP_WARNING') g.sent[today + ':SELL_PREP'] = true;
+    if (e.key === 'OBV15_WARNING') g.sent[today + ':OBV15_WARN'] = true;
     if (e.key === 'ATR_UP_1_0') g.sent[today + ':ATR_UP_1_0'] = true;
     if (e.key === 'ATR_DOWN_1_0') g.sent[today + ':ATR_DOWN_1_0'] = true;
     if (e.key === 'STOP_RECOVER_CONFIRMED') g.sent[today + ':STOP_RECOVER'] = true;
@@ -711,6 +852,9 @@ function hmNewGateState_(today) {
     stageCount: 0,
     stopRecoverCount: 0,
     lastStopAlertAt: '',
+    lastSellPrepCheckAt: '',
+    lastObv15CheckAt: '',
+    lastObv15Reason: '',
     sent: {}
   };
 }
@@ -754,6 +898,12 @@ function hmSignalVisual_(cur, events) {
   const keys = (events || []).map(function(e) { return e.key; });
   if (keys.indexOf('STOP_BREACH') >= 0 || keys.indexOf('STOP_BREACH_INITIAL') >= 0 || keys.indexOf('SIGNAL_CONF_DOWN') >= 0) {
     return {symbol: '▼', label: keys.indexOf('SIGNAL_CONF_DOWN') >= 0 ? '하락확인' : '손절위험', direction: 'DOWN', confirmed: true, color: '#1565c0'};
+  }
+  if (keys.indexOf('OBV15_WARNING') >= 0) {
+    return {symbol: '⚠', label: '단기 매도 경고', direction: 'DOWN', confirmed: false, color: '#b45309'};
+  }
+  if (keys.indexOf('SELL_PREP_WARNING') >= 0) {
+    return {symbol: '⚠', label: '매도 대비', direction: 'DOWN', confirmed: false, color: '#b45309'};
   }
   if (keys.indexOf('SIGNAL_CONF_UP') >= 0) {
     return {symbol: '▲', label: '상승확인', direction: 'UP', confirmed: true, color: '#d32f2f'};
@@ -1141,6 +1291,8 @@ function hmJevReadPreHold_(props, key) {
 
 function hmJevPreAllowsProceed_(events, gate) {
   const keys = (events || []).map(function(e) { return String(e && e.key || '').toUpperCase(); });
+  // A 45m-verified OBV15 risk warning must pass the pre-gate even on HOLD.
+  if (keys.indexOf('OBV15_WARNING') >= 0) return true;
   if (keys.some(function(k) { return /STOP|DOWN|RISK|▼|▽/.test(k); })) return true;
   if (!gate || gate.status !== 'OK') return true;
   return String(gate.decision || 'PROCEED').toUpperCase() !== 'HOLD';
@@ -1222,7 +1374,8 @@ function hmJevEvaluateAlert_(cur, events, marketContext, now, source) {
       catalyst: {label: catalyst.label || '', confidence: catalyst.confidence || '', reason: catalyst.reason || ''},
       flow: {status: flow.status || '', foreign_5d: flow.foreign_5d, institution_5d: flow.institution_5d, combined_5d: flow.combined_5d, combined_20d: flow.combined_20d},
       disclosures: (context.disclosures || []).slice(0, 3).map(function(d) { return {report_nm: d.report_nm || '', impact: d.impact || d.summary || ''}; }),
-      news: (context.news || []).slice(0, 3).map(function(n) { return {title: n.title || '', impact: n.impact || n.summary || ''}; })
+      news: (context.news || []).slice(0, 3).map(function(n) { return {title: n.title || '', impact: n.impact || n.summary || ''}; }),
+      daily_reversal_pattern: context.daily_reversal_pattern || {}
     }
   };
 
@@ -1244,8 +1397,13 @@ function hmJevEvaluateAlert_(cur, events, marketContext, now, source) {
 
 function hmJevAllowsAlert_(events, gate) {
   const keys = (events || []).map(function(e) { return e.key; });
-  // Stop-loss warnings cannot be suppressed even in ACTIVE mode.
-  if (keys.indexOf('STOP_BREACH') >= 0 || keys.indexOf('STOP_BREACH_INITIAL') >= 0) return true;
+  // Stop-loss and confirmed sell-prep warnings cannot be suppressed even in ACTIVE mode.
+  if (
+    keys.indexOf('STOP_BREACH') >= 0 ||
+    keys.indexOf('STOP_BREACH_INITIAL') >= 0 ||
+    keys.indexOf('SELL_PREP_WARNING') >= 0 ||
+    keys.indexOf('OBV15_WARNING') >= 0
+  ) return true;
   // Fail open. A temporary provider/API problem must never silence a legacy alert.
   if (!gate || gate.status !== 'OK') return true;
   return String(gate.decision || 'SEND').toUpperCase() !== 'HOLD';
@@ -1320,6 +1478,29 @@ function hmContextLines_(marketContext) {
     });
   } else {
     lines.push('DART: 당일 주요 신규 공시 없음');
+  }
+
+  const dailyPattern = c.daily_reversal_pattern || {};
+  if (dailyPattern.available) {
+    const labels = Array.isArray(dailyPattern.labels) ? dailyPattern.labels.join(', ') : '';
+    const biasMap = {BULL:'상승반전', BEAR:'하락반전', MIXED:'혼재', NONE:'해당 없음'};
+    const biasRaw = String(dailyPattern.bias || 'NONE').toUpperCase();
+    const biasKo = biasMap[biasRaw] || biasRaw;
+    lines.push(
+      '일봉 반전패턴: ' + biasKo +
+      (labels ? ' / ' + labels : '') +
+      ' (참고용 보조신호)'
+    );
+  }
+
+  const exitRisk = c.technical_exit_risk || {};
+  if (exitRisk.available) {
+    lines.push(
+      '45분 약세점검: ' + String(exitRisk.decision || '-') +
+      ' / OBV 2일 골드없음 ' + (exitRisk.no_gold_two_sessions ? 'YES' : 'NO') +
+      ' / OBV 약화 ' + (exitRisk.obv_session_falling ? 'YES' : 'NO') +
+      ' / MACD 3봉하락 ' + (exitRisk.macd_falling_3 ? 'YES' : 'NO')
+    );
   }
 
   if (news.length) {
@@ -1491,11 +1672,70 @@ function hmCleanupAlertLog_(ss, force) {
   return {kept: kept.length, removed: removed};
 }
 
+function hmKrxSessionStatus_(now) {
+  const day = Utilities.formatDate(now, HM.TZ, 'yyyy-MM-dd');
+  const dow = Utilities.formatDate(now, HM.TZ, 'EEE');
+  if (dow === 'Sat' || dow === 'Sun') {
+    return {date:day, isTradingDay:false, reason:'WEEKEND'};
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const cacheKey = 'KRX_SESSION_CACHE_V1';
+  const cachedRaw = String(props.getProperty(cacheKey) || '').trim();
+  if (cachedRaw) {
+    try {
+      const cached = JSON.parse(cachedRaw);
+      if (cached && cached.date === day && typeof cached.isTradingDay === 'boolean') {
+        return cached;
+      }
+    } catch (e) {
+      props.deleteProperty(cacheKey);
+    }
+  }
+
+  const apiUrl = String(props.getProperty(HM.PROP_API_URL) || '').trim().replace(/\/$/, '');
+  const apiToken = String(props.getProperty(HM.PROP_API_TOKEN) || '').trim();
+  if (!apiUrl || !apiToken) {
+    return {date:day, isTradingDay:false, reason:'KRX_SESSION_NOT_CONFIGURED'};
+  }
+
+  try {
+    const res = UrlFetchApp.fetch(apiUrl + '/krx-session', {
+      method:'post',
+      contentType:'application/json',
+      headers:{'X-StockBot-Token':apiToken},
+      payload:JSON.stringify({date:day}),
+      muteHttpExceptions:true,
+      followRedirects:true
+    });
+    const http = res.getResponseCode();
+    let body = {};
+    try { body = JSON.parse(res.getContentText() || '{}'); } catch (e) { body = {}; }
+    if (http >= 200 && http < 300 && body && body.ok === true && typeof body.is_trading_day === 'boolean') {
+      const out = {
+        date:day,
+        isTradingDay:body.is_trading_day === true,
+        reason:String(body.reason || (body.is_trading_day ? 'TRADING_DAY' : 'KRX_CLOSED'))
+      };
+      props.setProperty(cacheKey, JSON.stringify(out));
+      return out;
+    }
+    return {date:day, isTradingDay:false, reason:'KRX_SESSION_HTTP_'+http};
+  } catch (err) {
+    return {date:day, isTradingDay:false, reason:'KRX_SESSION_ERROR'};
+  }
+}
+
+function hmIsKrxTradingDay_(now) {
+  return hmKrxSessionStatus_(now).isTradingDay === true;
+}
+
 function hmIsMarketWindow_(now) {
   const dow = Utilities.formatDate(now, HM.TZ, 'EEE');
   if (dow === 'Sat' || dow === 'Sun') return false;
   const hhmm = Number(Utilities.formatDate(now, HM.TZ, 'HHmm'));
-  return hhmm >= HM.MARKET_START && hhmm <= HM.MARKET_END;
+  if (hhmm < HM.MARKET_START || hhmm > HM.MARKET_END) return false;
+  return hmIsKrxTradingDay_(now);
 }
 
 function hmDateKey_(date) {
