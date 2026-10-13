@@ -33,4 +33,6 @@ const events=review.srExtractSignals_(msg.subject,msg.body,{});
 assert.equal(events.length,1);assert.equal(events[0].source,'ETF+HELD+YOUTUBE');
 assert.equal(events[0].code,'490590');assert.equal(events[0].price,80);assert(events[0].eventId.startsWith('U2_'));
 assert.equal(review.srExtractSignals_('[주식 통합신호]','UNIFIED_EVENTS_JSON=broken',{}).length,0);
-console.log('PASS union, distinct-slot confirmation, failure retry, cross-list dedup, crash escalation, stop recross, exact replay identity');
+ctx.SpreadsheetApp={openById:()=>{throw new Error('ORIGINAL_SHEET_MUST_NOT_BE_TOUCHED')}};
+assert.equal(ctx.umDisplay_(item,buy).recordedBy,'umRecord_');
+console.log('PASS union, distinct-slot confirmation, failure retry, cross-list dedup, crash escalation, stop recross, exact replay identity, original formulas preserved');

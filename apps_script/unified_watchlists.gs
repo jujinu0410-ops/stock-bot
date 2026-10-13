@@ -7,7 +7,7 @@ const UM = Object.freeze({
   VERSION:'three-lists-v2', TZ:'Asia/Seoul', CONTROL:'UNIFIED_CONTROL',
   BOOK:'15WgSe4yOSBqSt6YTRQEETD_Hs6J1WL2Hop9RlzFCGkw',
   YT:'10R11CnOs0Gi3Ffag8aWOw8sNZw0E_ZFlM5_qqSyO2xw',
-  STATE_PREFIX:'UM2_', MAX_RUNTIME:260000, BATCH:4,
+  STATE_PREFIX:'UM2_', MAX_RUNTIME:260000, BATCH:2,
   LABELS:{WATCH:'· 관찰',BUY_SETUP:'△ 매수조짐',BUY_CONFIRMED:'▲ 매수확인',
     DOWN_EARLY:'▽ 하락조짐',DOWN_CONFIRMED:'▼ 하락확인',RISK:'⚠ 위험경고'}
 });
@@ -146,18 +146,10 @@ function umLegacySeed_(book,props,now) {
   return map;
 }
 function umDisplay_(item,result) {
-  const book=SpreadsheetApp.openById(UM.BOOK),yt=SpreadsheetApp.openById(UM.YT);
-  item.refs.forEach(ref=>{
-    if(ref.source==='ETF')book.getSheetByName('ETF_WATCHLIST').getRange(ref.row,11).setValue(UM.LABELS[result.stage]||UM.LABELS.WATCH);
-    if(ref.source==='YOUTUBE')yt.getSheetByName('CANDIDATES').getRange(ref.row,23,1,3).setValues([[
-      result.stage,result.send_allowed?'UNIFIED_VERIFIED':'UNIFIED_HOLD',
-      (result.reasons||[]).join(' | ').slice(0,1500)]]);
-    if(ref.source==='HELD'){
-      const sh=book.getSheetByName('REGIME'),t=result.technical||{};
-      sh.getRange(ref.row,17,1,2).setValues([[t.regime||'DATA_REVIEW',
-        (UM.LABELS[result.stage]||UM.LABELS.WATCH)+' · '+(result.reasons||[]).slice(-3).join(' / ')]]);
-    }
-  });
+  // Immutable source sheets: ETF_WATCHLIST!K and REGIME!Q:R contain formulas,
+  // while CANDIDATES!W:Y stores historical analysis. NEVER overwrite them.
+  // umRecord_ writes all current unified verdicts into UNIFIED_DECISIONS.
+  return {ticker:item.ticker,stage:result.stage,recordedBy:'umRecord_'};
 }
 function umEventId_(plan,now) {
   return ['U2',umDay_(now),plan.result.session||'KRX_SESSION',plan.item.ticker,
@@ -284,12 +276,22 @@ function umTick5m() {
     const book=SpreadsheetApp.openById(UM.BOOK),all=umUniverse_(now),control=book.getSheetByName(UM.CONTROL);
     const universe=mode==='PREVIEW'?all.filter(x=>['069500','114800','373220','103590','001430','490590','007660'].indexOf(x.ticker)>=0):all;
     const legacy=mode==='ACTIVE'?umLegacySeed_(book,props,now):{};
-    let evaluated=0,sent=0,errors=0;const audit=[];
+    let evaluated=0,sent=0,errors=0;const audit=[],allPlans=[];
     // Resume a long tick from its cursor; priority risks always head a new slot.
     let cursor=Number(props.getProperty('UM2_CURSOR_SLOT')===slot?props.getProperty('UM2_CURSOR')||0:0);
     for(;cursor<universe.length;cursor+=UM.BATCH) {
       if(Date.now()-start>UM.MAX_RUNTIME)break;
-      const batch=universe.slice(cursor,cursor+UM.BATCH),responses=UrlFetchApp.fetchAll(batch.map(x=>umRequest_(x,props))),plans=[];
+      const batch=universe.slice(cursor,cursor+UM.BATCH),reqs=batch.map(x=>umRequest_(x,props)),responses=UrlFetchApp.fetchAll(reqs),plans=[];
+      // Retry transport failures within this 5-minute pass; no state is committed
+      // for unavailable tickers and the next pass can retry them again.
+      for(let attempt=0;attempt<2;attempt++){
+        const retryIndices=[];
+        responses.forEach((r,i)=>{if(r.getResponseCode()===429||r.getResponseCode()>=500)retryIndices.push(i);});
+        if(!retryIndices.length)break;
+        Utilities.sleep(attempt===0?1500:4200);
+        const retried=UrlFetchApp.fetchAll(retryIndices.map(i=>reqs[i]));
+        retryIndices.forEach((i,j)=>{responses[i]=retried[j];});
+      }
       batch.forEach(function(item,i){
         let r;try{r=JSON.parse(responses[i].getContentText());}catch(e){r={};}
         if(responses[i].getResponseCode()!==200||r.ok!==true||r.engine_version!==UM.VERSION){
@@ -304,22 +306,33 @@ function umTick5m() {
           umDisplay_(item,r);
         }
       });
-      if(plans.length)sent+=umDispatch_(plans,props,now).sent;
+      // Collect the pass's alerts before mailing. One email per 4 symbols
+      // would flood the inbox during market-wide sell-offs.
+      if(plans.length)allPlans.push.apply(allPlans,plans);
       props.setProperties({UM2_CURSOR_SLOT:slot,UM2_CURSOR:String(cursor+UM.BATCH)});
+    }
+    if(mode==='ACTIVE'&&allPlans.length){
+      // Keep Gmail's draft/receipt reconciliation and per-ticker event ids.
+      // Bounded digest also stays well below Apps Script 9-KB property limits.
+      for(let i=0;i<allPlans.length;i+=20)
+        sent+=umDispatch_(allPlans.slice(i,i+20),props,now).sent;
     }
     umRecord_(audit);
     const done=cursor>=universe.length;
-    if(done)props.setProperty('UM2_COMPLETED_'+mode,slot);
-    control.getRange('B3:B7').setValues([[now],[mode+(done?'_COMPLETE':'_PARTIAL')],
+    // A slot containing HTTP errors is NOT a successful full-universe check.
+    if(done&&!errors)props.setProperty('UM2_COMPLETED_'+mode,slot);
+    if(errors){props.deleteProperty('UM2_CURSOR_SLOT');props.deleteProperty('UM2_CURSOR');}
+    control.getRange('B3:B7').setValues([[now],[mode+(done&&!errors?'_COMPLETE':'_PARTIAL')],
       [JSON.stringify({universe:universe.length,evaluated:evaluated,sent:sent,errors:errors,cursor:cursor})],[UM.VERSION],[errors?'API_ERRORS':'OK']]);
     if(errors&&mode==='ACTIVE')umNotifyFailure_('API 확인 실패 '+errors+'개 종목',props,now);
     if(done&&!errors&&mode==='ACTIVE'){
-      // Successful unified execution is the prerequisite for removing redundant
-      // scheduled signal runs. hmTick5m and close-sync are explicitly retained.
-      ScriptApp.getProjectTriggers().filter(t=>['ewTick5m','ewHourly','monitorIntraday'].indexOf(t.getHandlerFunction())>=0)
-        .forEach(t=>ScriptApp.deleteTrigger(t));
+      // Keep original trigger installations through cutover verification.
+      // Their entrypoints delegate to umTick5m in ACTIVE and existing slot/lock
+      // gates prevent duplicate sends. Deletion requires a separate verified
+      // maintenance step, never the first successful active run.
+      console.log('UNIFIED_ACTIVE_OK original triggers preserved for rollback');
     }
-    return {status:done?'OK':'PARTIAL',mode:mode,universe:universe.length,evaluated:evaluated,sent:sent,errors:errors};
+    return {status:done&&!errors?'OK':'PARTIAL',mode:mode,universe:universe.length,evaluated:evaluated,sent:sent,errors:errors};
   }catch(err){
     if(mode==='ACTIVE')try{umNotifyFailure_(err,props,now);}catch(notifyErr){console.error(String(notifyErr));}
     throw err;
