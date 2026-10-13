@@ -117,6 +117,10 @@ function hmRunNow() {
 }
 
 function hmTick5m() {
+  if (typeof umEnabled_ === "function" && umEnabled_()) {
+    const closeSync = typeof dcsScheduledTick_ === "function" ? dcsScheduledTick_() : null;
+    return {closeSync:closeSync,monitor:umTick5m()};
+  }
   const closeSync = (typeof dcsScheduledTick_ === 'function')
     ? dcsScheduledTick_()
     : {status:'DCS_NOT_LOADED'};
@@ -138,6 +142,9 @@ function hmTick5m() {
         }
       }
     }
+  }
+  if (typeof umMode_ === "function" && umMode_() === "PREVIEW") {
+    try { umTick5m(); } catch (e) { console.error("UNIFIED_PREVIEW_FAILED: "+String(e)); }
   }
   return {closeSync:closeSync, monitor:monitor};
 }
@@ -165,6 +172,7 @@ function hmCleanupLogNow() {
 }
 
 function hmEvaluate_(enforceMarketWindow) {
+  if (typeof umEnabled_ === "function" && umEnabled_()) return umTick5m();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) return {status: 'LOCKED_SKIP'};
 

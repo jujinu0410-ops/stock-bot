@@ -43,7 +43,7 @@ from src.analysis.youtube_alert_outcome import evaluate_youtube_alert_outcome
 from src.analysis.daily_reversal_patterns import detect_daily_reversal_patterns
 from src.analysis.early_obv_recovery import evaluate_early_obv_recovery
 from src.analysis.held_obv15_warning import analyze_obv15_sell_warning
-from services.unified_signal_engine import evaluate_signal, clean_code
+from services.unified_signal_engine import evaluate_signal, clean_code, normalize_sources
 from src.analysis.youtube_candidate_signal import (
     FINAL_BUY_ALERT,
     FINAL_BUY_ALERT_STRONG,
@@ -1923,7 +1923,7 @@ def _unified_evaluate(payload: Dict[str, Any]) -> Dict[str, Any]:
     sector_etf = clean_code(payload.get('sector_etf_code'))
     if sector_etf == ticker:  # A ticker cannot confirm its own sector trend.
         sector_etf = ''
-    if payload.get('source') not in ('HELD', 'ETF', 'YOUTUBE'):
+    if not normalize_sources(payload.get('sources', payload.get('source'))):
         raise SignalServiceError('UNIFIED_SOURCE_REQUIRED')
     session = RetryingKiwoomSession(max_attempts=4)
     token = _get_kiwoom_token(session)
@@ -1989,7 +1989,8 @@ def health() -> Any:
         {
             "ok": True,
             "service": "youtube-signal-service",
-            "endpoints": ["/confirm", "/held-context", "/held-obv15", "/jev-gate", "/alert-outcome", "/etf-freshness", "/krx-session", "/unified-signal"],
+            "endpoints": ["/confirm", "/held-context", "/held-obv15", "/jev-gate", "/alert-outcome", "/etf-freshness", "/krx-session", "/unified-signal", "/unified-scan"],
+            "unified_engine_version": "three-lists-v2",
         }
     )
 
@@ -2060,6 +2061,24 @@ def unified_signal() -> Any:
     except Exception:
         app.logger.exception('unified signal evaluation failed')
         return jsonify({'ok': False, 'error': 'UNIFIED_EVALUATION_FAILED'}), 503
+
+
+@app.post("/unified-scan")
+def unified_scan() -> Any:
+    if not _secret_ok():
+        return jsonify({"ok": False, "error": "UNAUTHORIZED"}), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "INVALID_JSON"}), 400
+    try:
+        import sys
+        from services.unified_scan import scan
+        return jsonify(scan(payload, sys.modules[__name__])), 200
+    except SignalServiceError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception:
+        app.logger.exception("unified scan failed")
+        return jsonify({"ok": False, "error": "UNIFIED_SCAN_UNAVAILABLE"}), 503
 
 
 @app.post("/held-context")

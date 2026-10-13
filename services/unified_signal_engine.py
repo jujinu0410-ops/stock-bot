@@ -118,8 +118,8 @@ def evaluate_signal(payload: Mapping[str, Any]) -> dict[str, Any]:
         reasons.append("DOWNSIDE_NEVER_SUPPRESSED_BY_MARKET_CONTEXT")
     else:
         reasons.append("NO_BUY_STAGE_OR_MARKET_CONTEXT")
-    verified = payload.get("technical_verified", True) is True
-    live = payload.get("live_verified", True) is True
+    verified = payload.get("technical_verified") is True
+    live = payload.get("live_verified") is True
     send_allowed = stage != "WATCH" and verified and live
     if not verified: reasons.append("TECHNICAL_NOT_VERIFIED")
     if not live: reasons.append("LIVE_PRICE_NOT_VERIFIED")

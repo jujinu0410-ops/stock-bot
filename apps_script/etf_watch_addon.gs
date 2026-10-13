@@ -278,6 +278,7 @@ function ewPreview() {
   console.log(JSON.stringify(result)); return result;
 }
 function ewTick5m() {
+  if (typeof umEnabled_ === "function" && umEnabled_()) return umTick5m();
   const now=new Date();
   if (!ewInSession_(now)) return;
   const lock=LockService.getScriptLock(); if (!lock.tryLock(1000)) return;

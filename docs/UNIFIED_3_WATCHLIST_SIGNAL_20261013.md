@@ -40,3 +40,17 @@
 - 103590 등 이미 검증된 OBV15·손절 경고가 그대로 전달됨.
 - 한 종목이 여러 시트에 있어도 동일 판단·1회 발송. 보유수량·평단은 보유 탭에만 남음.
 - 장중 5분 실행, 휴장일, NXT/aftermarket 구분, 실패 재시도, 지메일 리포트 복기 확인.
+
+
+## V2 integration (2026-10-13, implementation; rollout tracked below)
+
+- `services/unified_scan.py` and `/unified-scan` generate the same daily VWAP9/26, OBV/OBV9, completed-day Wilder ATR14, completed 45m guards and live-minute verification for every source. Existing REGIME direction thresholds are retained. Buy setup requires +0.5 ATR from the common 5-completed-day low; confirmation requires +0.6 ATR as well as the technical confirmed regime. Market confidence is +/-1 annotation, never a manufactured confirmation.
+- `apps_script/unified_watchlists.gs` merges active lists by ticker before evaluation. One coordinator runs from the existing `hmTick5m` trigger. Existing ETF/legacy entrypoints delegate after ACTIVE. YouTube bootstrap retains ingestion but delegates all signal production after ACTIVE.
+- Per-ticker Script Properties own confirmation, delivery, crash escalation and stop re-cross cooldown. A Gmail draft outbox with deterministic event IDs reconciles acceptance/state-write failures; ambiguous delivery never blindly resends.
+- `ALERT_LOG` records actual delivery; hidden `UNIFIED_DECISIONS` records up to 3000 evaluations/holds/errors. Existing D0/D3/D5 parser reads `UNIFIED_EVENTS_JSON` from sent mail and uses the exact shared event ID. Blocked decisions remain audit evidence, not fictitious trades.
+- `UNIFIED_CONTROL!B2`: OFF / PREVIEW / ACTIVE. PREVIEW checks the seven handoff/overlap cases without sending or disabling legacy risks. ACTIVE requires a successful preview, both application projects and replay parser deployed, then readback. B3:B7 stores execution status. Explicit mapping A9:C must reference the actual ETF universe.
+- Existing live source checks revealed KRX-only 09:00-15:30 windows in all three monitors; there is no verified NXT eligibility implementation to preserve. V2 keeps that schedule and does not claim after-market coverage.
+- Auto-order APIs and portfolio quantity, average price, stops are not mutated. Display-only stage fields are updated from the common result.
+- Rollback: set control to OFF, restore pre-cutover formula snapshots and Apps Script backups, retain the hmTick5m trigger; restore ETF trigger only if standalone mode is needed.
+
+Validation before deployment: 90 Python tests; Node union/confirmation/delivery/replay tests; existing held and ETF tests. The stale ETF test fixture was aligned with the already-live holiday gate and 120-minute candidate tolerance plus independent Kiwoom verification.

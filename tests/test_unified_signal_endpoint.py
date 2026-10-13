@@ -17,7 +17,7 @@ class UnifiedSignalEndpointTests(unittest.TestCase):
         cases=[("HELD","SIGNAL_EARLY_UP"),("ETF","△ 상승조짐"),("YOUTUBE","BUY_CANDIDATE")]
         for source,stage in cases:
             r=service._unified_evaluate({"ticker":"373220","source":source,"stage":stage,
-                "market":"KOSPI","sector_etf_code":"091160"})
+                "market":"KOSPI","sector_etf_code":"091160","technical_verified":True})
             self.assertEqual(r["stage"],"BUY_SETUP")
             self.assertEqual(r["confidence_adjustment"],1)
             self.assertEqual(r["live_price_source"],"KIWOOM_KA10001")
@@ -31,7 +31,7 @@ class UnifiedSignalEndpointTests(unittest.TestCase):
             "available":True,"current_price":90000.0,"change_pct":-0.067,
             "source":"KIWOOM_KA10001"}
         r=service._unified_evaluate({"source":"ETF","ticker":"069500",
-            "market":"KOSPI","stage":"▼"})
+            "market":"KOSPI","stage":"▼","technical_verified":True})
         self.assertEqual(r["stage"],"DOWN_CONFIRMED")
         self.assertEqual(r["confidence_adjustment"],0)
         self.assertTrue(r["send_allowed"])
