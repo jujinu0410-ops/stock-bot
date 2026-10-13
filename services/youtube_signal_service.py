@@ -449,23 +449,36 @@ def _evaluate_early_obv_recovery_gate(
         return {"decision": "UNAVAILABLE", "reason": type(exc).__name__}
 
 
-def _evaluate_entry_timing_veto(ticker: str) -> Dict[str, Any]:
-    daily = _fetch_daily_obv_gate(ticker)
+def _evaluate_entry_timing_veto(
+    ticker: str, *, fresh_price: float | None = None,
+) -> Dict[str, Any]:
+    """Fail-closed YouTube BUY mail gate using verified Kiwoom quote and completed 45m VWAP.
+
+    Short 1m recoveries and positive investor flow cannot override a weak/missing
+    completed 45m trend. No data -> WAIT (retry later), never an optimistic PASS.
+    """
     intraday = _fetch_45m_vwap_gate(ticker)
-    veto = bool(
-        daily.get("available")
-        and intraday.get("available")
-        and not daily.get("gold")
-        and not intraday.get("gold")
-    )
+    price = _parse_kiwoom_price(fresh_price)
+    vwap9 = _parse_kiwoom_price(intraday.get("vwap9"))
+    if not intraday.get("available"):
+        decision, reason = "WAIT", "45M_VWAP_UNAVAILABLE"
+    elif price is None:
+        decision, reason = "WAIT", "KIWOOM_FRESH_PRICE_UNAVAILABLE"
+    elif vwap9 is None or vwap9 <= 0:
+        decision, reason = "WAIT", "45M_VWAP9_UNAVAILABLE"
+    elif not intraday.get("gold") and price < vwap9:
+        decision, reason = "VETO", "45M_WEAK_AND_PRICE_BELOW_VWAP9"
+    elif not intraday.get("gold"):
+        decision, reason = "VETO", "45M_TREND_NOT_GOLD"
+    elif price < vwap9:
+        decision, reason = "VETO", "PRICE_BELOW_45M_VWAP9"
+    else:
+        decision, reason = "PASS", "45M_GOLD_AND_FRESH_PRICE_CONFIRMED"
     return {
-        "decision": "VETO" if veto else "PASS",
-        "reason": (
-            "DAILY_OBV_NOT_GOLD_AND_45M_VWAP_NOT_GOLD"
-            if veto
-            else "TIMING_GATE_PASS_OR_DATA_GAP"
-        ),
-        "daily_obv": daily,
+        "decision": decision,
+        "reason": reason,
+        "fresh_price": price,
+        "vwap9": vwap9,
         "vwap_45m": intraday,
     }
 
@@ -1527,23 +1540,9 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
             "safety": {"sheet_write": False, "portfolio_mutation": False, "order_api": False},
         }
 
-    timing_gate = _evaluate_entry_timing_veto(ticker)
-    # Genuine live OBV recovery can precede a new 45m close. A lagging
-    # daily/45m dual-dead reading must not blackout a volume-backed 09:15 rally.
-    if (
-        timing_gate.get("decision") == "VETO"
-        and early_obv_gate.get("reason") in (
-            "LIVE_PARTIAL_OBV_GOLD_WITH_VOLUME",
-            "MEANINGFUL_PRICE_AND_VOLUME_OBV_RECOVERY",
-        )
-    ):
-        timing_gate = {
-            **timing_gate,
-            "original_decision": "VETO",
-            "decision": "PASS",
-            "reason": "VERIFIED_LIVE_OBV_RECOVERY_OVERRIDES_LAGGING_CROSS",
-        }
-    if timing_gate.get("decision") == "VETO":
+    timing_gate = _evaluate_entry_timing_veto(ticker, fresh_price=fresh_price)
+    # Live 1m/OBV bounce never overrides an unverified or weak completed 45m trend.
+    if timing_gate.get("decision") != "PASS":
         app.logger.info(
             "entry timing veto ticker=%s final=%s reason=%s",
             ticker, final.final_signal, timing_gate.get("reason"),
@@ -1556,7 +1555,8 @@ def _confirm(payload: Dict[str, Any]) -> Dict[str, Any]:
             "final_signal": FINAL_WATCH_ONLY,
             "original_final_signal": final.final_signal,
             "flow_status": flow.status,
-            "flow_summary": flow_text,
+            "flow_summary": "매수 보류 (" + str(timing_gate.get("decision")) + "): "
+                + str(timing_gate.get("reason")) + " / " + flow_text,
             "freshness_gate": freshness_gate,
             "timing_gate": timing_gate,
             "mail_sent": False,

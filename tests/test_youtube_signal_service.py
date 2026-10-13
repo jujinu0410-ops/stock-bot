@@ -164,20 +164,47 @@ class YouTubeSignalServiceTest(unittest.TestCase):
             svc._clean_ticker("ABC")
 
     @patch.object(svc, "_fetch_45m_vwap_gate")
-    @patch.object(svc, "_fetch_daily_obv_gate")
-    def test_entry_timing_veto_when_daily_obv_and_45m_vwap_both_not_gold(self, daily, vwap):
-        daily.return_value = {"available": True, "gold": False, "trend_down": True}
-        vwap.return_value = {"available": True, "gold": False, "state": "VWAP_DEAD"}
-        gate = svc._evaluate_entry_timing_veto("316140")
+    def test_lg_1019_rising_one_minute_does_not_override_45m_downtrend(self, vwap):
+        vwap.return_value = {
+            "available": True, "gold": False, "vwap9": 396625.0,
+            "state": "VWAP_DEAD", "completed_bar": "09:45",
+        }
+        gate = svc._evaluate_entry_timing_veto("373220", fresh_price=387000.0)
         self.assertEqual(gate["decision"], "VETO")
-        self.assertEqual(gate["reason"], "DAILY_OBV_NOT_GOLD_AND_45M_VWAP_NOT_GOLD")
+        self.assertEqual(gate["reason"], "45M_WEAK_AND_PRICE_BELOW_VWAP9")
+        self.assertEqual(gate["fresh_price"], 387000.0)
 
     @patch.object(svc, "_fetch_45m_vwap_gate")
-    @patch.object(svc, "_fetch_daily_obv_gate")
-    def test_entry_timing_gate_passes_if_either_signal_is_gold(self, daily, vwap):
-        daily.return_value = {"available": True, "gold": False}
-        vwap.return_value = {"available": True, "gold": True, "state": "VWAP_GOLD"}
-        gate = svc._evaluate_entry_timing_veto("316140")
+    def test_45m_missing_is_verification_pending_not_pass(self, vwap):
+        vwap.return_value = {"available": False, "reason": "CUTOFF_MISMATCH"}
+        gate = svc._evaluate_entry_timing_veto("373220", fresh_price=387000.0)
+        self.assertEqual(gate["decision"], "WAIT")
+        self.assertEqual(gate["reason"], "45M_VWAP_UNAVAILABLE")
+
+    @patch.object(svc, "_fetch_45m_vwap_gate")
+    def test_kiwoom_quote_missing_is_verification_pending(self, vwap):
+        vwap.return_value = {"available": True, "gold": True, "vwap9": 380000.0}
+        gate = svc._evaluate_entry_timing_veto("373220", fresh_price=None)
+        self.assertEqual(gate["decision"], "WAIT")
+
+    @patch.object(svc, "_fetch_45m_vwap_gate")
+    def test_45m_downtrend_blocks_buy_even_after_intraday_price_recovery(self, vwap):
+        vwap.return_value = {"available": True, "gold": False, "vwap9": 380000.0}
+        gate = svc._evaluate_entry_timing_veto("373220", fresh_price=387000.0)
+        self.assertEqual(gate["decision"], "VETO")
+        self.assertEqual(gate["reason"], "45M_TREND_NOT_GOLD")
+
+    @patch.object(svc, "_fetch_45m_vwap_gate")
+    def test_45m_gold_but_price_below_vwap_still_blocks_buy(self, vwap):
+        vwap.return_value = {"available": True, "gold": True, "vwap9": 389000.0}
+        gate = svc._evaluate_entry_timing_veto("373220", fresh_price=387000.0)
+        self.assertEqual(gate["decision"], "VETO")
+        self.assertEqual(gate["reason"], "PRICE_BELOW_45M_VWAP9")
+
+    @patch.object(svc, "_fetch_45m_vwap_gate")
+    def test_upward_45m_and_kiwoom_price_above_vwap_allow_buy(self, vwap):
+        vwap.return_value = {"available": True, "gold": True, "vwap9": 384000.0}
+        gate = svc._evaluate_entry_timing_veto("373220", fresh_price=387000.0)
         self.assertEqual(gate["decision"], "PASS")
 
 
@@ -555,6 +582,51 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         self.assertEqual(result["early_obv_gate"]["decision"], "VETO")
         timing.assert_not_called()
         jev.assert_not_called()
+
+    @patch.object(svc.GmailNotifier, "send_email")
+    @patch.object(svc, "_evaluate_entry_timing_veto")
+    @patch.object(svc, "_evaluate_early_obv_recovery_gate")
+    @patch.object(svc.KiwoomInvestorFlowReader, "fetch_stock_flow")
+    @patch.object(svc, "_evaluate_kiwoom_freshness_gate")
+    @patch.object(svc, "_get_kiwoom_token")
+    def test_lg_1019_live_bounce_and_positive_flow_still_cannot_send_buy(
+        self, token, freshness, fetch_flow, obv, timing, send_email,
+    ):
+        token.return_value = "test-token"
+        freshness.return_value = {
+            "decision": "PASS", "reason": "FRESH_SIGNAL_ALIVE",
+            "direction": "RISING", "fresh_price": 387000.0,
+            "quote": {"change_pct": -0.033}, "_minute_bars": [],
+        }
+        fetch_flow.return_value = [
+            {"dt": f"202609{day:02d}", "foreign_amount": 10000.0,
+             "institution_amount": 15000.0, "turnover_amount": 50000.0}
+            for day in range(1, 21)
+        ]
+        obv.return_value = {
+            "decision": "PASS", "reason": "LIVE_PARTIAL_OBV_GOLD_WITH_VOLUME",
+        }
+        timing.return_value = {
+            "decision": "VETO",
+            "reason": "45M_WEAK_AND_PRICE_BELOW_VWAP9",
+            "fresh_price": 387000.0, "vwap9": 396625.0,
+        }
+        result = svc._confirm({
+            "ticker": "373220", "name": "LG에너지솔루션",
+            "tech_status": "BUY_CANDIDATE", "current_price": 393500.0,
+            "atr14": 17362.5, "buy_trigger_05": 366181.0,
+            "confirm_trigger_06": 367918.0, "as_of_date": "2026-10-13",
+            "jev_pre_gate": {
+                "status": "OK", "decision": "PROCEED",
+                "needs_final_review": False,
+            },
+        })
+        self.assertFalse(result["mail_sent"])
+        self.assertTrue(result["suppressed_by_timing_gate"])
+        self.assertEqual(result["final_signal"], svc.FINAL_WATCH_ONLY)
+        self.assertIn("45M_WEAK_AND_PRICE_BELOW_VWAP9", result["flow_summary"])
+        timing.assert_called_once_with("373220", fresh_price=387000.0)
+        send_email.assert_not_called()
 
     @patch.object(svc, "_jev_gate")
     def test_jev_gate_uses_existing_shared_token(self, mocked):
