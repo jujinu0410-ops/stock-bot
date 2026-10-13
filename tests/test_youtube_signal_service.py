@@ -628,6 +628,40 @@ class YouTubeSignalServiceTest(unittest.TestCase):
         timing.assert_called_once_with("373220", fresh_price=387000.0)
         send_email.assert_not_called()
 
+    @patch.object(svc, "_fetch_kiwoom_minute_bars")
+    @patch.object(svc, "_fetch_kiwoom_quote")
+    @patch.object(svc, "_get_kiwoom_token")
+    def test_etf_down_kiwoom_live_confirms_not_sheet_price(self, token, quote, minute):
+        token.return_value = "fake"
+        quote.return_value = {"available": True, "current_price": 94535, "change_pct": -0.0696,
+                              "source": "KIWOOM_KA10001"}
+        result = svc._evaluate_etf_freshness({"ticker": "069500", "stage": "▼", "sheet_change_pct": 0.01})
+        self.assertEqual(result["decision"], "PASS")
+        self.assertEqual(result["fresh_price"], 94535)
+        self.assertAlmostEqual(result["change_pct"], -0.0696)
+        minute.assert_not_called()
+
+    @patch.object(svc, "_fetch_kiwoom_quote")
+    @patch.object(svc, "_get_kiwoom_token")
+    def test_market_risk_live_requires_minus_three_percent(self, token, quote):
+        token.return_value = "fake"
+        quote.return_value = {"available": True, "current_price": 94535, "change_pct": -0.0696}
+        result = svc._evaluate_etf_freshness({"ticker": "069500", "stage": "RISK"})
+        self.assertEqual(result["decision"], "PASS")
+        quote.return_value = {"available": True, "current_price": 99000, "change_pct": -0.02}
+        self.assertEqual(svc._evaluate_etf_freshness({"ticker": "069500", "stage": "RISK"})["decision"], "VETO")
+        with self.assertRaises(svc.SignalServiceError):
+            svc._evaluate_etf_freshness({"ticker": "114800", "stage": "RISK"})
+
+    @patch.object(svc, "_fetch_kiwoom_quote")
+    @patch.object(svc, "_get_kiwoom_token")
+    def test_etf_down_does_not_send_if_kiwoom_is_green_or_missing(self, token, quote):
+        token.return_value = "fake"
+        quote.return_value = {"available": True, "current_price": 107000, "change_pct": 0.01}
+        self.assertEqual(svc._evaluate_etf_freshness({"ticker": "069500", "stage": "▼"})["decision"], "VETO")
+        quote.return_value = {"available": False, "reason": "KA10001_HTTP_429"}
+        self.assertEqual(svc._evaluate_etf_freshness({"ticker": "069500", "stage": "▽"})["decision"], "VETO")
+
     @patch.object(svc, "_jev_gate")
     def test_jev_gate_uses_existing_shared_token(self, mocked):
         mocked.return_value = {"ok": True, "status": "NOT_CONFIGURED", "decision": "SEND"}

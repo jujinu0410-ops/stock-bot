@@ -6,7 +6,9 @@
 const EW = Object.freeze({
   SPREADSHEET_ID: '15WgSe4yOSBqSt6YTRQEETD_Hs6J1WL2Hop9RlzFCGkw',
   SHEET: 'ETF_WATCHLIST', TZ: 'Asia/Seoul', MAX_ROWS: 99,
-  HANDLER: 'ewTick5m', STATE_KEY: 'ETF_WATCH_SIGNAL_STATE_V2', CONFIRM_CYCLES: 2
+  HANDLER: 'ewTick5m', STATE_KEY: 'ETF_WATCH_SIGNAL_STATE_V2', CONFIRM_CYCLES: 2,
+  MARKET_RISK_KEY: 'ETF_MARKET_RISK_KOSPI200_V1', LAST_SUCCESS_KEY: 'ETF_LAST_SUCCESS_AT',
+  MARKET_RISK_TICKER: '069500', MARKET_RISK_LEVELS: [-0.03,-0.05,-0.07]
 });
 function ewRecipient_() {
   const props = PropertiesService.getScriptProperties();
@@ -31,17 +33,20 @@ function ewNum_(x) { return typeof x === 'number' && isFinite(x) ? x : null; }
 function ewFresh_(tradeTime, now) {
   return tradeTime instanceof Date && !isNaN(tradeTime.getTime()) &&
     Utilities.formatDate(tradeTime, EW.TZ, 'yyyy-MM-dd') === Utilities.formatDate(now, EW.TZ, 'yyyy-MM-dd') &&
-    now.getTime() - tradeTime.getTime() >= -60000 && now.getTime() - tradeTime.getTime() <= 30*60000;
+    now.getTime() - tradeTime.getTime() >= -60000 && now.getTime() - tradeTime.getTime() <= 120*60000;
+  // Price is a discovery-only candidate; Kiwoom quote validates every outgoing alert.
 }
 function ewRows_(now) {
   const sh = SpreadsheetApp.openById(EW.SPREADSHEET_ID).getSheetByName(EW.SHEET);
   if (!sh) throw new Error('ETF_WATCHLIST 탭이 없습니다.');
   const n = Math.min(EW.MAX_ROWS, Math.max(0, sh.getLastRow()-1));
   if (!n) return [];
-  return sh.getRange(2,1,n,14).getValues().filter(r => r[0] === true && /^\d{6}$/.test(String(r[3]))).map(r => ({
+  return sh.getRange(2,1,n,35).getValues().filter(r => r[0] === true && /^\d{6}$/.test(String(r[3]))).map(r => ({
     code:String(r[3]), name:String(r[4]), sector:String(r[2]), price:ewNum_(r[6]),
     day:ewNum_(r[7]), five:ewNum_(r[8]), twenty:ewNum_(r[9]), signal:String(r[10]),
-    tradeTime:r[11], valid:r[12] === 'VALID' && ewFresh_(r[11],now) && ewNum_(r[6]) > 0
+    tradeTime:r[11], valid:r[12] === 'VALID' && ewFresh_(r[11],now) && ewNum_(r[6]) > 0,
+    regime:String(r[19] || ''), vwap9Dir:String(r[27] || ''), vwap26Dir:String(r[28] || ''),
+    obvDir:String(r[29] || ''), obv9Dir:String(r[30] || ''), vwapRel:String(r[22] || ''), obvRel:String(r[25] || '')
   }));
 }
 function ewPct_(x) { return x == null ? '—' : (x > 0 ? '+' : '')+(100*x).toFixed(2)+'%'; }
@@ -59,7 +64,7 @@ function ewMessage_(rows,now) {
     const jev=(typeof hmJevDisplayLines_ === 'function' ? hmJevDisplayLines_(r.jevGate).join(' · ') : 'Jev: 미연결');
     html+='<tr><td>'+ewEscape_(r.sector)+' / '+ewEscape_(r.name)+'</td><td>'+ewPct_(r.day)+'<br><small>'+ewEscape_(jev)+'</small></td><td>'+ewPct_(r.five)+'</td><td>'+ewPct_(r.twenty)+'</td><td style="color:'+color+'">'+ewEscape_(r.signal)+'</td></tr>';
   });
-  const note='가격 등락률 · 분배금 제외 · GOOGLEFINANCE 지연시세 · VWAP9/26 + OBV/OBV9 기술상태';
+  const note='시트 지연시세는 후보 탐지 전용 · 발송 전 키움 실시간 등락률로 확인 · VWAP9/26 + OBV/OBV9 기술상태';
   plain.push(note,'시세 확인 대기 '+pending+'종목');
   const url='https://docs.google.com/spreadsheets/d/'+EW.SPREADSHEET_ID+'/edit#gid=2026100201';
   plain.push(url);html+='</table><p>'+note+'</p><p>시세 확인 대기 '+pending+'종목</p><a href="'+url+'">ETF 감시판 열기</a>';
@@ -68,11 +73,35 @@ function ewMessage_(rows,now) {
 function ewInSession_(now) {
   const dow=Utilities.formatDate(now,EW.TZ,'EEE');
   const hhmm=Number(Utilities.formatDate(now,EW.TZ,'HHmm'));
-  return dow!=='Sat' && dow!=='Sun' && hhmm>=900 && hhmm<=1530;
+  if (dow==='Sat' || dow==='Sun' || hhmm<900 || hhmm>1530) return false;
+  return (typeof hmIsKrxTradingDay_ === 'function') ? hmIsKrxTradingDay_(now) : false;
 }
 function ewStage_(signal) {
   const match=String(signal).match(/^[▲△▼▽]/);
   return match ? match[0] : '';
+}
+function ewFreshnessGate_(r, stage) {
+  const props=PropertiesService.getScriptProperties();
+  const apiUrl=String(props.getProperty('SIGNAL_API_URL') || '').trim().replace(/\/$/, '');
+  const apiToken=String(props.getProperty('SIGNAL_API_TOKEN') || '').trim();
+  if (!apiUrl || !apiToken) return {ok:false,decision:'VETO',reason:'ETF_FRESHNESS_NOT_CONFIGURED'};
+  try {
+    const res=UrlFetchApp.fetch(apiUrl + '/etf-freshness', {
+      method:'post',
+      contentType:'application/json',
+      headers:{'X-StockBot-Token':apiToken},
+      payload:JSON.stringify({ticker:r.code,name:r.name,stage:stage,sheet_price:r.price,sheet_change_pct:r.day}),
+      muteHttpExceptions:true,
+      followRedirects:true
+    });
+    const http=res.getResponseCode();
+    let body={};
+    try { body=JSON.parse(res.getContentText() || '{}'); } catch(e) { body={}; }
+    if (http>=200 && http<300 && body && body.ok===true) return body;
+    return {ok:false,decision:'VETO',reason:'ETF_FRESHNESS_HTTP_'+http+(body.error?':'+body.error:'')};
+  } catch(err) {
+    return {ok:false,decision:'VETO',reason:'ETF_FRESHNESS_TRANSPORT:'+String(err && err.message ? err.message : err)};
+  }
 }
 // Pure state transition: two separate polling slots, one email per code/stage/day.
 function ewPlan_(rows, previous, now) {
@@ -99,10 +128,45 @@ function ewApplyJevGate_(plan,now) {
     const stage=ewStage_(r.signal);
     const item=plan.state.items[r.code] || (plan.state.items[r.code]={stage:stage,count:EW.CONFIRM_CYCLES,sent:{}});
     const events=[{key:'ETF_SIGNAL_'+stage,level:/^[▲▼]/.test(stage)?'STRONG':'WATCH',title:r.signal,message:r.sector+' ETF 기술신호'}];
+
+    if (/^[▲△▼▽]/.test(stage)) {
+      const fresh=ewFreshnessGate_(r,stage);
+      r.freshnessGate=fresh;
+      if (!fresh || String(fresh.decision || '').toUpperCase() !== 'PASS') {
+        const freshHold={
+          status:'OK', mode:'ETF_FRESHNESS', decision:'HOLD',
+          reason:String(fresh && fresh.reason || 'ETF_FRESHNESS_VETO'),
+          answers:{
+            signal_direction:{choice:String(fresh && fresh.direction || 'UNKNOWN')},
+            signal_stage:{choice:'FRESHNESS_VETO'},
+            alert_urgency:{score:0},
+            send_alert_now:{noul:0}
+          }
+        };
+        held.push({
+          cur:{ticker:r.code,name:r.name,price:(fresh && fresh.fresh_price)||r.price,changePct:(fresh && fresh.change_pct),regime:r.signal},
+          events:events,jevGate:freshHold
+        });
+        return;
+      }
+      r.price=Number(fresh.fresh_price);
+      r.day=Number(fresh.change_pct);
+    }
+
     const cur={
       ticker:r.code,name:r.name,price:r.price,changePct:r.day,atrBand:'ETF_NA',volumePace:null,stopBroken:false,
-      vwap9Dir:'ETF_NA',vwap26Dir:'ETF_NA',vwapRel:'ETF_NA',obvDir:'ETF_NA',obv9Dir:'ETF_NA',obvRel:'ETF_NA',regime:r.signal
+      vwap9Dir:r.vwap9Dir || 'UNKNOWN',vwap26Dir:r.vwap26Dir || 'UNKNOWN',vwapRel:r.vwapRel || 'UNKNOWN',
+      obvDir:r.obvDir || 'UNKNOWN',obv9Dir:r.obv9Dir || 'UNKNOWN',obvRel:r.obvRel || 'UNKNOWN',
+      regime:r.regime || r.signal
     };
+
+    // Validated downside alerts are mandatory; AI filters may annotate but not block.
+    if (/^[▼▽]/.test(stage)) {
+      r.jevGate={status:'OK',mode:'RISK_BYPASS',decision:'SEND',reason:'KIWOOM_VERIFIED_DOWNSIDE'};
+      delivered.push(r);
+      item.sent[stage]=true;
+      return;
+    }
 
     // Cheap/direct Jev PRE-GATE first. Clearly weak upward ETF signals stop before Cloud Run.
     const preGate=(typeof hmJevPreGate_ === 'function')
@@ -138,6 +202,73 @@ function ewApplyJevGate_(plan,now) {
   if (held.length && typeof hmAppendJevGateLog_ === 'function') hmAppendJevGateLog_(SpreadsheetApp.openById(EW.SPREADSHEET_ID),held,now);
   return delivered;
 }
+// Market-risk alerts are independent of the ETF stage. KODEX 200 is a liquid
+// tracking proxy, not the official KOSPI200 index; thresholds are proxy returns.
+function ewMarketRiskLevel_(pct) {
+  if (typeof pct !== 'number' || !isFinite(pct)) return 0;
+  if (pct <= -0.07) return 7;
+  if (pct <= -0.05) return 5;
+  if (pct <= -0.03) return 3;
+  return 0;
+}
+function ewMarketRiskCheck_(rows, now) {
+  const kospi=(rows||[]).filter(r => r.code===EW.MARKET_RISK_TICKER)[0];
+  if (!kospi) return {status:'NOT_WATCHED'};
+  const result=ewFreshnessGate_(kospi,'RISK');
+  if (!result || result.decision!=='PASS') {
+    console.warn('ETF market risk quote unavailable: '+String(result && result.reason || 'NO_RESPONSE'));
+    return {status:'NO_LIVE_RISK',reason:result && result.reason};
+  }
+  const pct=Number(result.change_pct), price=Number(result.fresh_price);
+  const level=ewMarketRiskLevel_(pct);
+  if (!level || !isFinite(price) || price<=0) return {status:'BELOW_THRESHOLD'};
+  const props=PropertiesService.getScriptProperties();
+  const day=Utilities.formatDate(now,EW.TZ,'yyyy-MM-dd');
+  let prior={};
+  try { prior=JSON.parse(props.getProperty(EW.MARKET_RISK_KEY)||'{}'); } catch(e) {}
+  const sent=prior.day===day ? Number(prior.sentLevel||0) : 0;
+  if (level<=sent) return {status:'ALREADY_SENT',level:sent};
+  const inv=(rows||[]).filter(r=>r.code==='114800')[0];
+  const invText=inv ? ('KODEX 인버스: 감시판 '+inv.signal+
+    ' (지연 시세 기반 · 실제 매수 여부는 별도 실시간 검증 필요)') : '인버스 감시판 데이터 없음';
+  const name=level>=7 ? '급락 비상경고' : level>=5 ? '강한 위험경고' : '시장 하락주의';
+  const subject='[ETF 시장위험]['+name+'] KODEX 200 '+(pct*100).toFixed(2)+'%';
+  const body='KODEX 200(069500) 시장위험 특별경보\n'
+    +'키움 조회가: '+price.toLocaleString('ko-KR')+'원\n'
+    +'키움 전일 대비: '+(pct*100).toFixed(2)+'%\n'
+    +'경보 단계: -'+level+'% 이상 하락\n'
+    +invText+'\n'
+    +'주의: 코스피200 지수 자체가 아니라 KODEX 200 ETF의 가격 등락률입니다.\n'
+    +'매수·매도 주문은 자동 실행하지 않습니다.\n'
+    +'단계 상승 시에만 다시 알립니다.';
+  MailApp.sendEmail({to:ewRecipient_(),subject:subject,body:body});
+  props.setProperty(EW.MARKET_RISK_KEY,JSON.stringify({
+    day:day,sentLevel:level,lastPrice:price,lastChangePct:pct,at:now.toISOString()
+  }));
+  console.log('ETF_MARKET_RISK_SENT stage='+level+' price='+price+' pct='+pct);
+  return {status:'SENT',level:level};
+}
+function ewWatchdogNotify_(error, now) {
+  const props=PropertiesService.getScriptProperties();
+  const at=now||new Date(), key='ETF_WATCHDOG_LAST_EMAIL_AT';
+  const last=Number(props.getProperty(key)||0);
+  if (at.getTime()-last<60*60000) return;
+  const msg=String(error && error.message || error || 'ETF 감시 비정상').slice(0,350);
+  MailApp.sendEmail({to:ewRecipient_(),
+    subject:'[ETF 감시장애] 5분 감시 점검 필요',
+    body:'보유종목 정상 감시 트리거에서 ETF 감시 장애를 발견했습니다.\n사유: '+msg+
+      '\n발생시각: '+Utilities.formatDate(at,EW.TZ,'yyyy-MM-dd HH:mm')+
+      '\nETF 매수·매도 신호의 정상 발송을 확인하십시오.'});
+  props.setProperty(key,String(at.getTime()));
+}
+function ewMarketRiskHealth_(risk,now) {
+  const props=PropertiesService.getScriptProperties(),key='ETF_MARKET_RISK_QUOTE_FAILED_SINCE';
+  if (risk && risk.status==='NO_LIVE_RISK') {
+    const since=Number(props.getProperty(key)||0);
+    if (!since) props.setProperty(key,String(now.getTime()));
+    else if (now.getTime()-since>=15*60000) ewWatchdogNotify_('키움 코스피200 위험시세 확인 실패: '+String(risk.reason||'UNKNOWN'),now);
+  } else props.deleteProperty(key);
+}
 function ewPreview() {
   const now=new Date(); const rows=ewRows_(now);
   const props=PropertiesService.getScriptProperties();
@@ -153,13 +284,19 @@ function ewTick5m() {
   try {
     const props=PropertiesService.getScriptProperties();
     const previous=JSON.parse(props.getProperty(EW.STATE_KEY)||'{}');
-    const plan=ewPlan_(ewRows_(now),previous,now);
+    const rows=ewRows_(now);
+    // Mandatory market-risk path runs first, even when normal ETF delivery is filtered.
+    const risk=ewMarketRiskCheck_(rows,now);
+    ewMarketRiskHealth_(risk,now);
+    const plan=ewPlan_(rows,previous,now);
     const delivered=ewApplyJevGate_(plan,now);
     if (delivered.length) {
       const msg=ewMessage_(delivered,now);
       msg.body+='\n5분 간격 2회 연속 확인 · 동일 종목/신호 하루 1회 · 중립은 메일 제외';
       msg.htmlBody+='<p>5분 간격 2회 연속 확인 · 동일 종목/신호 하루 1회 · 중립은 메일 제외</p>';
       MailApp.sendEmail({to:ewRecipient_(),subject:msg.subject,body:msg.body,htmlBody:msg.htmlBody});
+      // Persist before optional audit logging: an audit outage must never duplicate an email.
+      props.setProperty(EW.STATE_KEY,JSON.stringify(plan.state));
       if (typeof hmAppendJevGateLog_ === 'function') {
         hmAppendJevGateLog_(SpreadsheetApp.openById(EW.SPREADSHEET_ID),delivered.map(r => ({
           cur:{ticker:r.code,name:r.name,price:r.price,changePct:r.day,regime:r.signal},
@@ -170,5 +307,7 @@ function ewTick5m() {
     }
     // Never mark alerts as sent before successful delivery. Failed sends retry.
     props.setProperty(EW.STATE_KEY,JSON.stringify(plan.state));
+    props.setProperty(EW.LAST_SUCCESS_KEY,now.toISOString());
+    console.log('ETF_TICK_OK risk='+String(risk.status)+' rows='+rows.length+' delivered='+delivered.length);
   } finally { lock.releaseLock(); }
 }

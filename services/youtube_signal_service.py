@@ -1019,12 +1019,34 @@ def _evaluate_kiwoom_freshness_gate(
 def _evaluate_etf_freshness(payload: Dict[str, Any]) -> Dict[str, Any]:
     ticker = _clean_ticker(payload.get("ticker"))
     stage = str(payload.get("stage") or "").strip()
-    if stage not in ("▲", "△"):
-        raise SignalServiceError("ETF_STAGE_NOT_UPWARD")
+    if stage not in ("▲", "△", "▼", "▽", "RISK"):
+        raise SignalServiceError("ETF_STAGE_UNSUPPORTED")
+    if stage == "RISK" and ticker != "069500":
+        raise SignalServiceError("ETF_MARKET_RISK_TICKER_NOT_ALLOWED")
 
     session = RetryingKiwoomSession(max_attempts=5)
     token = _get_kiwoom_token(session)
     quote = _fetch_kiwoom_quote(session, token, ticker)
+    # A risk/down event must use a fresh Kiwoom price; GOOGLEFINANCE only nominates candidates.
+    # Unlike upward-entry checks, no additional minute-bar feed is required for the risk direction.
+    if stage in ("▼", "▽", "RISK"):
+        change = quote.get("change_pct") if quote.get("available") else None
+        price = quote.get("current_price") if quote.get("available") else None
+        if change is None or price is None:
+            decision, reason = "VETO", str(quote.get("reason") or "KIWOOM_LIVE_CHANGE_UNAVAILABLE")
+        elif stage == "RISK":
+            decision = "PASS" if change <= -0.03 else "VETO"
+            reason = "LIVE_KOSPI200_MARKET_DROP" if decision == "PASS" else "LIVE_DROP_BELOW_3PCT_NOT_CONFIRMED"
+        else:
+            decision = "PASS" if change < 0 else "VETO"
+            reason = "LIVE_ETF_DOWN_CONFIRMED" if decision == "PASS" else "LIVE_ETF_DOWN_NOT_CONFIRMED"
+        return {
+            "ok": True, "ticker": ticker, "stage": stage, "decision": decision,
+            "reason": reason, "fresh_price": price, "change_pct": change,
+            "quote_source": quote.get("source"), "kiwoom_429_retry_count": session.retry_count,
+            "direction": "FALLING" if change is not None and change < 0 else "UNKNOWN",
+        }
+
     minute = _fetch_kiwoom_minute_bars(session, token, ticker)
 
     if not quote.get("available"):

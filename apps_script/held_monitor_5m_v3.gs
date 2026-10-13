@@ -120,7 +120,25 @@ function hmTick5m() {
   const closeSync = (typeof dcsScheduledTick_ === 'function')
     ? dcsScheduledTick_()
     : {status:'DCS_NOT_LOADED'};
-  const monitor = hmEvaluate_(true);
+  let monitor;
+  try {
+    monitor = hmEvaluate_(true);
+  } finally {
+    // Existing, proven HELD 5m trigger backs up the ETF scheduler.
+    // ETF has its own script lock and per-slot idempotency; do not delay HELD alerts.
+    if (typeof ewTick5m === 'function') {
+      try {
+        ewTick5m();
+      } catch (err) {
+        console.error('ETF_BACKUP_TICK_FAILED: '+String(err));
+        try {
+          if (typeof ewWatchdogNotify_ === 'function') ewWatchdogNotify_(err,new Date());
+        } catch (notifyError) {
+          console.error('ETF_WATCHDOG_EMAIL_FAILED: '+String(notifyError));
+        }
+      }
+    }
+  }
   return {closeSync:closeSync, monitor:monitor};
 }
 
