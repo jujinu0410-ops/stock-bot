@@ -128,10 +128,18 @@ function ycv12MaybeCollect_(){
       props.setProperty(YCV12.STATUS_KEY,status);
       return status;
     }
-    const before=String(props.getProperty('LAST_CANDIDATE_REFRESH_AT')||'');
-    refreshYouTubeCandidatePoolV2();
-    const after=String(props.getProperty('LAST_CANDIDATE_REFRESH_AT')||'');
-    if(!after||after===before)throw new Error('TWO_MAIL_V12_REFRESH_NOT_CONFIRMED');
+    const stockCount=fresh.reduce(function(n,m){return n+m.stocks.length;},0);
+    if(stockCount>0){
+      const before=String(props.getProperty('LAST_CANDIDATE_REFRESH_AT')||'');
+      refreshYouTubeCandidatePoolV2();
+      const after=String(props.getProperty('LAST_CANDIDATE_REFRESH_AT')||'');
+      if(!after||after===before)throw new Error('TWO_MAIL_V12_REFRESH_NOT_CONFIRMED');
+    } else {
+      // Zero-stock mail: clean expired rows without costly re-fetch of every live ticker.
+      const ss=SpreadsheetApp.getActiveSpreadsheet();
+      const sheet=ss.getSheetByName(YC.CANDIDATE_SHEET);
+      if(sheet)reclaimExpiredRowsV8_(sheet,parts.dateKey);
+    }
 
     const ids=Array.from(new Set(processed.concat(fresh.map(function(m){return m.id;})))).slice(-40);
     props.setProperty(YCV12.PROCESSED_DAY_KEY,parts.dateKey);
