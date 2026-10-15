@@ -1,7 +1,7 @@
 /*
  * YouTube candidate ingest V12: ONLY two daily mail sources.
  * A. Regular [경제 Intelligence] dated report, published >=08:00 KST
- * B. [경제 Intelligence] [08:45 증권사 리포트 종목수집], mailed 08:45-08:59 KST
+ * B. [경제 Intelligence] [08:45 증권사 리포트 종목수집], mailed 08:30-08:59 KST
  * Excludes former 08:50/10:50 expert-TV recommendations and all other reports.
  * Reuses existing 5-minute scheduled tick, Naver identity validation, row reuse,
  * 1-calendar-month candidate TTL, and 45-minute monitoring unchanged.
@@ -10,7 +10,7 @@ const YCV12 = Object.freeze({
   TZ: 'Asia/Seoul',
   SCAN_START: 8 * 60,
   SCAN_END: 15 * 60 + 30,
-  BROKER_START: 8 * 60 + 45,
+  BROKER_START: 8 * 60 + 30,
   BROKER_END_EXCLUSIVE: 9 * 60,
   POLL_INTERVAL_MS: 5 * 60 * 1000,
   POLL_KEY: 'TWO_MAIL_V12_LAST_POLL_MS',
