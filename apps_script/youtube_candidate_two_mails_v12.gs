@@ -1,7 +1,7 @@
 /*
  * YouTube candidate ingest V12: ONLY two daily mail sources.
  * A. Regular [경제 Intelligence] dated report, published >=08:00 KST
- * B. [경제 Intelligence] [08:45 증권사 리포트 종목수집], mailed 08:30-08:59 KST
+ * B. [경제 Intelligence] [08:45 증권사 리포트 종목수집], mailed 08:30-09:30 KST
  * Excludes former 08:50/10:50 expert-TV recommendations and all other reports.
  * Reuses existing 5-minute scheduled tick, Naver identity validation, row reuse,
  * 1-calendar-month candidate TTL, and 45-minute monitoring unchanged.
@@ -11,13 +11,13 @@ const YCV12 = Object.freeze({
   SCAN_START: 8 * 60,
   SCAN_END: 15 * 60 + 30,
   BROKER_START: 8 * 60 + 30,
-  BROKER_END_EXCLUSIVE: 9 * 60,
+  BROKER_END_EXCLUSIVE: 9 * 60 + 31,
   POLL_INTERVAL_MS: 5 * 60 * 1000,
   POLL_KEY: 'TWO_MAIL_V12_LAST_POLL_MS',
   PROCESSED_DAY_KEY: 'TWO_MAIL_V12_PROCESSED_DAY',
   PROCESSED_IDS_KEY: 'TWO_MAIL_V12_PROCESSED_IDS',
   STATUS_KEY: 'TWO_MAIL_V12_STATUS',
-  MAX_THREADS: 35,
+  MAX_THREADS: 100,
   MAX_STOCKS_IN_MAIL: 100
 });
 
@@ -52,9 +52,15 @@ function ycv12ParseBlock_(rawBody) {
 function ycv12TodayMails_(){
   if(ycv12MailCache_!==null)return ycv12MailCache_;
   const today=todayKeyV8_(), found=new Map();
-  const q='subject:"경제 Intelligence" newer_than:2d -in:trash -in:spam';
-  GmailApp.search(q,0,YCV12.MAX_THREADS).forEach(function(thread){
-    thread.getMessages().forEach(function(msg){
+  // Search the broker source independently; general intelligence traffic can
+  // push its mail outside the top-N Gmail threads on busy mornings.
+  const queries=[
+    'subject:"경제 Intelligence" newer_than:2d -in:trash -in:spam',
+    'subject:"증권사 리포트 종목수집" newer_than:2d -in:trash -in:spam'
+  ];
+  queries.forEach(function(q){
+    GmailApp.search(q,0,YCV12.MAX_THREADS).forEach(function(thread){
+      thread.getMessages().forEach(function(msg){
       const id=String(msg.getId()||''),type=ycv12Type_(msg.getSubject());
       if(!id||!type||found.has(id))return;
       const date=msg.getDate();
@@ -64,12 +70,18 @@ function ycv12TodayMails_(){
       const minute=hour*60+min;
       if(type==='REGULAR' && (minute<YCV12.SCAN_START||minute>YCV12.SCAN_END))return;
       if(type==='BROKER' && (minute<YCV12.BROKER_START||minute>=YCV12.BROKER_END_EXCLUSIVE))return;
+      // A stale subject-date must never be treated as today's recommendations.
+      if(type==='BROKER'){
+        const match=String(msg.getSubject()).match(/\]\s*(\d{4}-\d{2}-\d{2})(?:\s*[·|]|$)/);
+        if(!match||match[1]!==today)return;
+      }
       const parsed=ycv12ParseBlock_(msg.getPlainBody());
       if(!parsed.found) {
         Logger.log('TWO_MAIL_V12_SKIP_MISSING_BLOCK type='+type+' id='+id);
         return;
       }
       found.set(id,{id:id,type:type,date:today,time:minute,stocks:parsed.stocks});
+      });
     });
   });
   ycv12MailCache_=Array.from(found.values()).sort(function(a,b){return a.time-b.time||a.id.localeCompare(b.id);});
@@ -110,6 +122,28 @@ function collectIntelligenceCandidates_(){
   return pool;
 }
 
+// Mark a mail processed only after every listed ticker is present and active
+// with today's mention date. A timestamp-only refresh is not sufficient.
+function ycv12ConfirmFresh_(fresh,today){
+  const required=new Set();
+  fresh.forEach(function(mail){mail.stocks.forEach(function(stock){required.add(stock.code);});});
+  if(!required.size)return;
+  const ss=SpreadsheetApp.getActiveSpreadsheet(),sh=ss.getSheetByName(YC.CANDIDATE_SHEET);
+  if(!sh)throw new Error('TWO_MAIL_V12_CANDIDATES_MISSING');
+  SpreadsheetApp.flush();
+  const present=new Set();
+  const last=sh.getLastRow();
+  if(last>=YC.DATA_START_ROW){
+    sh.getRange(YC.DATA_START_ROW,1,last-YC.DATA_START_ROW+1,7).getDisplayValues().forEach(function(row){
+      const code=normalizeCandidateCode_(row[3]);
+      if(required.has(code)&&String(row[0]).trim().toUpperCase()==='Y'&&ymdFromAnyV8_(row[5])===today)
+        present.add(code);
+    });
+  }
+  const missing=Array.from(required).filter(function(code){return !present.has(code);});
+  if(missing.length)throw new Error('TWO_MAIL_V12_UNCONFIRMED_'+missing.join(','));
+}
+
 function ycv12MaybeCollect_(){
   const parts=seoulNowPartsV5_(new Date());
   if(!isWeekdayV5_(parts))return 'SKIP_NON_WEEKDAY';
@@ -134,6 +168,7 @@ function ycv12MaybeCollect_(){
       refreshYouTubeCandidatePoolV2();
       const after=String(props.getProperty('LAST_CANDIDATE_REFRESH_AT')||'');
       if(!after||after===before)throw new Error('TWO_MAIL_V12_REFRESH_NOT_CONFIRMED');
+      ycv12ConfirmFresh_(fresh,parts.dateKey);
     } else {
       // Zero-stock mail: clean expired rows without costly re-fetch of every live ticker.
       const ss=SpreadsheetApp.getActiveSpreadsheet();
