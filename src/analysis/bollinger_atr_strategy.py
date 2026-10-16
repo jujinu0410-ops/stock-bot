@@ -276,7 +276,7 @@ def _source_interval_minutes(source: str) -> Optional[int]:
     return None
 
 
-def prepare_completed_45m_data(raw_df: pd.DataFrame, source: str, cutoff_dt: datetime) -> Tuple[Optional[pd.DataFrame], str]:
+def prepare_completed_45m_data(raw_df: pd.DataFrame, source: str, cutoff_dt: datetime, *, allow_sparse_completed: bool = False) -> Tuple[Optional[pd.DataFrame], str]:
     """Aggregate validated start-labelled rows into end-labelled 45m bars."""
     if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
         return None, "REQUIRED_SOURCE_DATA_MISSING"
@@ -332,7 +332,10 @@ def prepare_completed_45m_data(raw_df: pd.DataFrame, source: str, cutoff_dt: dat
         if any(offset < 0 or offset >= 360 or offset % interval_minutes != 0 for offset in offsets):
             return None, "MALFORMED_INTERVAL"
         if len(daily) > 1 and not (daily.index.to_series().diff().dropna() == duration).all():
-            return None, "MALFORMED_INTERVAL"
+            if not allow_sparse_completed:
+                return None, "MALFORMED_INTERVAL"
+            # Individual complete 45m bins remain valid when a different bin
+            # has a missing 15m interval. Never invent bars to fill the gap.
         daily = daily.copy()
         daily["__slot"] = (offsets // 45).astype(int)
         for slot, group in daily.groupby("__slot", sort=True):
@@ -343,6 +346,8 @@ def prepare_completed_45m_data(raw_df: pd.DataFrame, source: str, cutoff_dt: dat
                 continue
             expected_index = pd.date_range(bin_start, periods=rows_per_candle, freq=f"{interval_minutes}min")
             if len(group) != rows_per_candle or not group.index.equals(expected_index):
+                if allow_sparse_completed:
+                    continue  # Exclude incomplete candle; never infer its OHLCV.
                 return None, "PARTIAL_BAR_CONTAMINATION"
             completed_rows.append((
                 bin_end, float(group["Open"].iloc[0]), float(group["High"].max()),
@@ -365,7 +370,7 @@ def prepare_completed_45m_data(raw_df: pd.DataFrame, source: str, cutoff_dt: dat
     return completed, "VALID"
 
 
-def get_strictly_sliced_45m_df(stock_code: str, cutoff_dt: datetime) -> Tuple[Optional[pd.DataFrame], str, str]:
+def get_strictly_sliced_45m_df(stock_code: str, cutoff_dt: datetime, *, allow_sparse_completed: bool = False) -> Tuple[Optional[pd.DataFrame], str, str]:
     analyzer = Intraday45mAnalyzer()
     if not hasattr(analyzer, "fetch_canonical_15m_data"):
         return None, "NONE", "REQUIRED_SOURCE_DATA_MISSING"
@@ -376,7 +381,9 @@ def get_strictly_sliced_45m_df(stock_code: str, cutoff_dt: datetime) -> Tuple[Op
         return None, "NONE", "INTRADAY_FETCH_FAILED"
     if fetch_error != "NONE" or raw_df is None:
         return None, str(source or "NONE"), str(fetch_error or "REQUIRED_SOURCE_DATA_MISSING")
-    completed, quality = prepare_completed_45m_data(raw_df, str(source), cutoff_dt)
+    completed, quality = prepare_completed_45m_data(
+        raw_df, str(source), cutoff_dt, allow_sparse_completed=allow_sparse_completed
+    )
     return completed, str(source), quality
 
 

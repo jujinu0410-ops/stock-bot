@@ -1,0 +1,9 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'scripts/Dockerfile.youtube-signal-sparse-45m', '-t', 'asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:sparse-vwap45-20261016', '.']
+  - name: gcr.io/cloud-builders/docker
+    args: ['run', '--rm', '--entrypoint', 'python', '-e', 'PYTHONWARNINGS=ignore', '-e', 'PYTHONPATH=/app', 'asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:sparse-vwap45-20261016', '/opt/test_sparse_45m.py']
+images:
+  - 'asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:sparse-vwap45-20261016'
+options:
+  logging: CLOUD_LOGGING_ONLY

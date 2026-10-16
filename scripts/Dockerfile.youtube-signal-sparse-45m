@@ -1,0 +1,7 @@
+FROM asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service@sha256:116536310e6faa4a57f4322e88c058965070e158dc4ba36581827a86dedf9514
+USER root
+COPY --chown=stockbot:stockbot src/analysis/bollinger_atr_strategy.py /app/src/analysis/bollinger_atr_strategy.py
+COPY scripts/patch_live_45m_vwap_20261016.py /opt/patch_live_45m_vwap_20261016.py
+COPY tests/test_sparse_completed_45m.py /opt/test_sparse_45m.py
+RUN python /opt/patch_live_45m_vwap_20261016.py && python -m py_compile /app/src/analysis/bollinger_atr_strategy.py /app/services/youtube_signal_service.py
+USER stockbot
