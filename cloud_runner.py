@@ -325,6 +325,38 @@ class CloudRunner:
             "message": "Resumed from prepared dispatch after prior state commit.",
         }
 
+    def _run_postmarket_outcome_maintenance(self, db: DatabaseManager) -> Optional[Dict[str, Any]]:
+        """Run SHADOW outcome attribution before the POSTMARKET state commit.
+
+        This is intentionally fail-isolated: report generation and dispatch continue
+        even when maintenance fails, but the failure is logged and returned in bundle
+        metadata for observability.
+        """
+        if self.report_mode != "POSTMARKET":
+            return None
+
+        try:
+            from src.runtime.runtime_scheduler import RuntimeScheduler
+
+            logger.info("[CloudRunner POSTMARKET] Running Outcome Maintenance before GCS commit...")
+            scheduler = RuntimeScheduler(db_manager=db)
+            result = scheduler._execute_outcome_maintenance(is_manual=self.force)
+            if result.get("status") != "SUCCESS":
+                logger.warning(
+                    "[CloudRunner POSTMARKET] Outcome Maintenance degraded: %s",
+                    result,
+                )
+            else:
+                logger.info(
+                    "[CloudRunner POSTMARKET] Outcome Maintenance completed: %s/%s journals evaluated.",
+                    result.get("outcomes_evaluated", 0),
+                    result.get("total_journals", 0),
+                )
+            return result
+        except Exception as exc:
+            logger.exception("[CloudRunner POSTMARKET] Outcome Maintenance failed but report will continue.")
+            return {"status": "FAILED", "error": str(exc)}
+
     def _run_fresh(
         self,
         manifest: Dict[str, Any],
@@ -396,6 +428,8 @@ class CloudRunner:
             },
         )
 
+        outcome_maintenance = self._run_postmarket_outcome_maintenance(db)
+
         self.state_adapter._validate_sqlite_integrity()
 
         logger.info("[CloudRunner FRESH] Committing state bundle to GCS (CAS)...")
@@ -407,6 +441,12 @@ class CloudRunner:
                 "dispatch_id": self.dispatch_id,
                 "held_count": len(held_status),
                 "signals_count": len(caught_signals),
+                "outcome_maintenance_status": (
+                    outcome_maintenance.get("status") if outcome_maintenance else "NOT_APPLICABLE"
+                ),
+                "outcomes_evaluated": (
+                    outcome_maintenance.get("outcomes_evaluated", 0) if outcome_maintenance else 0
+                ),
             },
         )
 
