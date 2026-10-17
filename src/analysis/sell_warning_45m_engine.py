@@ -234,7 +234,12 @@ class SellWarning45mEngine:
             result["reason_codes"] = str(fetch_error or "REQUIRED_SOURCE_DATA_MISSING")
             return result
 
-        completed, quality = prepare_completed_45m_data(raw_df, str(source), cutoff)
+        completed, quality = prepare_completed_45m_data(
+            raw_df,
+            str(source),
+            cutoff,
+            allow_sparse_completed=True,
+        )
         if completed is None or quality != "VALID":
             result["reason_codes"] = quality
             result["data_quality"] = f"INVALID ({quality})"

@@ -1536,6 +1536,30 @@ class IndustryRadarEngine:
                 "mapping_version": "V1.0"
             },
             {
+                "industry_id": "POWER_EQUIPMENT",
+                "stock_code": "010120",
+                "stock_name": "LS ELECTRIC",
+                "exposure_type": "DIRECT_CORE",
+                "evidence_rationale": "Explicit power-equipment mapping; no generic fallback.",
+                "mapping_version": "V1.0"
+            },
+            {
+                "industry_id": "SHIPBUILDING",
+                "stock_code": "010140",
+                "stock_name": "삼성중공업",
+                "exposure_type": "DIRECT_CORE",
+                "evidence_rationale": "Explicit shipbuilding mapping; no generic fallback.",
+                "mapping_version": "V1.0"
+            },
+            {
+                "industry_id": "BIO_CDMO",
+                "stock_code": "207940",
+                "stock_name": "삼성바이오로직스",
+                "exposure_type": "DIRECT_CORE",
+                "evidence_rationale": "Explicit bio-CDMO mapping; no generic fallback.",
+                "mapping_version": "V1.0"
+            },
+            {
                 "industry_id": "GENERAL_MANUFACTURING",
                 "stock_code": "000490",
                 "stock_name": "대동",
@@ -1916,7 +1940,7 @@ class IndustryRadarEngine:
     def synthesize_shadow_state(
         self,
         industry_gate: str,
-        industry_score: float,
+        industry_score: Optional[float],
         exposure_type: str,
         fundamental_state: str,
         f_score: float,
@@ -1969,7 +1993,9 @@ class IndustryRadarEngine:
 
         # 3. 비차단 정상 통과 상태 판정
         primary_blocker = "NONE"
-        if industry_gate == "INDUSTRY_WAIT":
+        if industry_gate == "INDUSTRY_UNRATED":
+            shadow_state = "INDUSTRY_UNRATED"
+        elif industry_gate == "INDUSTRY_WAIT":
             shadow_state = "INDUSTRY_WAIT"
         elif technical_action in ["BUY_WAIT", "BUY_WAIT_DATA"]:
             shadow_state = "TECHNICAL_WAIT"
@@ -2004,11 +2030,35 @@ class IndustryRadarEngine:
         code = str(stock_code).zfill(6)
         mapping = self.db.get_company_industry_mapping(code, as_of_date=as_of_date, version=mapping_version)
         if not mapping:
-            # 기본 폴백: 일반 제조업 (GENERAL_MANUFACTURING)
-            industry_id = "GENERAL_MANUFACTURING"
-            exposure_type = "DIRECT_CORE"
-            evidence_rationale = "기본 산업 매핑 (GENERAL_MANUFACTURING)"
-            map_ver = "V1.0"
+            return {
+                "run_id": "NONE",
+                "industry_id": "UNMAPPED",
+                "industry_name": "UNMAPPED",
+                "exposure_type": "UNMAPPED",
+                "evidence_rationale": "No explicit industry mapping; industry gate is unrated.",
+                "mapping_version": "UNMAPPED",
+                "total_score": None,
+                "policy_continuity": None,
+                "earnings_linkage": None,
+                "visibility_order_revenue": None,
+                "catalysts_score": None,
+                "valuation_burden": None,
+                "downside_risk_score": None,
+                "industry_bucket": "UNRATED",
+                "industry_gate": "INDUSTRY_UNRATED",
+                "industry_confidence": "LOW",
+                "live_fetched_pct": 0.0,
+                "reference_verified_pct": 0.0,
+                "internal_derived_pct": 0.0,
+                "manual_evidence_pct": 0.0,
+                "synthetic_evidence_pct": 0.0,
+                "fresh_evidence_pct": 0.0,
+                "replay_verified_pct": 0.0,
+                "replay_failed_pct": 0.0,
+                "driver_count": 0,
+                "evidence_count": 0,
+                "qa_status": "UNMAPPED",
+            }
         else:
             industry_id = mapping["industry_id"]
             exposure_type = mapping["exposure_type"]
