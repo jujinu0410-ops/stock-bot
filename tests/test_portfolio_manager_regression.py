@@ -183,7 +183,9 @@ class TestPortfolioManagerRegression(unittest.TestCase):
                                 with patch('src.notifications.gmail_notifier.GmailNotifier.send_email', return_value=False):
                                     with patch('src.notifications.gmail_notifier.GmailNotifier.send_failure_alert'):
                                         with self.assertRaises(RuntimeError) as cm:
-                                            main.run_post_market_analysis(force=True)
+                                            # This legacy-send regression uses the postmarket
+                                            # fixture regardless of the wall-clock hour.
+                                            main.run_post_market_analysis(force=True, report_session="1535")
                                         self.assertIn("지메일 발송 실패", str(cm.exception))
 
 if __name__ == "__main__":
