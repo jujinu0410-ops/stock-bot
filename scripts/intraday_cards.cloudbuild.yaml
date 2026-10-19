@@ -4,7 +4,7 @@ steps:
     args: [build, -f, scripts/intraday_cards.Dockerfile, --target, test, -t, intraday-cards-test, .]
   - name: gcr.io/cloud-builders/docker
     id: isolated-regression
-    args: [run, --rm, intraday-cards-test]
+    args: [run, --rm, --network=none, intraday-cards-test]
   - name: gcr.io/cloud-builders/docker
     id: build-runtime
     args: [build, -f, scripts/intraday_cards.Dockerfile, --target, runtime, -t, '${_IMAGE}', .]
