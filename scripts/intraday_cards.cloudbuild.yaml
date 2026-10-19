@@ -1,0 +1,16 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: build-test
+    args: [build, -f, scripts/intraday_cards.Dockerfile, --target, test, -t, intraday-cards-test, .]
+  - name: gcr.io/cloud-builders/docker
+    id: isolated-regression
+    args: [run, --rm, --network=none, intraday-cards-test]
+  - name: gcr.io/cloud-builders/docker
+    id: build-runtime
+    args: [build, -f, scripts/intraday_cards.Dockerfile, --target, runtime, -t, '${_IMAGE}', .]
+images: ['${_IMAGE}']
+substitutions:
+  _IMAGE: asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/stockbot-cloud-runner:intraday-cards-20261019
+timeout: 1800s
+options:
+  logging: CLOUD_LOGGING_ONLY

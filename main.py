@@ -253,6 +253,9 @@ def verify_pipeline_stock_code_consistency(
     # 6. 본문 노출 대응카드 완전성 및 중복 검증 (expected == rendered)
     expected_action_codes = {str(h["stock_code"]).strip().zfill(6) for h in held_status if is_meaningful_action_item(h)}
     rendered_action_list = re.findall(r'data-stock-code="(\d{6})"', html_report)
+    if 'data-intraday-layout="cards"' in html_report:
+        expected_action_codes = held_status_codes
+        rendered_action_list = re.findall(r'data-holding-code="(\d{6})"', html_report)
     seen_action_cards = set()
     duplicate_action_cards = set()
     for c in rendered_action_list:
@@ -731,6 +734,16 @@ def run_post_market_analysis(
         except Exception as e_disc:
             logger.warning(f"DART 공시 브리핑 수집 중 오류: {e_disc}")
 
+        # Display-only intraday inputs. Postmarket calls retain their original kwargs.
+        intraday_render_args = {}
+        if canonical_session in ("1120", "1335"):
+            from src.notifications.intraday_data import load_recent_alerts, prepare_intraday_holdings
+            intraday_render_args = {
+                "report_session": canonical_session,
+                "recent_alerts": load_recent_alerts(now_dt),
+                "intraday_holdings": prepare_intraday_holdings(held_status, raw_kiwoom_positions),
+                "intraday_db_manager": db,
+            }
         html_report = notifier.generate_html_report(
             date_str=report_timestamp_str,
             total_count=len(all_results),
@@ -738,7 +751,8 @@ def run_post_market_analysis(
             all_results=all_results,
             held_portfolio=held_status,
             disclosures=disclosures,
-            policy_display=policy_display
+            policy_display=policy_display,
+            **intraday_render_args,
         )
 
         render_version = getattr(notifier, "render_version", EMAIL_RENDER_VERSION)

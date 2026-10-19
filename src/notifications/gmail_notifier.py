@@ -190,6 +190,10 @@ class GmailNotifier:
         disclosures: Optional[List[Dict[str, Any]]] = None,
         policy_display: Optional[Dict[str, Any]] = None,
         marketcap_radar_items: Optional[List[Dict[str, Any]]] = None,
+        report_session: Optional[str] = None,
+        recent_alerts: Optional[Dict[str, Any]] = None,
+        intraday_holdings: Optional[List[Dict[str, Any]]] = None,
+        intraday_db_manager: Any = None,
     ) -> str:
         """
         환경변수 EMAIL_RENDER_VERSION에 따라 V1 또는 V2 렌더러로 라우팅 (V2 예외 시 V1 Fallback 절대 금지 및 RuntimeError 발생)
@@ -201,6 +205,14 @@ class GmailNotifier:
         if render_ver == "V2":
             self.fallback_occurred = False
             try:
+                if report_session in ("1120", "1335"):
+                    from src.notifications.intraday_renderer import generate_intraday_html_report
+                    return generate_intraday_html_report(
+                        date_str=date_str,
+                        held_portfolio=intraday_holdings if intraday_holdings is not None else held_portfolio,
+                        disclosures=disclosures, policy_display=policy_display,
+                        recent_alerts=recent_alerts, db_manager=intraday_db_manager,
+                    )
                 return generate_mobile_html_report_v2(
                     date_str=date_str,
                     total_count=total_count,
