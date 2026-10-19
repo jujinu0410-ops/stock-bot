@@ -116,7 +116,7 @@ class ScanResultDTO:
     forward_lineage: Dict[str, Any] = field(default_factory=dict)
 
     # Phase 6, 6.1, 6.2 & 6.3: Weekly Industry Radar & Integrated Shadow Matrix Layer
-    industry_score: float = 0.0
+    industry_score: Optional[float] = 0.0
     industry_gate: str = "INDUSTRY_WAIT"
     industry_bucket: str = "WATCH"
     industry_confidence: str = "UNKNOWN"

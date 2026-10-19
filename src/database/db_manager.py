@@ -1075,6 +1075,14 @@ class DatabaseManager:
                 :financial_data_asof, :forward_data_asof, :intraday_last_timestamp, :scoring_versions
             )
         """
+        def _f0(key: str, default: float = 0.0) -> float:
+            val = entry.get(key)
+            return float(val) if val is not None else default
+
+        def _f_nullable(key: str) -> Optional[float]:
+            val = entry.get(key)
+            return float(val) if val is not None else None
+
         params = {
             "journal_id": entry["journal_id"],
             "scan_timestamp": entry.get("scan_timestamp", ""),
@@ -1082,9 +1090,9 @@ class DatabaseManager:
             "snapshot_reason": entry.get("snapshot_reason", "MANUAL"),
             "stock_code": str(entry["stock_code"]).zfill(6),
             "stock_name": entry.get("stock_name", ""),
-            "market_price": float(entry.get("market_price", 0.0)),
+            "market_price": _f0("market_price", 0.0),
             "industry_run_id": entry.get("industry_run_id", "PROD_2026_W33_001"),
-            "industry_score": float(entry.get("industry_score", 0.0)),
+            "industry_score": _f_nullable("industry_score"),
             "industry_gate": entry.get("industry_gate", "INDUSTRY_WAIT"),
             "industry_confidence": entry.get("industry_confidence", "UNKNOWN"),
             "exposure_type": entry.get("exposure_type", "DIRECT_CORE"),
@@ -1097,21 +1105,21 @@ class DatabaseManager:
             "forward_risk": entry.get("forward_risk", "NONE"),
             "forward_risk_override_tag": entry.get("forward_risk_override_tag", "NONE"),
             "book_to_bill_summary": entry.get("book_to_bill_summary", "NOT_APPLICABLE"),
-            "t_score": float(entry.get("t_score", 0.0)),
+            "t_score": _f0("t_score", 0.0),
             "technical_state": entry.get("technical_state", "NEUTRAL"),
             "technical_action": entry.get("technical_action", "BUY_BLOCKED"),
             "intraday_data_quality": entry.get("intraday_data_quality", "VALID"),
-            "atr14": float(entry.get("atr14", 0.0)),
-            "natr": float(entry.get("natr", 0.0)),
-            "candidate_ref_price": float(entry.get("candidate_ref_price", 0.0)),
-            "candidate_stop_price": float(entry.get("candidate_stop_price", 0.0)),
-            "candidate_target_price": float(entry.get("candidate_target_price", 0.0)),
+            "atr14": _f0("atr14", 0.0),
+            "natr": _f0("natr", 0.0),
+            "candidate_ref_price": _f0("candidate_ref_price", 0.0),
+            "candidate_stop_price": _f0("candidate_stop_price", 0.0),
+            "candidate_target_price": _f0("candidate_target_price", 0.0),
             "atr_mode": entry.get("atr_mode", "NORMAL"),
             "shadow_integrated_state": entry.get("shadow_integrated_state", "DATA_REVIEW"),
             "primary_blocker": entry.get("primary_blocker", "NONE"),
             "all_blockers": json.dumps(entry.get("all_blockers", []), ensure_ascii=False) if isinstance(entry.get("all_blockers"), list) else entry.get("all_blockers", "[]"),
-            "existing_f_score": float(entry.get("existing_f_score", 0.0)),
-            "existing_final_score": float(entry.get("existing_final_score", 0.0)),
+            "existing_f_score": _f0("existing_f_score", 0.0),
+            "existing_final_score": _f0("existing_final_score", 0.0),
             "buy_approval": entry.get("buy_approval", "🔴 OFF (매수 금지/관망)"),
             "p0_status": entry.get("p0_status", "NONE"),
             "position_cycle_id": entry.get("position_cycle_id", "NONE"),

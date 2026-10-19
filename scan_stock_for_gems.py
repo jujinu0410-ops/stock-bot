@@ -295,8 +295,9 @@ def _scan_stock_dto_core(stock_code_or_name: str, db: DatabaseManager) -> ScanRe
     primary_blocker = shadow_res["primary_blocker"]
     all_blockers = shadow_res["all_blockers"]
 
+    ind_score_label = f"{ind_profile['total_score']:.1f}점" if ind_profile.get("total_score") is not None else "UNRATED"
     shadow_lineage = {
-        "industry": f"{ind_profile['industry_gate']} / {ind_profile['total_score']:.1f}점 / {ind_profile['industry_confidence']}",
+        "industry": f"{ind_profile['industry_gate']} / {ind_score_label} / {ind_profile['industry_confidence']}",
         "exposure_type": ind_profile["exposure_type"],
         "mapping_version": ind_profile.get("mapping_version", "V1.0"),
         "fundamental": fund_evidence["fundamental_state"],

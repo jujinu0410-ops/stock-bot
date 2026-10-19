@@ -88,13 +88,14 @@ def render_gems_markdown(dto: ScanResultDTO) -> str:
     else:
         recent_disc_str = "     - 최근 특이 수시공시 없음"
 
+    ind_score_str = f"{dto.industry_score:.1f}점" if dto.industry_score is not None else "UNRATED"
     report = f"""================================================================================
 🤖 [Gemini Gems 전용 정밀 진단 프롬프트 데이터] 
 종목명: {dto.stock_name} ({dto.stock_code}) | 수집시각: {dto.collected_at}
 ================================================================================
 
 0. 🛰️ Weekly Industry Radar & Integrated Shadow Matrix (Phase 7 Shadow Journal & Outcome Attribution)
-   • 소속 산업 Profile: {dto.industry_profile} (Score: {dto.industry_score:.1f}점 | Bucket: {dto.industry_bucket} | Gate: {dto.industry_gate} | Confidence: {dto.industry_confidence})
+   • 소속 산업 Profile: {dto.industry_profile} (Score: {ind_score_str} | Bucket: {dto.industry_bucket} | Gate: {dto.industry_gate} | Confidence: {dto.industry_confidence})
    • Evidence Provenance QA: LiveFetched {dto.live_fetched_pct:.1f}% | RefVerified {dto.reference_verified_pct:.1f}% | InternalDerived {dto.internal_derived_pct:.1f}% | Manual {dto.manual_evidence_pct:.1f}% | Synthetic {dto.synthetic_evidence_pct:.1f}% | ReplayVerified {dto.replay_verified_pct:.1f}% | Drivers: {dto.driver_count}개 (QA: {dto.qa_status})
    • 기업 Exposure Type: {dto.exposure_type} (Mapping Ver: {dto.mapping_version})
    • Industry vs Forward 교차검증: {dto.cross_validation_state}
