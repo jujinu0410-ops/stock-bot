@@ -159,14 +159,16 @@ class TestGemsScannerIsolation(unittest.TestCase):
                 os.environ["STOCKBOT_TEST_MODE"] = old_mode
 
     def test_06_gems_scanner_mode_blocks_operational_db_direct_access(self):
-        """6. GEMS_SCANNER_MODE=1 환경에서 DatabaseManager 기본 생성 시 운영 DB 접근 Fail-Fast 차단 검증"""
+        """6. GEMS_SCANNER_MODE=1 환경에서 운영 DB 직접 접근 Fail-Fast 차단 검증"""
         old_test_mode = os.environ.get("STOCKBOT_TEST_MODE")
         old_scanner_mode = os.environ.get("GEMS_SCANNER_MODE")
         try:
             os.environ.pop("STOCKBOT_TEST_MODE", None)
             os.environ["GEMS_SCANNER_MODE"] = "1"
             with self.assertRaises(RuntimeError) as cm:
-                DatabaseManager()
+                # DB_PATH may point at isolated cloud state. Explicitly test
+                # the operational checkout path that this guard protects.
+                DatabaseManager(str(OPERATIONAL_DB_PATH))
             self.assertIn("GEMS_SCANNER_MODE=1", str(cm.exception))
             self.assertIn("운영 DB 접근이 차단되었습니다", str(cm.exception))
         finally:
