@@ -7,7 +7,7 @@ COPY --chown=stockbot:stockbot src/notifications/gmail_notifier.py src/notificat
 FROM runtime AS test
 ENV STOCKBOT_TEST_MODE=1 STOCKBOT_CLOUD_MODE=1 KIWOOM_USE_MOCK=True
 # The offline test container has no metadata service or live credentials.
-ENV GCE_METADATA_TIMEOUT=1 GCE_METADATA_DETECT_RETRIES=1
+ENV NO_GCE_CHECK=true GCE_METADATA_TIMEOUT=1 GCE_METADATA_DETECT_RETRIES=1
 COPY --chown=stockbot:stockbot tests/ /app/tests/
 COPY --chown=stockbot:stockbot scripts/run_tests_isolated.py /app/scripts/run_tests_isolated.py
 ENTRYPOINT ["python", "scripts/run_tests_isolated.py"]
