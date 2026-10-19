@@ -73,8 +73,21 @@ def previous_day(now):
     raise ValueError("PREVIOUS_TRADING_DAY_UNAVAILABLE")
 
 
+_HTTP_LOCAL = threading.local()
+
+
+def _daily_http_get(url, *, params, headers, timeout):
+    if getattr(requests.get, "__module__", "") != "requests.api":
+        return requests.get(url, params=params, headers=headers, timeout=timeout)
+    session = getattr(_HTTP_LOCAL, "session", None)
+    if session is None:
+        session = requests.Session()
+        _HTTP_LOCAL.session = session
+    return session.get(url, params=params, headers=headers, timeout=timeout)
+
+
 def daily_frame(ticker):
-    r = requests.get("https://fchart.stock.naver.com/sise.nhn",
+    r = _daily_http_get("https://fchart.stock.naver.com/sise.nhn",
         params={"symbol": ticker, "timeframe": "day", "count": 90, "requestType": 0},
         headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
     r.raise_for_status()
@@ -216,7 +229,7 @@ def scan(payload, service, now=None):
             events.append({"key": "MARKET_CRASH", "stage": "RISK", "reason": "코스피200 급락 위험", "level": level})
     daily, atr, anchor, ref = {}, number(payload.get("atr14")), None, None
     try:
-        df = cached(("daily", ticker, now.date().isoformat()), 240, lambda: daily_frame(ticker)).copy()
+        df = cached(("daily", ticker, now.date().isoformat()), 600, lambda: daily_frame(ticker)).copy()
         atr, anchor, ref = atr_and_anchor(df, now)
         if df.index[-1].date() > now.date(): raise ValueError("FUTURE_DAILY_BAR")
         if price and df.index[-1].date() == now.date():
@@ -239,7 +252,7 @@ def scan(payload, service, now=None):
             # results for 15m; a new completed cutoff always creates a new key.
             # Failures are never cached, so subsequent runs can recover.
             frame, source, quality = cached(("45m", ticker, cutoff.isoformat()), 900,
-                lambda: service.get_strictly_sliced_45m_df(ticker, cutoff),
+                lambda: service.get_strictly_sliced_45m_df(ticker, cutoff, allow_sparse_completed=True),
                 cache_if=lambda r: r[0] is not None and r[2] == "VALID")
             if frame is not None and quality == "VALID" and len(frame) >= 28:
                 values = indicators(frame)

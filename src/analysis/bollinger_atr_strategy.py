@@ -429,7 +429,9 @@ def generate_bb_atr_advisory(
         return make_no_advisory(item, asof_dt, session_code, "REPORT_BEFORE_COMPLETED_CUTOFF")
 
     completed, source, quality = get_strictly_sliced_45m_df(
-        str(item.get("stock_code") or "").zfill(6), cutoff
+        str(item.get("stock_code") or "").zfill(6),
+        cutoff,
+        allow_sparse_completed=True,
     )
     if completed is None:
         return make_no_advisory(item, asof_dt, session_code, quality)

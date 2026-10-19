@@ -83,5 +83,117 @@ class Sparse45mSafety(unittest.TestCase):
         finally:
             mod.Intraday45mAnalyzer=original
 
+    def test_generate_bb_atr_advisory_passes_allow_sparse_completed(self):
+        frame = raw_bars().drop(pd.Timestamp("2026-10-15 12:45"))
+        class FakeAnalyzer:
+            def fetch_canonical_15m_data(self, code):
+                return frame, SOURCE, "NONE"
+        original = mod.Intraday45mAnalyzer
+        try:
+            mod.Intraday45mAnalyzer = FakeAnalyzer
+            item = {
+                "stock_code": "003230",
+                "stock_name": "삼양식품",
+                "avg_buy_price": 9000.0,
+                "current_price": 9100.0,
+                "current_completed_atr": 200.0,
+                "effective_exit_line": 8800.0,
+                "is_etf": False,
+                "trade_mode": "NORMAL",
+                "data_validity_flag": 1,
+                "data_hold_reason": "정상",
+                "is_stop_breached": False,
+                "action_status": "계속 보유",
+            }
+            asof = datetime(2026, 10, 16, 13, 35, tzinfo=ZoneInfo("Asia/Seoul"))
+            res = mod.generate_bb_atr_advisory(item, asof, "1335")
+            self.assertEqual(res["data_quality"], "VALID")
+            self.assertEqual(res["completed_45m_timestamp"], "2026-10-16 13:30:00")
+        finally:
+            mod.Intraday45mAnalyzer = original
+
+    def test_intraday_analyzer_yfinance_10d_and_naver_volume_diff(self):
+        from unittest.mock import MagicMock, patch
+        from src.analysis.intraday_analysis import Intraday45mAnalyzer, _compute_naver_bar_volumes
+
+        analyzer = Intraday45mAnalyzer()
+        history_calls = []
+        class FakeTicker:
+            def __init__(self, sym):
+                self.sym = sym
+            def history(self, interval="15m", period="5d"):
+                history_calls.append((self.sym, interval, period))
+                return pd.DataFrame()
+
+        with patch("src.analysis.intraday_analysis.yf.Ticker", FakeTicker):
+            analyzer._fetch_from_yfinance("005930")
+        self.assertTrue(all(call[2] == "10d" for call in history_calls))
+
+        # Naver cumulative volume diff: day 1 normal + inversion + gap, day 2 reset + mid-day start
+        naver_rows = []
+        # Day 1 starting at 09:00:00 (1-min step)
+        base1 = pd.Timestamp("2026-10-15 09:00:00")
+        cums1 = [
+            (0, 1000),   # 09:00 -> 1000
+            (1, 1500),   # 09:01 -> 500
+            (2, 1300),   # 09:02 -> negative inversion (-200) -> 0
+            (3, 1800),   # 09:03 -> 500
+            (6, 9000),   # 09:06 -> gap of 3m (> 1m step) -> 0
+        ]
+        for idx in range(7, 20):
+            cums1.append((idx, 9000 + (idx - 6) * 100))
+        for minute_offset, cum_val in cums1:
+            ts = (base1 + pd.Timedelta(minutes=minute_offset)).strftime("%Y%m%d%H%M%S")
+            naver_rows.append({
+                "localDateTime": ts,
+                "openPrice": "10000",
+                "highPrice": "10100",
+                "lowPrice": "9900",
+                "currentPrice": "10050",
+                "accumulatedTradingVolume": str(cum_val),
+            })
+        # Day 2 starting at 09:00:00 (reset)
+        base2 = pd.Timestamp("2026-10-16 09:00:00")
+        naver_rows.append({
+            "localDateTime": base2.strftime("%Y%m%d%H%M%S"),
+            "openPrice": "10000", "highPrice": "10100", "lowPrice": "9900",
+            "currentPrice": "10050", "accumulatedTradingVolume": "700",
+        })
+        naver_rows.append({
+            "localDateTime": (base2 + pd.Timedelta(minutes=1)).strftime("%Y%m%d%H%M%S"),
+            "openPrice": "10000", "highPrice": "10100", "lowPrice": "9900",
+            "currentPrice": "10050", "accumulatedTradingVolume": "1100",
+        })
+        # Day 3 starting mid-day at 10:30:00 (missing earlier morning bars -> first bar must be 0.0)
+        base3 = pd.Timestamp("2026-10-19 10:30:00")
+        naver_rows.append({
+            "localDateTime": base3.strftime("%Y%m%d%H%M%S"),
+            "openPrice": "10000", "highPrice": "10100", "lowPrice": "9900",
+            "currentPrice": "10050", "accumulatedTradingVolume": "85000",
+        })
+        naver_rows.append({
+            "localDateTime": (base3 + pd.Timedelta(minutes=1)).strftime("%Y%m%d%H%M%S"),
+            "openPrice": "10000", "highPrice": "10100", "lowPrice": "9900",
+            "currentPrice": "10050", "accumulatedTradingVolume": "85400",
+        })
+
+        fake_resp = MagicMock()
+        fake_resp.status_code = 200
+        fake_resp.json.return_value = list(reversed(naver_rows))  # reverse order from API
+        with patch("src.analysis.intraday_analysis.requests.get", return_value=fake_resp):
+            df_naver, src = analyzer._fetch_from_naver_api("005930")
+
+        self.assertEqual(src, "NAVER_MINUTE_API")
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-15 09:00:00"), "Volume"], 1000.0)
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-15 09:01:00"), "Volume"], 500.0)
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-15 09:02:00"), "Volume"], 0.0)
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-15 09:03:00"), "Volume"], 500.0)
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-15 09:06:00"), "Volume"], 0.0)
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-15 09:07:00"), "Volume"], 100.0)
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-16 09:00:00"), "Volume"], 700.0)
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-16 09:01:00"), "Volume"], 400.0)
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-19 10:30:00"), "Volume"], 0.0)
+        self.assertEqual(df_naver.loc[pd.Timestamp("2026-10-19 10:31:00"), "Volume"], 400.0)
+
 if __name__=="__main__":
     unittest.main(verbosity=2)

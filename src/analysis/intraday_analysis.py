@@ -1,9 +1,66 @@
+import math
+import threading
 import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from typing import Dict, Any, List, Optional, Tuple
 from src.utils.logger import logger
+
+_NAVER_HTTP_LOCAL = threading.local()
+
+
+def _naver_http_get(url: str, *, headers: Dict[str, str], timeout: float) -> requests.Response:
+    if getattr(requests.get, "__module__", "") != "requests.api":
+        return requests.get(url, headers=headers, timeout=timeout)
+    session = getattr(_NAVER_HTTP_LOCAL, "session", None)
+    if session is None:
+        session = requests.Session()
+        _NAVER_HTTP_LOCAL.session = session
+    return session.get(url, headers=headers, timeout=timeout)
+
+
+def _compute_naver_bar_volumes(df: pd.DataFrame, cum_col: str = "AccumulatedVolume") -> pd.Series:
+    """Convert Naver cumulative daily volume into per-bar volume safely."""
+    if df.empty or cum_col not in df.columns:
+        return pd.Series(dtype=float, index=df.index)
+    volumes = pd.Series(0.0, index=df.index, dtype=float)
+    for trading_day, group in df.groupby(df.index.normalize(), sort=True):
+        if group.empty:
+            continue
+        if len(group) > 1:
+            diffs = group.index.to_series().diff().dropna()
+            pos_diffs = diffs[diffs > pd.Timedelta(0)]
+            expected_step = pos_diffs.min() if not pos_diffs.empty else pd.Timedelta(minutes=1)
+        else:
+            expected_step = pd.Timedelta(minutes=1)
+
+        day_open = pd.Timestamp(trading_day) + pd.Timedelta(hours=9)
+        cum_vals = pd.to_numeric(group[cum_col], errors="coerce").to_numpy(dtype=float)
+        stamps = group.index
+
+        first_cum = float(cum_vals[0]) if len(cum_vals) else 0.0
+        if stamps[0] <= day_open + expected_step and math.isfinite(first_cum) and first_cum >= 0.0:
+            volumes.loc[stamps[0]] = first_cum
+        else:
+            volumes.loc[stamps[0]] = 0.0
+
+        for idx in range(1, len(group)):
+            time_gap = stamps[idx] - stamps[idx - 1]
+            prev_val = float(cum_vals[idx - 1])
+            curr_val = float(cum_vals[idx])
+            raw_diff = curr_val - prev_val
+            if (
+                not math.isfinite(raw_diff)
+                or raw_diff < 0.0
+                or time_gap <= pd.Timedelta(0)
+                or time_gap > expected_step
+            ):
+                volumes.loc[stamps[idx]] = 0.0
+            else:
+                volumes.loc[stamps[idx]] = raw_diff
+    return volumes
+
 
 class Intraday45mAnalyzer:
     """
@@ -91,7 +148,7 @@ class Intraday45mAnalyzer:
         for sym in candidates:
             try:
                 ticker = yf.Ticker(sym)
-                df_15m = ticker.history(interval="15m", period="5d")
+                df_15m = ticker.history(interval="15m", period="10d")
                 if not df_15m.empty and len(df_15m) >= 15:
                     df_clean = df_15m[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
                     if len(df_clean) >= 15:
@@ -107,7 +164,7 @@ class Intraday45mAnalyzer:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
         try:
-            r = requests.get(url, headers=headers, timeout=5)
+            r = _naver_http_get(url, headers=headers, timeout=5)
             if r.status_code == 200:
                 data = r.json()
                 if isinstance(data, list) and len(data) >= 15:
@@ -121,9 +178,12 @@ class Intraday45mAnalyzer:
                             "High": float(item.get("highPrice")),
                             "Low": float(item.get("lowPrice")),
                             "Close": float(item.get("currentPrice")),
-                            "Volume": float(item.get("accumulatedTradingVolume", 0))
+                            "AccumulatedVolume": float(item.get("accumulatedTradingVolume", 0)),
                         })
-                    df = pd.DataFrame(rows).set_index("Datetime").sort_index()
+                    df = pd.DataFrame(rows).set_index("Datetime")
+                    df = df[~df.index.duplicated(keep="last")].sort_index()
+                    df["Volume"] = _compute_naver_bar_volumes(df, "AccumulatedVolume")
+                    df = df[["Open", "High", "Low", "Close", "Volume"]]
                     return df, "NAVER_MINUTE_API"
         except Exception as e:
             logger.debug(f"[Intraday45mAnalyzer] Naver minute API {code} 수집 실패: {e}")

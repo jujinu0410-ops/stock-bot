@@ -1,9 +1,11 @@
 steps:
   - name: gcr.io/cloud-builders/docker
-    args: ['build','-f','scripts/overlays/kiwoom_cache_20261016/Dockerfile','-t','asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:cache-p1-20261016','.']
+    args: ['build','-f','scripts/overlays/kiwoom_cache_20261016/Dockerfile','-t','asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:phase-b-20261019','.']
   - name: gcr.io/cloud-builders/docker
-    args: ['run','--rm','--entrypoint','python','-e','PYTHONPATH=/app','asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:cache-p1-20261016','/opt/test_cache_opt.py']
+    args: ['run','--rm','--entrypoint','python','-e','PYTHONPATH=/app','asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:phase-b-20261019','/opt/test_cache_opt.py']
+  - name: gcr.io/cloud-builders/docker
+    args: ['run','--rm','--entrypoint','python','-e','PYTHONPATH=/app','asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:phase-b-20261019','/opt/test_sparse_completed_45m.py']
 images:
-  - asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:cache-p1-20261016
+  - asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:phase-b-20261019
 options:
   logging: CLOUD_LOGGING_ONLY
