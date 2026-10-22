@@ -136,10 +136,41 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
             res_a = scheduler._evaluate_stock_shadow("005930", "삼성전자", "2026-10-22", "2026-10-22 15:00:00")
             self.assertEqual(res_a["intraday_data_quality"], "🔴 INVALID (분봉 데이터 미수집)")
 
+            for quality in ["VALID", "INVALID", "PARTIAL", "UNKNOWN", None, 0]:
+                mock_te.analyze_stock.return_value = {"intraday_data_quality": quality}
+                result = scheduler._evaluate_stock_shadow("005930", "삼성전자", "2026-10-22", "2026-10-22 15:00:00")
+                self.assertEqual(result["intraday_data_quality"], quality if quality is not None else "UNKNOWN")
+
             # Case B: Engine analysis fails / None
             mock_te.analyze_stock.return_value = None
             res_b = scheduler._evaluate_stock_shadow("005930", "삼성전자", "2026-10-22", "2026-10-22 15:00:00")
             self.assertEqual(res_b["intraday_data_quality"], "UNKNOWN")
+
+
+    def test_report_validity_contract_and_timestamp_rejection(self):
+        with patch("src.policy.policy_shadow_observer.PolicyShadowService") as cls:
+            service = cls.return_value
+            service.observe.return_value = {}
+            for value, expected in [("VALID", 1), ("INVALID", 0), ("PARTIAL", 0), ("UNKNOWN", None), (None, None), (0, 0)]:
+                with self.subTest(value=value):
+                    held = [{"stock_code": "005930", "quantity": 1, "data_validity_flag": value,
+                             "completed_45m_timestamp": "2026-10-22 15:00:01"}]
+                    observe_report_policy_shadow(None, held, "TEST", datetime(2026, 10, 22, 15, 5), MagicMock())
+                    raw = service.observe.call_args.args[0]
+                    self.assertEqual(raw["data_validity"], expected)
+                    self.assertIsNone(raw["completed_45m_timestamp"])
+
+    def test_runtime_policy_uses_observed_bar_not_scheduled_cutoff(self):
+        scheduler = RuntimeScheduler.__new__(RuntimeScheduler)
+        scheduler.db = MagicMock()
+        scheduler.db.execute_query.return_value = [{"stock_code": "005930", "data_validity_flag": "UNKNOWN"}]
+        with patch("src.policy.policy_shadow_store.PolicyShadowService") as cls, patch("src.policy.policy_shadow_store.PolicyShadowStore"):
+            for timestamp, expected in [("2026-10-22 14:15:00", "2026-10-22 14:15:00"), (None, None), ("2026-10-22 15:00:00", None)]:
+                scheduler._capture_policy_shadow({"stock_code": "005930", "completed_45m_timestamp": timestamp},
+                    "2026-10-22", "2026-10-22 14:50:00", "2026-10-22 15:00:00", "TEST")
+                raw = cls.return_value.observe.call_args.args[0]
+                self.assertEqual(raw["completed_45m_timestamp"], expected)
+                self.assertIsNone(raw["data_validity"])
 
     def test_sidecar_guards_against_none_and_unaligned_bar_ts(self):
         """Sidecar evaluators must cleanly skip execution when completed_bar_ts is None or unaligned."""
@@ -173,7 +204,7 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
         engine.intraday_analyzer.fetch_canonical_15m_data.return_value = (mock_df, "TEST_15M_BAR_START", "NONE")
 
         result = engine.evaluate_stock_warning("005930", "2026-10-22", "2026-10-22 15:00:00")
-        self.assertIn("CUTOFF_MISMATCH:DATA_FEED_DELAY", result["reason_codes"])
+        self.assertIn("CUTOFF_MISMATCH:CAUSE_UNCONFIRMED", result["reason_codes"])
         self.assertIn("raw_last=2026-10-22 14:30:00", result["reason_codes"])
         self.assertIn("cutoff=2026-10-22 15:00:00", result["reason_codes"])
         self.assertEqual(result["data_quality"], "INVALID (CUTOFF_MISMATCH)")

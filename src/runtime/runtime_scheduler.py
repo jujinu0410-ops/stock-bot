@@ -510,8 +510,10 @@ class RuntimeScheduler:
                 t_score = eng_res.get("t_score", 65.0)
                 tech_state = eng_res.get("technical_state", "NEUTRAL")
                 tech_action = eng_res.get("technical_action", "BUY_WAIT")
-                raw_dq = eng_res.get("intraday_data_quality") or eng_res.get("intraday_quality")
-                intraday_dq = raw_dq if raw_dq else "UNKNOWN"
+                raw_dq = eng_res.get("intraday_data_quality")
+                if raw_dq is None:
+                    raw_dq = eng_res.get("intraday_quality")
+                intraday_dq = raw_dq if raw_dq is not None else "UNKNOWN"
                 existing_f = eng_res.get("f_score")
                 if not isinstance(existing_f, (int, float)):
                     existing_f = fundamental_f_score if isinstance(fundamental_f_score, (int, float)) else None
@@ -572,6 +574,7 @@ class RuntimeScheduler:
                 "technical_state": tech_state,
                 "technical_action": tech_action,
                 "intraday_data_quality": intraday_dq,
+                "completed_45m_timestamp": eng_res.get("completed_45m_timestamp") if eng_res else None,
                 "atr14": atr14,
                 "natr": natr,
                 "candidate_ref_price": market_price,
@@ -608,6 +611,7 @@ class RuntimeScheduler:
         """Best-effort Policy Shadow bridge.  It must never affect V4/Runtime status."""
         try:
             from src.policy.policy_shadow_store import PolicyShadowService, PolicyShadowStore
+            from src.policy.policy_shadow_observer import policy_validity, observed_completed_timestamp
 
             code = str(scan_res["stock_code"]).zfill(6)
             rows = self.db.execute_query(
@@ -639,9 +643,9 @@ class RuntimeScheduler:
                 "is_45m_bearish_2plus": int(bool(scan_res.get("is_45m_bearish_2plus"))),
                 "is_45m_breakdown": int(bool(scan_res.get("is_45m_breakdown"))),
                 "is_45m_bearish_gate": int(bool(scan_res.get("is_45m_bearish_2plus") or scan_res.get("is_45m_breakdown"))),
-                "completed_45m_timestamp": completed_bar_ts,
+                "completed_45m_timestamp": observed_completed_timestamp(scan_res.get("completed_45m_timestamp"), now_str),
                 "concentration_state": "BLOCKED" if mode == "CONCENTRATION_RISK" else "CLEAR",
-                "data_validity": int(pos["data_validity_flag"]) if pos.get("data_validity_flag") is not None else None,
+                "data_validity": policy_validity(pos.get("data_validity_flag")),
                 "suspension_state": "SUSPENDED" if mode == "SUSPENDED_HOLD" or "거래정지" in data_hold else "ACTIVE",
                 "v4_effective_stop": pos.get("effective_exit_line"),
             }
