@@ -543,6 +543,9 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         with patch(
             "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
             return_value=_normal_intraday_response(12000.0),
+        ), patch(
+            "src.analysis.intraday_analysis.Intraday45mAnalyzer.observed_completed_45m_end",
+            return_value="2026-08-19 09:45:00",
         ):
             held_status = self.pm.get_held_portfolio_status(engine=mock_engine, live_positions=live_meta_11)
         self.assertEqual(len(held_status), 11)
@@ -550,6 +553,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         # 모든 종목이 1순위 엔진 가격(12,000원)으로 평가되었는지 확인
         for pos in held_status:
             self.assertEqual(pos["current_price"], 12000.0)
+            self.assertEqual(pos["completed_45m_timestamp"], "2026-08-19 09:45:00")
 
         # 계좌 비중의 합이 반올림 오차 범위(99.9% ~ 100.1%) 내에 정확히 안착하는지 단언
         total_weight = sum(p["eval_weight_pct"] for p in held_status)

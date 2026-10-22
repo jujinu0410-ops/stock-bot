@@ -235,6 +235,11 @@ class TestObservedCompleted45mContract(unittest.TestCase):
         self.assertIsNone(get(bars[:2]))
         self.assertIsNone(get(bars.delete(1)))
         self.assertIsNone(get(bars.append(pd.DatetimeIndex([pd.Timestamp("2026-10-22 09:45", tz="Asia/Seoul")]))))
+        self.assertIsNone(get(bars[:2].append(pd.DatetimeIndex([pd.Timestamp("2026-10-22 09:45", tz="Asia/Seoul")]))))
+        later = pd.date_range("2026-10-22 10:30", periods=4, freq="15min", tz="Asia/Seoul")
+        self.assertEqual(get(later[:3], at="2026-10-22 11:20:00+09:00"),
+                         "2026-10-22 11:15:00")
+        self.assertIsNone(get(bars.append(later), at="2026-10-22 11:20:00+09:00"))
         self.assertIsNone(get(bars, "NAVER_MINUTE_API"))
         self.assertIsNone(get(bars.tz_localize(None)))
         self.assertIsNone(get(bars, at="2026-10-22 09:45:30+09:00"))
