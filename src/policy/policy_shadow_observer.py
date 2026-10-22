@@ -57,7 +57,9 @@ def observe_report_policy_shadow(
 
         # 45m authoritative fields from Intraday45mAnalyzer / held_status
         raw_45m_ts = h.get("completed_45m_timestamp") or h.get("intraday_last_timestamp")
-        completed_45m_bar_ts = raw_45m_ts if raw_45m_ts and str(raw_45m_ts).strip() not in ("N/A", "미수집", "None") else None
+        cand_ts = str(raw_45m_ts).strip() if raw_45m_ts and str(raw_45m_ts).strip() not in ("N/A", "미수집", "None") else None
+        valid_bar_ends = {"09:45", "10:30", "11:15", "12:00", "12:45", "13:30", "14:15", "15:00"}
+        completed_45m_bar_ts = cand_ts if (cand_ts and " " in cand_ts and cand_ts.split(" ")[1][:5] in valid_bar_ends) else None
 
         is_bearish_2plus = int(bool(h.get("is_45m_bearish_2plus")))
         is_breakdown = int(bool(h.get("is_45m_breakdown")))
@@ -81,7 +83,7 @@ def observe_report_policy_shadow(
             "is_45m_bearish_gate": int(bool(is_bearish_2plus or is_breakdown)),
             "completed_45m_timestamp": completed_45m_bar_ts,
             "concentration_state": "BLOCKED" if trade_mode == "CONCENTRATION_RISK" else "CLEAR",
-            "data_validity": int(h.get("data_validity_flag", 1) or 1),
+            "data_validity": int(h.get("data_validity_flag")) if h.get("data_validity_flag") is not None else None,
             "suspension_state": "SUSPENDED" if trade_mode == "SUSPENDED_HOLD" or "거래정지" in data_hold else "ACTIVE",
             "v4_effective_stop": h.get("effective_exit_line"),
         }

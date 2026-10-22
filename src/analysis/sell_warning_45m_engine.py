@@ -241,7 +241,11 @@ class SellWarning45mEngine:
             allow_sparse_completed=True,
         )
         if completed is None or quality != "VALID":
-            result["reason_codes"] = quality
+            if quality == "CUTOFF_MISMATCH":
+                last_raw_ts = raw_df.index[-1].strftime("%Y-%m-%d %H:%M:%S") if (raw_df is not None and not raw_df.empty) else "EMPTY"
+                result["reason_codes"] = f"CUTOFF_MISMATCH:DATA_FEED_DELAY(raw_last={last_raw_ts},cutoff={cutoff.strftime('%Y-%m-%d %H:%M:%S')})"
+            else:
+                result["reason_codes"] = quality
             result["data_quality"] = f"INVALID ({quality})"
             return result
 
