@@ -208,6 +208,7 @@ class TradingEngine:
                 "intraday_source": intra_res.get("intraday_source", "NONE"),
                 "intraday_row_count": intra_res.get("intraday_row_count", 0),
                 "intraday_last_timestamp": intra_res.get("intraday_last_timestamp", "N/A"),
+                "completed_45m_timestamp": intra_res.get("completed_45m_timestamp"),
                 "intraday_quality": intra_res.get("intraday_quality", "🔴 INVALID (분봉 데이터 미수집)"),
                 "intraday_error_code": intra_res.get("intraday_error_code", "NO_INTRADAY_DATA"),
                 "adx_14_45m": intra_res.get("adx_14_45m"),

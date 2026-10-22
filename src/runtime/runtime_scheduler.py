@@ -167,11 +167,11 @@ class RuntimeScheduler:
             return {"status": "SKIPPED_NO_NEW_45M_BAR", "run_id": run_id}
 
         slot_name = bar_info[0] if bar_info else "MANUAL"
-        bar_end = bar_info[2] if bar_info else now.strftime("%H:%M")
-        completed_bar_ts = f"{trading_date} {bar_end}:00"
+        bar_end = bar_info[2] if bar_info else None
+        completed_bar_ts = f"{trading_date} {bar_end}:00" if bar_end else None
 
         # 5. Check if this exact 45m bar was already scanned
-        if not is_manual:
+        if not is_manual and completed_bar_ts:
             latest_run = self.db.get_latest_scheduler_run("INTRADAY_SHADOW_SCAN")
             if latest_run and latest_run.get("last_completed_45m_bar") == completed_bar_ts and latest_run.get("status") == "SUCCESS":
                 logger.info(f"[IntradayScan] 45m bar '{completed_bar_ts}' already processed in previous run '{latest_run['run_id']}'. Skipping duplicate scan.")
@@ -210,10 +210,11 @@ class RuntimeScheduler:
                 self._capture_policy_shadow(scan_res, trading_date, now_str, completed_bar_ts, run_id)
 
                 # Phase 1: 45m ADD ADVISORY Sidecar Evaluation (Isolated persistence to add_advisory_45m)
-                self._evaluate_add_advisory_sidecar(code, scan_res, trading_date, completed_bar_ts)
+                if completed_bar_ts:
+                    self._evaluate_add_advisory_sidecar(code, scan_res, trading_date, completed_bar_ts)
 
-                # 45m SELL WARNING Sidecar Evaluation (Isolated persistence to sell_warning_45m)
-                self._evaluate_sell_warning_sidecar(code, scan_res, trading_date, completed_bar_ts)
+                    # 45m SELL WARNING Sidecar Evaluation (Isolated persistence to sell_warning_45m)
+                    self._evaluate_sell_warning_sidecar(code, scan_res, trading_date, completed_bar_ts)
 
                 # Deduplication & Snapshot Reason Decision
                 snapshot_reason = self._determine_snapshot_reason(code, scan_res, trading_date, is_manual)
@@ -509,7 +510,10 @@ class RuntimeScheduler:
                 t_score = eng_res.get("t_score", 65.0)
                 tech_state = eng_res.get("technical_state", "NEUTRAL")
                 tech_action = eng_res.get("technical_action", "BUY_WAIT")
-                intraday_dq = eng_res.get("intraday_data_quality", "VALID")
+                raw_dq = eng_res.get("intraday_data_quality")
+                if raw_dq is None:
+                    raw_dq = eng_res.get("intraday_quality")
+                intraday_dq = raw_dq if raw_dq is not None else "UNKNOWN"
                 existing_f = eng_res.get("f_score")
                 if not isinstance(existing_f, (int, float)):
                     existing_f = fundamental_f_score if isinstance(fundamental_f_score, (int, float)) else None
@@ -518,7 +522,7 @@ class RuntimeScheduler:
                 t_score = 65.0
                 tech_state = "NEUTRAL"
                 tech_action = "BUY_WAIT"
-                intraday_dq = "VALID"
+                intraday_dq = "UNKNOWN"
                 existing_f = fundamental_f_score if isinstance(fundamental_f_score, (int, float)) else None
                 existing_fin = round(0.4 * f_score + 0.6 * t_score, 1)
 
@@ -569,7 +573,8 @@ class RuntimeScheduler:
                 "is_45m_breakdown": bool(eng_res.get("is_45m_breakdown", False)) if eng_res else False,
                 "technical_state": tech_state,
                 "technical_action": tech_action,
-                "intraday_data_quality": "VALID",
+                "intraday_data_quality": intraday_dq,
+                "completed_45m_timestamp": eng_res.get("completed_45m_timestamp") if eng_res else None,
                 "atr14": atr14,
                 "natr": natr,
                 "candidate_ref_price": market_price,
@@ -606,6 +611,7 @@ class RuntimeScheduler:
         """Best-effort Policy Shadow bridge.  It must never affect V4/Runtime status."""
         try:
             from src.policy.policy_shadow_store import PolicyShadowService, PolicyShadowStore
+            from src.policy.policy_shadow_observer import policy_validity, observed_completed_timestamp
 
             code = str(scan_res["stock_code"]).zfill(6)
             rows = self.db.execute_query(
@@ -637,9 +643,9 @@ class RuntimeScheduler:
                 "is_45m_bearish_2plus": int(bool(scan_res.get("is_45m_bearish_2plus"))),
                 "is_45m_breakdown": int(bool(scan_res.get("is_45m_breakdown"))),
                 "is_45m_bearish_gate": int(bool(scan_res.get("is_45m_bearish_2plus") or scan_res.get("is_45m_breakdown"))),
-                "completed_45m_timestamp": completed_bar_ts,
+                "completed_45m_timestamp": observed_completed_timestamp(scan_res.get("completed_45m_timestamp"), now_str),
                 "concentration_state": "BLOCKED" if mode == "CONCENTRATION_RISK" else "CLEAR",
-                "data_validity": int(pos.get("data_validity_flag", 0) or 0),
+                "data_validity": policy_validity(pos.get("data_validity_flag")),
                 "suspension_state": "SUSPENDED" if mode == "SUSPENDED_HOLD" or "거래정지" in data_hold else "ACTIVE",
                 "v4_effective_stop": pos.get("effective_exit_line"),
             }
@@ -659,6 +665,14 @@ class RuntimeScheduler:
         Failures in sidecar evaluation are caught so they do not disrupt the core scan_journal flow.
         """
         try:
+            if not completed_bar_ts:
+                return
+            valid_bar_ends = {"09:45", "10:30", "11:15", "12:00", "12:45", "13:30", "14:15", "15:00"}
+            bar_time = completed_bar_ts.split(" ")[1][:5] if " " in completed_bar_ts else ""
+            if bar_time not in valid_bar_ends:
+                logger.info(f"[AddAdvisorySidecar] Skipping non-completed bar timestamp: {completed_bar_ts}")
+                return
+
             from src.analysis.add_advisory_engine import AddAdvisory45mEngine
             if not hasattr(self, "_add_advisory_engine") or self._add_advisory_engine is None:
                 self._add_advisory_engine = AddAdvisory45mEngine()
@@ -723,6 +737,8 @@ class RuntimeScheduler:
         - Fail-isolated: failures in sidecar evaluation are caught so they do not disrupt the core scan flow.
         """
         try:
+            if not completed_bar_ts:
+                return
             # Only evaluate when completed_bar_ts is a canonical completed 45m bar end time
             valid_bar_ends = {"09:45", "10:30", "11:15", "12:00", "12:45", "13:30", "14:15", "15:00"}
             bar_time = completed_bar_ts.split(" ")[1][:5] if " " in completed_bar_ts else ""

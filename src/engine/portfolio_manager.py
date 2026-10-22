@@ -881,6 +881,7 @@ class PortfolioManager:
                 "is_obv_dead": intra_res.get("is_obv_dead", False),
                 "is_cho_outflow": intra_res.get("is_cho_outflow", False),
                 "is_45m_bearish_2plus": intra_res.get("is_45m_bearish_2plus", False),
+                "completed_45m_timestamp": intra_res.get("completed_45m_timestamp"),
                 "signal_45m_text": intra_res.get("signal_45m_text", "대기"),
                 "action_status": "안정 보유 (홀딩)",
                 "reason": analysis.get("reason", "분석 데이터 정상") if analysis else "데이터 부족"
