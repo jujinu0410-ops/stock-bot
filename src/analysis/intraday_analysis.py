@@ -140,6 +140,43 @@ class Intraday45mAnalyzer:
             "is_price_below_cloud_45m": bool(close_value < cloud_bottom),
         }
 
+    @staticmethod
+    def observed_completed_45m_end(df_15m: pd.DataFrame, source_name: str, now=None) -> Optional[str]:
+        """Prove completion from three *source-observed* 15m candle start labels.
+
+        YFinance 15m bars use opening timestamps.  The Naver API's 15m
+        timestamp semantics are not established by our adapter, so NEVER infer
+        a completed candle from its raw timestamp alone.  In particular,
+        a 45m resampling index is the LEFT edge, not evidence of completion.
+        No network calls or changes to indicators/trading decisions.
+        """
+        if not str(source_name).startswith("YFINANCE_15M"):
+            return None
+        if not isinstance(df_15m, pd.DataFrame) or not isinstance(df_15m.index, pd.DatetimeIndex):
+            return None
+        stamps = df_15m.index
+        if len(stamps) < 3 or stamps.tz is None or not stamps.is_monotonic_increasing or not stamps.is_unique:
+            return None
+        try:
+            stamps = stamps.tz_convert("Asia/Seoul")
+            current = pd.Timestamp.now(tz="Asia/Seoul") if now is None else pd.Timestamp(now)
+            if current.tzinfo is None:
+                return None
+            current = current.tz_convert("Asia/Seoul")
+            start = stamps[-1].floor("45min")
+            end = start + pd.Timedelta(minutes=45)
+            expected = pd.date_range(start, periods=3, freq="15min")
+            valid_ends = {"09:45", "10:30", "11:15", "12:00",
+                          "12:45", "13:30", "14:15", "15:00"}
+            if (not stamps[-3:].equals(expected)
+                    or end.strftime("%H:%M") not in valid_ends
+                    or end.date() != current.date()
+                    or not pd.Timedelta(minutes=1) <= current - end <= pd.Timedelta(minutes=75)):
+                return None
+            return end.strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError, OverflowError):
+            return None
+
     def _fetch_from_yfinance(self, stock_code: str) -> Optional[Tuple[pd.DataFrame, str]]:
         """yfinance를 통한 15분봉 데이터 수집 (KS / KQ 순차 시도)"""
         code = str(stock_code).zfill(6)
@@ -216,6 +253,7 @@ class Intraday45mAnalyzer:
             "intraday_source": "NONE",
             "intraday_row_count": 0,
             "intraday_last_timestamp": "N/A",
+            "completed_45m_timestamp": None,
             "intraday_quality": "🔴 INVALID (분봉 데이터 미수집)",
             "intraday_error_code": "NO_INTRADAY_DATA",
             "adx_14_45m": None,
@@ -342,6 +380,7 @@ class Intraday45mAnalyzer:
                 "intraday_source": source_name,
                 "intraday_row_count": len(df_45m),
                 "intraday_last_timestamp": last_ts,
+                "completed_45m_timestamp": self.observed_completed_45m_end(df_15m, source_name),
                 "intraday_quality": f"🟢 VALID ({len(df_45m)}봉 정상 산출)",
                 "intraday_error_code": "NONE",
                 "adx_14_45m": round(latest_adx, 1),
