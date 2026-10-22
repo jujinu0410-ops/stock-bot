@@ -1,0 +1,13 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build','-f','scripts/overlays/kiwoom_cache_20261016/Dockerfile','-t','asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:market-inverse-early-20261022','.']
+  - name: gcr.io/cloud-builders/docker
+    args: ['run','--rm','--entrypoint','python','-e','PYTHONPATH=/app','asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:market-inverse-early-20261022','/opt/test_market_inverse_early.py']
+  - name: gcr.io/cloud-builders/docker
+    args: ['run','--rm','--entrypoint','python','-e','PYTHONPATH=/app','asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:market-inverse-early-20261022','/opt/test_cache_opt.py']
+  - name: gcr.io/cloud-builders/docker
+    args: ['run','--rm','--entrypoint','python','-e','PYTHONPATH=/app','asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:market-inverse-early-20261022','/opt/test_sparse_completed_45m.py']
+images:
+  - asia-northeast3-docker.pkg.dev/stock-monitoring-prod/stockbot-repo/youtube-signal-service:market-inverse-early-20261022
+options:
+  logging: CLOUD_LOGGING_ONLY

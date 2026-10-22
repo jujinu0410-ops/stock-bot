@@ -7,6 +7,7 @@ COPY --chown=stockbot:stockbot scripts/overlays/kiwoom_cache_20261016/youtube_si
 COPY --chown=stockbot:stockbot src/analysis/bollinger_atr_strategy.py /app/src/analysis/bollinger_atr_strategy.py
 COPY --chown=stockbot:stockbot src/analysis/intraday_analysis.py /app/src/analysis/intraday_analysis.py
 COPY scripts/overlays/kiwoom_cache_20261016/test_cache_opt.py /opt/test_cache_opt.py
+COPY scripts/overlays/kiwoom_cache_20261016/test_market_inverse_early.py /opt/test_market_inverse_early.py
 COPY tests/test_sparse_completed_45m.py /opt/test_sparse_completed_45m.py
 RUN python -m py_compile /app/services/unified_scan.py /app/services/youtube_signal_service.py /app/src/analysis/bollinger_atr_strategy.py /app/src/analysis/intraday_analysis.py
 USER stockbot
