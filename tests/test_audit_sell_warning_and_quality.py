@@ -210,5 +210,54 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
         self.assertEqual(result["data_quality"], "INVALID (CUTOFF_MISMATCH)")
 
 
+class TestObservedCompleted45mContract(unittest.TestCase):
+    """Conservative source-observed completion, never synthetic cutoff."""
+
+    @staticmethod
+    def candles(timestamps):
+        return pd.DataFrame({"Open": 100.0, "High": 101.0, "Low": 99.0,
+                             "Close": 100.0, "Volume": 1000.0}, index=timestamps)
+
+    def test_three_yfinance_left_labelled_bars_verify_one_completed_window(self):
+        from src.analysis.intraday_analysis import Intraday45mAnalyzer
+        bars = self.candles(pd.date_range("2026-10-22 09:00", periods=3,
+                                          freq="15min", tz="Asia/Seoul"))
+        got = Intraday45mAnalyzer.observed_completed_45m_end(
+            bars, "YFINANCE_15M (005930.KS)", now="2026-10-22 09:46:00+09:00")
+        self.assertEqual(got, "2026-10-22 09:45:00")
+
+    def test_partial_next_window_missing_bar_wrong_source_and_stale_are_unverified(self):
+        from src.analysis.intraday_analysis import Intraday45mAnalyzer as A
+        bars = pd.date_range("2026-10-22 09:00", periods=3,
+                             freq="15min", tz="Asia/Seoul")
+        def get(idx, src="YFINANCE_15M (005930.KS)", at="2026-10-22 09:48:00+09:00"):
+            return A.observed_completed_45m_end(self.candles(idx), src, now=at)
+        self.assertIsNone(get(bars[:2]))
+        self.assertIsNone(get(bars.delete(1)))
+        self.assertIsNone(get(bars.append(pd.DatetimeIndex([pd.Timestamp("2026-10-22 09:45", tz="Asia/Seoul")]))))
+        self.assertIsNone(get(bars, "NAVER_MINUTE_API"))
+        self.assertIsNone(get(bars.tz_localize(None)))
+        self.assertIsNone(get(bars, at="2026-10-22 09:45:30+09:00"))
+        self.assertIsNone(get(bars, at="2026-10-22 11:10:00+09:00"))
+        self.assertIsNone(get(bars, at="2026-10-23 09:48:00+09:00"))
+
+    def test_analyzer_exposes_provenance_without_promoting_left_resample_index(self):
+        from src.analysis.intraday_analysis import Intraday45mAnalyzer as A
+        analyzer = A()
+        # Two days of distinct left-labelled 15m candles, no network access.
+        idx = pd.DatetimeIndex([
+            stamp for day in ("2026-10-21", "2026-10-22")
+            for stamp in pd.date_range(day + " 09:00", periods=24, freq="15min", tz="Asia/Seoul")
+        ])
+        data = self.candles(idx)
+        with patch.object(analyzer, "fetch_canonical_15m_data",
+                          return_value=(data, "YFINANCE_15M (005930.KS)", "NONE")), \
+             patch.object(analyzer, "observed_completed_45m_end", return_value=None):
+            result = analyzer.analyze_45m_indicators("005930")
+        self.assertTrue(result["has_45m_data"], result)
+        self.assertIsNone(result["completed_45m_timestamp"])
+        self.assertNotEqual(result["intraday_last_timestamp"], "N/A")
+
+
 if __name__ == "__main__":
     unittest.main()
