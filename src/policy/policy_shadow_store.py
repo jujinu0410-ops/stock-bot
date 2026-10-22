@@ -424,7 +424,8 @@ class PolicyShadowService:
         safety = raw.get("data_validity") == 1 and raw.get("suspension_state") != "SUSPENDED" and raw.get("concentration_state") != "BLOCKED"
         stage2 = stage3 = "NOT_APPLICABLE"
         if cycle["position_kind"] == "NEW_433_CYCLE":
-            same_day = cycle.get("last_stage_date") == now[:10]; new_bar = raw.get("completed_45m_timestamp") != cycle.get("last_completed_45m_at_stage")
+            same_day = cycle.get("last_stage_date") == now[:10]
+            new_bar = bool(raw.get("completed_45m_timestamp")) and raw["completed_45m_timestamp"] != cycle.get("last_completed_45m_at_stage")
             if cycle.get("stage") == 1:
                 cycle["stage_size_status"] = stage_size_status(qty, cycle.get("stage1_target_qty"), 1)
                 if cycle.get("f0") is None or cycle.get("t0") is None:

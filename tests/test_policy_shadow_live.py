@@ -48,6 +48,19 @@ class TestPolicyShadowLive(unittest.TestCase):
     def test_11_new_cycle_f0_t0_fixed(self):
         self.obs(self.raw(f=70,t=50),()); self.obs(self.raw(f=99,t=99),()); c=self.store.latest_cycle("000001"); self.assertEqual((c["f0"],c["t0"]),(70,50))
     def test_12_stage2_ready(self): self.assertEqual(self.obs(self.new_three_days())["stage2_gate"],"STAGE2_READY")
+    def test_missing_completed_bar_cannot_open_stage2_or_promote(self):
+        raw = self.new_three_days()
+        raw.update(completed_45m_timestamp=None, quantity=11)
+        self.assertEqual(self.obs(raw)["stage2_gate"], "NOT_READY")
+        self.assertEqual(self.store.latest_cycle("000001")["stage"], 1)
+
+    def test_missing_completed_bar_cannot_open_stage3_or_promote(self):
+        self.new_three_days()
+        self.obs(self.raw(day="2026-08-24", t=55, price=106, qty=11))
+        raw = self.raw(day="2026-08-25", t=60, price=108, qty=18)
+        raw["completed_45m_timestamp"] = None
+        self.assertEqual(self.obs(raw)["stage3_gate"], "NOT_READY")
+        self.assertEqual(self.store.latest_cycle("000001")["stage"], 2)
     def test_13_ready_does_not_raise_stage(self): self.new_three_days(); self.assertEqual(self.store.latest_cycle("000001")["stage"],1)
     def test_14_qty_increase_promotes_stage2(self):
         self.new_three_days(); self.obs(self.raw(day="2026-08-24",t=55,price=106,qty=11)); self.assertEqual(self.store.latest_cycle("000001")["stage"],2)
