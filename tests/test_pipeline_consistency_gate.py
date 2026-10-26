@@ -121,5 +121,59 @@ class TestPipelineConsistencyGate(unittest.TestCase):
             )
         self.assertIn("missing_in_email", str(cm.exception))
 
+    def test_05_q_prefixed_etn_and_a_prefixed_numeric_pass(self):
+        """Q-prefixed ETN and A-prefixed Kiwoom numeric codes survive XLSX reconciliation."""
+        etn = "Q530107"
+        codes = self.sample_codes + [etn]
+        self.db.execute_non_query(
+            "INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)",
+            (etn, "ETN_Q530107"),
+        )
+        self.db.execute_non_query(
+            "INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES (?, 100, 10000.0)",
+            (etn,),
+        )
+        records = [
+            {"종목코드": "A000490" if c == "000490" else c, "종목명": f"TEST_{c}"}
+            for c in codes
+        ]
+        pd.DataFrame(records).to_excel(self.temp_excel, sheet_name="보유종목 모니터링", index=False)
+        raw = [{"stock_code": c, "quantity": 100} for c in codes]
+        held = [{"stock_code": c, "stock_name": f"TEST_{c}", "action_status": "매도"} for c in codes]
+        html = "".join(f'<div data-stock-code="{c}">Card {c}</div>' for c in codes)
+        verify_pipeline_stock_code_consistency(
+            raw_kiwoom_positions=raw,
+            db_manager=self.db,
+            held_status=held,
+            excel_path=self.temp_excel,
+            html_report=html,
+        )
+
+    def test_06_missing_q_prefixed_etn_still_blocks_dispatch(self):
+        """Fail-Closed must stay active if Q-prefixed ETN is genuinely missing from XLSX."""
+        etn = "Q530107"
+        self.db.execute_non_query(
+            "INSERT OR REPLACE INTO stock_info (stock_code, stock_name) VALUES (?, ?)",
+            (etn, "ETN_Q530107"),
+        )
+        self.db.execute_non_query(
+            "INSERT OR REPLACE INTO portfolio_positions (stock_code, quantity, avg_buy_price) VALUES (?, 100, 10000.0)",
+            (etn,),
+        )
+        codes = self.sample_codes + [etn]
+        raw = [{"stock_code": c, "quantity": 100} for c in codes]
+        held = [{"stock_code": c, "stock_name": f"TEST_{c}", "action_status": "매도"} for c in codes]
+        html = "".join(f'<div data-stock-code="{c}">Card {c}</div>' for c in codes)
+        with self.assertRaises(RuntimeError) as cm:
+            verify_pipeline_stock_code_consistency(
+                raw_kiwoom_positions=raw,
+                db_manager=self.db,
+                held_status=held,
+                excel_path=self.temp_excel,
+                html_report=html,
+            )
+        self.assertIn("Q530107", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
