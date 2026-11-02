@@ -80,6 +80,10 @@ class MarketQuoteClient:
         - status: str ('LIVE_VALID', 'LIVE_QUOTE_STALE', 'DATA_HOLD')
         """
         code = str(stock_code).strip().zfill(6)
+        # Kiwoom prefixes ETN codes with Q (e.g., Q530107), but Naver
+        # quotes the same security under its 6-digit code (530107).
+        # Keep the Kiwoom/original identifier in results and account matching.
+        naver_code = code[1:] if len(code) == 7 and code.startswith("Q") and code[1:].isdigit() else code
         now = datetime.now()
         today_str = now.strftime("%Y-%m-%d")
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -104,7 +108,7 @@ class MarketQuoteClient:
 
         # 2. Tier 2: Naver Mobile Realtime Stock API (Official KRX Live Feed)
         try:
-            url = f"https://m.stock.naver.com/api/stock/{code}/basic"
+            url = f"https://m.stock.naver.com/api/stock/{naver_code}/basic"
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
@@ -168,7 +172,7 @@ class MarketQuoteClient:
 
         # 3. Tier 3: Naver Domestic Realtime Polling API
         try:
-            url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
+            url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{naver_code}"
             headers = {"User-Agent": "Mozilla/5.0"}
             res = requests.get(url, headers=headers, timeout=4)
             if res.status_code == 200:
