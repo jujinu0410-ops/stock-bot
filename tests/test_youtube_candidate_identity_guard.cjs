@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '../apps_script/youtube_candidate_runtime_v8.gs'), 'utf8');
+const runtimePath = process.env.YT_RUNTIME_PATH || path.join(__dirname, '../apps_script/youtube_candidate_runtime_v8.gs');
+const source = fs.readFileSync(runtimePath, 'utf8');
 const start = source.indexOf('      if (!identity.verified) {');
 const end = source.indexOf('      const rowNumber = prior ?', start);
 assert.ok(start >= 0 && end > start, 'identity checks must precede candidate row mutation');
