@@ -295,6 +295,25 @@ function refreshYouTubeCandidatePoolV2() {
       const identity = resolveNaverIdentity_(code, item.name);
       const prior = existing[code] || null;
 
+      /* If the provider cannot verify the code, a prior row is not enough:
+       * the incoming name must also match the already stored name for that
+       * exact code. Otherwise an unrelated company could refresh its TTL.
+       * New codes with no verified identity must remain pending. */
+      if (!identity.verified) {
+        const priorName = prior
+          ? String(sheet.getRange(prior.row, 2).getDisplayValue() || '').trim()
+          : '';
+        if (!prior || !isSameStockNameV8_(code, item.name, priorName, aliasMap)) {
+          appendIdentityIssueV8_(ss, {
+            ticker: code, name: item.name, tech: 'IDENTITY_PENDING', http: '',
+            finalSignal: '', flowStatus: '', detail: priorName ? 'Existing=' + priorName : '',
+            triggerKey: '', elapsedMs: Date.now() - started,
+            error: 'IDENTITY_UNVERIFIED_NAME_MISMATCH', source: 'GMAIL_INGEST_V8',
+          });
+          return;
+        }
+      }
+
       if (
         identity.verified &&
         identity.name &&
