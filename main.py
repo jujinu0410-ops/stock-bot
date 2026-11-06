@@ -218,9 +218,15 @@ def verify_pipeline_stock_code_consistency(
     def _to_code(val):
         if val is None or pd.isna(val):
             return None
-        s = str(val).strip().replace("A", "").split(".")[0]
-        if s.isdigit() and len(s) <= 6:
-            return s.zfill(6)
+        s = str(val).strip().upper()
+        # Kiwoom numeric (optionally A-prefixed) and Q-prefixed ETN codes.
+        # Do not silently drop Q530107 from XLSX code reconciliation.
+        if re.fullmatch(r"A\d{6}", s):
+            return s[1:]
+        if re.fullmatch(r"Q\d{6}", s):
+            return s
+        if re.fullmatch(r"\d{1,6}(?:\.0+)?", s):
+            return s.split(".", 1)[0].zfill(6)
         return None
 
     xlsx_codes = set()
@@ -243,16 +249,16 @@ def verify_pipeline_stock_code_consistency(
     if held_codes_match and held_codes_match.group(1):
         email_audit_held_codes = set(filter(None, held_codes_match.group(1).split(",")))
     else:
-        card_codes_raw = set(re.findall(r'data-stock-code="(\d{6})"', html_report))
+        card_codes_raw = set(re.findall(r'data-stock-code="((?:Q\d{6}|\d{6}))"', html_report))
         if card_codes_raw:
             email_audit_held_codes = card_codes_raw
         else:
-            raw_v1_codes = set(re.findall(r'\((\d{6})\)', html_report))
+            raw_v1_codes = set(re.findall(r'\(((?:Q\d{6}|\d{6}))\)', html_report))
             email_audit_held_codes = raw_v1_codes.intersection(held_status_codes) if raw_v1_codes else raw_v1_codes
 
     # 6. 본문 노출 대응카드 완전성 및 중복 검증 (expected == rendered)
     expected_action_codes = {str(h["stock_code"]).strip().zfill(6) for h in held_status if is_meaningful_action_item(h)}
-    rendered_action_list = re.findall(r'data-stock-code="(\d{6})"', html_report)
+    rendered_action_list = re.findall(r'data-stock-code="((?:Q\d{6}|\d{6}))"', html_report)
     seen_action_cards = set()
     duplicate_action_cards = set()
     for c in rendered_action_list:
