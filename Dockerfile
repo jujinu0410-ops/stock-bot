@@ -50,7 +50,7 @@ RUN useradd -m -u 1000 stockbot && \
     chown -R stockbot:stockbot /tmp/stockbot /app
 
 # Copy application runtime files ONLY (tests/ and scratch/ excluded)
-COPY main.py cloud_runner.py scan_stock_for_gems.py run_gems_scanner.py ./
+COPY main.py cloud_runner.py scan_stock_for_gems.py run_gems_scanner.py m30_job_entry.py ./
 COPY config/ ./config/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
