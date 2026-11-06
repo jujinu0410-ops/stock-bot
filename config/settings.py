@@ -594,7 +594,7 @@ TABLE_SCHEMAS = {
             stocks_scanned INTEGER DEFAULT 0,
             journals_created INTEGER DEFAULT 0,
             signal_changes INTEGER DEFAULT 0,
-            last_completed_45m_bar TEXT,
+            last_completed_30m_bar TEXT,
             error_code TEXT,
             error_message TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -609,8 +609,8 @@ TABLE_SCHEMAS = {
             expires_at TEXT NOT NULL
         );
     """,
-    "add_advisory_45m": """
-        CREATE TABLE IF NOT EXISTS add_advisory_45m (
+    "add_advisory_30m": """
+        CREATE TABLE IF NOT EXISTS add_advisory_30m (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             trading_date TEXT NOT NULL,
             stock_code TEXT NOT NULL,
@@ -640,8 +640,8 @@ TABLE_SCHEMAS = {
             UNIQUE(stock_code, bar_timestamp)
         );
     """,
-    "sell_warning_45m": """
-        CREATE TABLE IF NOT EXISTS sell_warning_45m (
+    "sell_warning_30m": """
+        CREATE TABLE IF NOT EXISTS sell_warning_30m (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             trading_date TEXT NOT NULL,
             stock_code TEXT NOT NULL,
@@ -660,13 +660,13 @@ TABLE_SCHEMAS = {
             chaikin_recovery_conflict INTEGER,
             bull_trend_conflict INTEGER,
             vwap_dead INTEGER,
-            is_price_below_cloud_45m INTEGER,
-            completed_45m_timestamp TEXT,
-            completed_45m_bar_count INTEGER,
+            is_price_below_cloud_30m INTEGER,
+            completed_30m_timestamp TEXT,
+            completed_30m_bar_count INTEGER,
             vwap9 REAL,
             vwap26 REAL,
-            close_45m REAL,
-            cloud_bottom_45m REAL,
+            close_30m REAL,
+            cloud_bottom_30m REAL,
             obv REAL,
             obv_wma9 REAL,
             obv_gap REAL,
@@ -675,9 +675,9 @@ TABLE_SCHEMAS = {
             chaikin_value REAL,
             chaikin_delta REAL,
             chaikin_state TEXT,
-            adx_14_45m REAL,
-            plus_di_45m REAL,
-            minus_di_45m REAL,
+            adx_14_30m REAL,
+            plus_di_30m REAL,
+            minus_di_30m REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(stock_code, bar_timestamp)
         );
@@ -702,8 +702,8 @@ INDEX_SCHEMAS = [
     "CREATE INDEX IF NOT EXISTS idx_signal_outcomes_journal ON signal_outcomes(journal_id);",
     "CREATE INDEX IF NOT EXISTS idx_scheduler_runs_date_task ON scheduler_runs(trading_date, task_type);",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduler_runs_id ON scheduler_runs(run_id);",
-    "CREATE INDEX IF NOT EXISTS idx_add_advisory_code_bar ON add_advisory_45m(stock_code, bar_timestamp);",
-    "CREATE INDEX IF NOT EXISTS idx_add_advisory_date_state ON add_advisory_45m(trading_date, add_advisory_state);"
+    "CREATE INDEX IF NOT EXISTS idx_add_advisory_code_bar_m30 ON add_advisory_30m(stock_code, bar_timestamp);",
+    "CREATE INDEX IF NOT EXISTS idx_add_advisory_date_state_m30 ON add_advisory_30m(trading_date, add_advisory_state);"
 ]
 
 

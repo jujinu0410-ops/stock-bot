@@ -1,0 +1,59 @@
+import logging
+import sys
+import os
+import tempfile
+from pathlib import Path
+from config.settings import LOG_FILE_PATH
+
+
+def _get_file_log_path() -> Path:
+    """테스트 모드 및 스캐너 모드에서는 운영 로그와 분리된 전용 경로를 반환합니다."""
+    if os.environ.get("STOCKBOT_TEST_MODE") == "1":
+        test_log_dir = Path(tempfile.gettempdir()) / "stockbot_test_logs"
+        return test_log_dir / f"stock_system_{os.getpid()}.log"
+    if os.environ.get("GEMS_SCANNER_MODE") == "1":
+        scanner_log_dir = Path(tempfile.gettempdir()) / "gems_scanner_logs"
+        return scanner_log_dir / f"gems_scanner_{os.getpid()}.log"
+    return LOG_FILE_PATH
+
+
+def setup_logger(name: str = "stock_system") -> logging.Logger:
+    """
+    콘솔 출력 및 파일 저장을 동시에 수행하는 로거를 설정하고 반환합니다.
+    """
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    # 중복 방지를 위한 핸들러 초기화
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    formatter = logging.Formatter(
+        "[%(asctime)s] [%(levelname)s] [%(name)s:%(filename)s:%(lineno)d] - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+
+    # 콘솔 핸들러 (Windows CP949 이모지 대응)
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.INFO)
+    logger.addHandler(console_handler)
+
+    # 파일 핸들러 (디렉토리 자동 생성)
+    file_log_path = _get_file_log_path()
+    log_dir = file_log_path.parent
+    os.makedirs(log_dir, exist_ok=True)
+    file_handler = logging.FileHandler(file_log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.INFO)
+    logger.addHandler(file_handler)
+
+    return logger
+
+# 기본 공유 로거 인스턴스
+logger = setup_logger()

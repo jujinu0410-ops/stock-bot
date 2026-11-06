@@ -1,4 +1,4 @@
-"""Cloud report state-path and completed-45m regression coverage."""
+"""Cloud report state-path and completed-30m regression coverage."""
 
 import os
 import shutil
@@ -52,10 +52,10 @@ class TestCloudReportStatePaths(unittest.TestCase):
         }
 
     def test_01_renderer_reads_cloud_state_db_and_applies_report_cutoff(self):
-        """No /app/data dependency: 11:20 may read 11:15, never future 12:00."""
+        """No /app/data dependency: 11:20 may read 11:00, never future 12:00."""
         db = DatabaseManager(db_path=str(self.stock_db_path))
-        db.insert_add_advisory_45m(self._entry("2026-09-02 11:15:00", "ADD_STRONG"))
-        db.insert_add_advisory_45m(self._entry("2026-09-02 12:00:00", "ADD_BLOCKED"))
+        db.insert_add_advisory_30m(self._entry("2026-09-02 11:00:00", "ADD_STRONG"))
+        db.insert_add_advisory_30m(self._entry("2026-09-02 12:00:00", "ADD_BLOCKED"))
 
         with self._state_env():
             entry = get_latest_add_advisory_entry(
@@ -65,14 +65,14 @@ class TestCloudReportStatePaths(unittest.TestCase):
             )
 
         self.assertEqual(entry["add_advisory_state"], "ADD_STRONG")
-        self.assertEqual(entry["bar_timestamp"], "2026-09-02 11:15:00")
+        self.assertEqual(entry["bar_timestamp"], "2026-09-02 11:00:00")
 
     def test_02_report_sidecar_uses_1120_kst_completed_bar(self):
         db = MagicMock()
         db.get_latest_add_advisory_for_stock.return_value = None
-        db.insert_add_advisory_45m.return_value = True
+        db.insert_add_advisory_30m.return_value = True
         engine = MagicMock()
-        engine.evaluate_stock_advisory.return_value = self._entry("2026-09-02 11:15:00", "ADD_STRONG")
+        engine.evaluate_stock_advisory.return_value = self._entry("2026-09-02 11:00:00", "ADD_STRONG")
         asof = datetime(2026, 9, 2, 11, 20, tzinfo=ZoneInfo("Asia/Seoul"))
 
         inserted = _ensure_report_add_advisories(
@@ -80,12 +80,12 @@ class TestCloudReportStatePaths(unittest.TestCase):
         )
 
         self.assertEqual(inserted, 1)
-        self.assertEqual(engine.evaluate_stock_advisory.call_args.kwargs["bar_timestamp"], "2026-09-02 11:15:00")
+        self.assertEqual(engine.evaluate_stock_advisory.call_args.kwargs["bar_timestamp"], "2026-09-02 11:00:00")
 
     def test_03_report_sidecar_uses_1335_kst_completed_bar(self):
         db = MagicMock()
         db.get_latest_add_advisory_for_stock.return_value = None
-        db.insert_add_advisory_45m.return_value = True
+        db.insert_add_advisory_30m.return_value = True
         engine = MagicMock()
         engine.evaluate_stock_advisory.return_value = self._entry("2026-09-02 13:30:00", "ADD_BLOCKED")
         asof = datetime(2026, 9, 2, 13, 35, tzinfo=ZoneInfo("Asia/Seoul"))
@@ -97,7 +97,7 @@ class TestCloudReportStatePaths(unittest.TestCase):
     def test_04_report_sidecar_does_not_repeat_a_valid_completed_bar(self):
         db = MagicMock()
         db.get_latest_add_advisory_for_stock.return_value = self._entry(
-            "2026-09-02 11:15:00", "ADD_STRONG"
+            "2026-09-02 11:00:00", "ADD_STRONG"
         )
         engine = MagicMock()
         asof = datetime(2026, 9, 2, 11, 20, tzinfo=ZoneInfo("Asia/Seoul"))
@@ -106,7 +106,7 @@ class TestCloudReportStatePaths(unittest.TestCase):
 
         self.assertEqual(inserted, 0)
         engine.evaluate_stock_advisory.assert_not_called()
-        db.insert_add_advisory_45m.assert_not_called()
+        db.insert_add_advisory_30m.assert_not_called()
 
     def test_05_policy_writer_and_reader_share_cloud_state_db(self):
         held = [{

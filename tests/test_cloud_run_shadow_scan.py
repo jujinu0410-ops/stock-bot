@@ -4,8 +4,8 @@ Verifies:
 - SHADOW_SCAN mode and session code resolution
 - ZERO Gmail / ZERO Kakao / ZERO Orders
 - NO dispatch receipt created or checked (receipt isolation from INTRADAY/POSTMARKET)
-- 45m completed bar execution and partial bar skip
-- Duplicate scan prevention on the same completed 45m bar
+- 30m completed bar execution and partial bar skip
+- Duplicate scan prevention on the same completed 30m bar
 - GCS state bundle committed on successful scan
 - Fail-isolation: no impact on INTRADAY / POSTMARKET operations
 """
@@ -65,21 +65,21 @@ class TestCloudRunShadowScan(unittest.TestCase):
     # 1. Mode and Session Code Resolution
     # -------------------------------------------------------------------------
     def test_01_shadow_scan_mode_and_session_code_resolution(self):
-        # 09:50 KST (completes 09:45 bar)
+        # 09:50 KST (completes 09:30 bar)
         dt_0950 = datetime(2026, 9, 22, 9, 50, 0)
         code_0950 = resolve_session_code(dt_0950, "SHADOW_SCAN")
-        self.assertEqual(code_0950, "0945")
-        self.assertEqual(build_run_id(dt_0950, "SHADOW_SCAN"), "20260922_SHADOW_SCAN_0945")
+        self.assertEqual(code_0950, "0930")
+        self.assertEqual(build_run_id(dt_0950, "SHADOW_SCAN"), "20260922_SHADOW_SCAN_0930")
 
         # 10:35 KST (completes 10:30 bar)
         dt_1035 = datetime(2026, 9, 22, 10, 35, 0)
         code_1035 = resolve_session_code(dt_1035, "SHADOW_SCAN")
         self.assertEqual(code_1035, "1030")
 
-        # 11:20 KST (completes 11:15 bar)
+        # 11:20 KST (completes 11:00 bar)
         dt_1120 = datetime(2026, 9, 22, 11, 20, 0)
         code_1120 = resolve_session_code(dt_1120, "SHADOW_SCAN")
-        self.assertEqual(code_1120, "1115")
+        self.assertEqual(code_1120, "1100")
 
         # 15:05 KST (completes 15:00 bar)
         dt_1505 = datetime(2026, 9, 22, 15, 5, 0)
@@ -126,7 +126,7 @@ class TestCloudRunShadowScan(unittest.TestCase):
         runner.state_adapter.create_dispatch_receipt = MagicMock()
 
         with patch("src.runtime.runtime_scheduler.RuntimeScheduler._execute_intraday_shadow_scan", return_value={
-            "status": "SUCCESS", "stocks_scanned": 1, "journals_created": 1, "last_completed_45m_bar": "2026-09-22 09:45:00"
+            "status": "SUCCESS", "stocks_scanned": 1, "journals_created": 1, "last_completed_30m_bar": "2026-09-22 09:30:00"
         }):
             res = runner.run()
 
@@ -152,7 +152,7 @@ class TestCloudRunShadowScan(unittest.TestCase):
 
         with patch("src.notifications.gmail_notifier.GmailNotifier") as mock_notifier:
             with patch("src.runtime.runtime_scheduler.RuntimeScheduler._execute_intraday_shadow_scan", return_value={
-                "status": "SUCCESS", "stocks_scanned": 1, "journals_created": 0, "last_completed_45m_bar": "2026-09-22 10:30:00"
+                "status": "SUCCESS", "stocks_scanned": 1, "journals_created": 0, "last_completed_30m_bar": "2026-09-22 10:30:00"
             }):
                 runner.run()
             # GmailNotifier was never instantiated
@@ -186,7 +186,7 @@ class TestCloudRunShadowScan(unittest.TestCase):
 
     def test_07_duplicate_bar_skips_without_gcs_commit(self):
         """Re-running SHADOW_SCAN for the same bar timestamp skips duplicate execution."""
-        # Insert previous successful scheduler_run for 09:45:00
+        # Insert previous successful scheduler_run for 09:30:00
         self.db.insert_scheduler_run({
             "run_id": "PREV_RUN",
             "scheduled_time": "09:50",
@@ -198,7 +198,7 @@ class TestCloudRunShadowScan(unittest.TestCase):
             "stocks_scanned": 1,
             "journals_created": 0,
             "signal_changes": 0,
-            "last_completed_45m_bar": "2026-09-22 09:45:00",
+            "last_completed_30m_bar": "2026-09-22 09:30:00",
         })
 
         with patch("cloud_runner.get_current_kst_time", return_value=datetime(2026, 9, 22, 9, 50, 0)):
@@ -213,7 +213,7 @@ class TestCloudRunShadowScan(unittest.TestCase):
         runner.state_adapter.create_and_upload_bundle = MagicMock()
 
         res = runner.run()
-        self.assertEqual(res["status"], "SKIPPED_NO_NEW_45M_BAR")
+        self.assertEqual(res["status"], "SKIPPED_NO_NEW_30M_BAR")
         runner.state_adapter.create_and_upload_bundle.assert_not_called()
 
     # -------------------------------------------------------------------------
@@ -239,14 +239,14 @@ class TestCloudRunShadowScan(unittest.TestCase):
                 parser.parse_args([])
             self.assertEqual(cm.exception.code, 2)
 
-    def test_09_production_db_migration_creates_sell_warning_45m(self):
-        """Regression test: GCS production DB missing sell_warning_45m automatically creates table on startup."""
+    def test_09_production_db_migration_creates_sell_warning_30m(self):
+        """Regression test: GCS production DB missing sell_warning_30m automatically creates table on startup."""
         import sqlite3
         migration_db_path = self.state_dir / "data" / "test_migration.db"
         if migration_db_path.exists():
             migration_db_path.unlink()
 
-        # Create DB with only stock_info (simulating old production DB without sell_warning_45m)
+        # Create DB with only stock_info (simulating old production DB without sell_warning_30m)
         conn = sqlite3.connect(str(migration_db_path))
         conn.execute("CREATE TABLE stock_info (stock_code TEXT PRIMARY KEY, stock_name TEXT);")
         conn.commit()
@@ -255,30 +255,30 @@ class TestCloudRunShadowScan(unittest.TestCase):
         # Verify table does not exist yet
         conn = sqlite3.connect(str(migration_db_path))
         cur = conn.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sell_warning_45m'")
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sell_warning_30m'")
         self.assertIsNone(cur.fetchone())
         conn.close()
 
-        # Instantiating DatabaseManager runs _init_db() which must create sell_warning_45m
+        # Instantiating DatabaseManager runs _init_db() which must create sell_warning_30m
         db = DatabaseManager(db_path=str(migration_db_path))
 
         conn = sqlite3.connect(str(migration_db_path))
         cur = conn.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sell_warning_45m'")
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sell_warning_30m'")
         self.assertIsNotNone(cur.fetchone())
 
-        cur.execute("PRAGMA table_info(sell_warning_45m)")
+        cur.execute("PRAGMA table_info(sell_warning_30m)")
         cols = [r[1] for r in cur.fetchall()]
         self.assertIn("sell_confirmed", cols)
         self.assertIn("stock_code", cols)
         self.assertIn("bar_timestamp", cols)
         conn.close()
 
-        # Verify insert_sell_warning_45m succeeds
+        # Verify insert_sell_warning_30m succeeds
         entry = {
             "trading_date": "2026-09-23",
             "stock_code": "004960",
-            "bar_timestamp": "2026-09-23 09:45:00",
+            "bar_timestamp": "2026-09-23 09:30:00",
             "evaluated_at": "2026-09-23 09:50:00",
             "engine_version": "V1.0",
             "sell_warning_state": "SELL_WARNING",
@@ -287,7 +287,7 @@ class TestCloudRunShadowScan(unittest.TestCase):
             "reason_codes": "BEAR_TREND",
             "bearish_axes_count": 2,
         }
-        self.assertTrue(db.insert_sell_warning_45m(entry))
+        self.assertTrue(db.insert_sell_warning_30m(entry))
 
     # -------------------------------------------------------------------------
     # 8. KRX Trading Day Early Guard
@@ -323,9 +323,9 @@ class TestCloudRunShadowScan(unittest.TestCase):
             )
             fake_manifest = {"bundle_path": "test.zip"}
             with patch.object(runner.state_adapter, "download_current_state", return_value=(fake_manifest, 1)):
-                with patch("src.runtime.runtime_scheduler.RuntimeScheduler._execute_intraday_shadow_scan", return_value={"status": "SKIPPED_NO_NEW_45M_BAR"}) as mock_scan:
+                with patch("src.runtime.runtime_scheduler.RuntimeScheduler._execute_intraday_shadow_scan", return_value={"status": "SKIPPED_NO_NEW_30M_BAR"}) as mock_scan:
                     res = runner.run()
-                    self.assertEqual(res["status"], "SKIPPED_NO_NEW_45M_BAR")
+                    self.assertEqual(res["status"], "SKIPPED_NO_NEW_30M_BAR")
                     mock_scan.assert_called_once()
 
 

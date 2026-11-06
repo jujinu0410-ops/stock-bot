@@ -16,7 +16,7 @@ from tests.fixtures.sample_portfolio_fixture import SAMPLE_HELD_PORTFOLIO
 
 REQUIRED_SCHEMA = {
     "overlay_version", "overlay_scope", "overlay_status", "data_quality", "reason_codes",
-    "report_session", "report_asof_kst", "completed_45m_timestamp", "completed_close",
+    "report_session", "report_asof_kst", "completed_30m_timestamp", "completed_close",
     "bb_window", "bb_sigma", "bb_middle", "bb_upper", "bb_lower",
     "upper_confirmation_threshold", "lower_confirmation_threshold", "upper_confirmed",
     "lower_confirmed", "profit_basis", "profit_reference_price", "profit_state", "bb_mode",
@@ -79,19 +79,19 @@ class TestBollingerATRStrategy(unittest.TestCase):
         cutoff = strategy.resolve_cutoff(self.ASOF, session).strftime("%Y-%m-%d %H:%M:%S")
         source = raw if raw is not None else raw_15m(final_close, cutoff)
         item = base_item(avg_buy_price=avg_buy, **(item_updates or {}))
-        with patch.object(strategy.Intraday45mAnalyzer, "fetch_canonical_15m_data", return_value=(source, "TEST_15M_BAR_START", "NONE")), patch.object(strategy, "calculate_bb26_2", return_value=bb):
+        with patch.object(strategy.Intraday30mAnalyzer, "fetch_canonical_15m_data", return_value=(source, "TEST_15M_BAR_START", "NONE")), patch.object(strategy, "calculate_bb26_2", return_value=bb):
             return strategy.generate_bb_atr_advisory(item, self.ASOF, session, policy_row)
 
     def test_cutoffs_are_canonical_completed_times(self):
-        self.assertEqual(strategy.resolve_cutoff(self.ASOF, "1120").strftime("%H:%M"), "11:15")
+        self.assertEqual(strategy.resolve_cutoff(self.ASOF, "1120").strftime("%H:%M"), "11:00")
         self.assertEqual(strategy.resolve_cutoff(self.ASOF, "1335").strftime("%H:%M"), "13:30")
         self.assertEqual(strategy.resolve_cutoff(self.ASOF, "1535").strftime("%H:%M"), "15:00")
 
     def test_each_session_final_completed_timestamp(self):
-        for session, expected in (("1120", "11:15:00"), ("1335", "13:30:00"), ("1535", "15:00:00")):
+        for session, expected in (("1120", "11:00:00"), ("1335", "13:30:00"), ("1535", "15:00:00")):
             with self.subTest(session=session):
                 result = self.generate(final_close=10_500, avg_buy=9_000, session=session)
-                self.assertEqual(result["completed_45m_timestamp"], f"2026-09-11 {expected}")
+                self.assertEqual(result["completed_30m_timestamp"], f"2026-09-11 {expected}")
 
     def test_post_1500_partial_data_is_excluded(self):
         result = self.generate(final_close=10_500, avg_buy=9_000)
@@ -153,10 +153,10 @@ class TestBollingerATRStrategy(unittest.TestCase):
                 self.assertEqual(result["reason_codes"], [reason])
 
     def test_completed_bars_25_fail_closed(self):
-        completed = pd.DataFrame({"Close": np.arange(25) + 10_000}, index=pd.date_range("2026-09-10", periods=25, freq="45min"))
-        with patch.object(strategy, "get_strictly_sliced_45m_df", return_value=(completed, "TEST_15M_BAR_START", "VALID")):
+        completed = pd.DataFrame({"Close": np.arange(25) + 10_000}, index=pd.date_range("2026-09-10", periods=25, freq="30min"))
+        with patch.object(strategy, "get_strictly_sliced_30m_df", return_value=(completed, "TEST_15M_BAR_START", "VALID")):
             result = strategy.generate_bb_atr_advisory(base_item(), self.ASOF, "1535")
-        self.assertEqual(result["reason_codes"], ["INSUFFICIENT_COMPLETED_45M_BARS"])
+        self.assertEqual(result["reason_codes"], ["INSUFFICIENT_COMPLETED_30M_BARS"])
 
     def test_malformed_bollinger_fails_closed(self):
         result = self.generate(final_close=10_000, avg_buy=9_000, bb=(10_000, 10_000, 11_000))
@@ -166,19 +166,19 @@ class TestBollingerATRStrategy(unittest.TestCase):
         cutoff = strategy.resolve_cutoff(self.ASOF, "1535")
         raw = raw_15m()
         duplicate = pd.concat([raw.iloc[:1], raw]).sort_index()
-        frame, reason = strategy.prepare_completed_45m_data(duplicate, "TEST_15M_BAR_START", cutoff)
+        frame, reason = strategy.prepare_completed_30m_data(duplicate, "TEST_15M_BAR_START", cutoff)
         self.assertIsNone(frame)
         self.assertEqual(reason, "DUPLICATE_TIMESTAMP")
-        frame, reason = strategy.prepare_completed_45m_data(raw.iloc[::-1], "TEST_15M_BAR_START", cutoff)
+        frame, reason = strategy.prepare_completed_30m_data(raw.iloc[::-1], "TEST_15M_BAR_START", cutoff)
         self.assertIsNone(frame)
         self.assertEqual(reason, "NON_MONOTONIC_TIMESTAMP")
         irregular = raw.drop(pd.Timestamp("2026-09-11 10:45"))
-        frame, reason = strategy.prepare_completed_45m_data(irregular, "TEST_15M_BAR_START", cutoff)
+        frame, reason = strategy.prepare_completed_30m_data(irregular, "TEST_15M_BAR_START", cutoff)
         self.assertIsNone(frame)
         self.assertIn(reason, {"MALFORMED_INTERVAL", "PARTIAL_BAR_CONTAMINATION"})
 
     def test_unknown_timestamp_semantics_fail_closed(self):
-        frame, reason = strategy.prepare_completed_45m_data(raw_15m(), "UNKNOWN_SOURCE", strategy.resolve_cutoff(self.ASOF, "1535"))
+        frame, reason = strategy.prepare_completed_30m_data(raw_15m(), "UNKNOWN_SOURCE", strategy.resolve_cutoff(self.ASOF, "1535"))
         self.assertIsNone(frame)
         self.assertEqual(reason, "UNSUPPORTED_TIMESTAMP_SEMANTICS")
 
@@ -246,7 +246,7 @@ class TestBollingerATRStrategy(unittest.TestCase):
     def test_overlay_does_not_mutate_v4_fields(self):
         item = base_item()
         before = copy.deepcopy(item)
-        with patch.object(strategy.Intraday45mAnalyzer, "fetch_canonical_15m_data", return_value=(raw_15m(), "TEST_15M_BAR_START", "NONE")):
+        with patch.object(strategy.Intraday30mAnalyzer, "fetch_canonical_15m_data", return_value=(raw_15m(), "TEST_15M_BAR_START", "NONE")):
             strategy.generate_bb_atr_advisory(item, self.ASOF, "1535")
         for field in ("action_status", "trade_mode", "recommended_order_qty", "confirmed_stop_price", "prev_confirmed_stop", "profit_trail", "effective_exit_line", "auto_order_enabled"):
             self.assertEqual(item[field], before[field])

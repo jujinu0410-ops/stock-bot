@@ -11,7 +11,7 @@ from src.database.db_manager import DatabaseManager
 
 class TestPhase3TechnicalGate(unittest.TestCase):
     """
-    Phase 3: 45분봉 Technical Gate 검증 테스트 스위트
+    Phase 3: 30분봉 Technical Gate 검증 테스트 스위트
     - F/T 판정 검증 및 강등 (승격 불가)
     - 1차 신규매수, 2차 눌림목 추매, 3차 고점 돌파 추매, 보유종목 위험관리 게이트
     - Data Quality와 TechnicalState의 완전 분리
@@ -73,7 +73,7 @@ class TestPhase3TechnicalGate(unittest.TestCase):
         self.assertTrue(gate_res["gate_passed"])
 
     def test_03_on_plus_weak_results_in_buy_wait(self):
-        """3. ON + WEAK ➔ BUY_WAIT (45m 수급 약세로 신규진입 보류)"""
+        """3. ON + WEAK ➔ BUY_WAIT (30m 수급 약세로 신규진입 보류)"""
         # WEAK 복합조건: DMI Bear + OBV Dead + CHO Outflow
         state_res = TechnicalGate.evaluate_technical_state(
             data_quality="🟢 VALID",
@@ -124,7 +124,7 @@ class TestPhase3TechnicalGate(unittest.TestCase):
         """5. ON + INVALID ➔ BUY_WAIT_DATA (데이터 수집 대기)"""
         gate_res = TechnicalGate.evaluate_new_buy_gate(
             is_ft_approved=True,
-            data_quality="🔴 INVALID (45분봉 데이터 미수집/오류)",
+            data_quality="🔴 INVALID (30분봉 데이터 미수집/오류)",
             tech_state="UNKNOWN"
         )
         self.assertEqual(gate_res["technical_action"], "BUY_WAIT_DATA")

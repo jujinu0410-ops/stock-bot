@@ -5,7 +5,7 @@ Comprehensive Phase 1 Cloud Run Job & GCS State Bundle Test Suite
 Updated to cover:
 1. GCS Immutable Dispatch Receipt Idempotency (Order: Commit -> Gmail -> Receipt, generation_match=0)
 2. REPORT_MODE Fail-Closed (Strict validation, no auto-detection, delayed execution preservation)
-3. 45m Bar Authority (No hardcoded 11:15/15:30 timestamps, reuses analyzer raw fields)
+3. 30m Bar Authority (No hardcoded 11:15/15:30 timestamps, reuses analyzer raw fields)
 4. Policy DATA_UNAVAILABLE Graceful Handling (V4 mail proceeds, Policy failure visible, no action numbers)
 5. 3-State Machine & Prepared Dispatch (ALREADY_COMPLETED / RESUME_PENDING_EMAIL / FRESH)
 6. FIX-1 (Resume without V4/Policy/state mutation) & FIX-2 (report_payload Fail-Closed)
@@ -430,10 +430,10 @@ class TestCloudRunPhase1(unittest.TestCase):
         self.assertEqual(ptr_blob.generation, initial_gen)
 
     # =========================================================================
-    # Group 3: Single-Shot Policy Shadow & 45m Authority (Tests 19-25)
+    # Group 3: Single-Shot Policy Shadow & 30m Authority (Tests 19-25)
     # =========================================================================
 
-    def test_19_policy_observer_does_not_fabricate_45m_timestamp(self):
+    def test_19_policy_observer_does_not_fabricate_30m_timestamp(self):
         """19. Cloud Policy observer does not fabricate or hardcode 11:15/15:30 timestamps."""
         held_no_ts = [{
             "stock_code": "005930",
@@ -448,11 +448,11 @@ class TestCloudRunPhase1(unittest.TestCase):
         }]
         snaps = observe_report_policy_shadow(self.db, held_no_ts, "RUN_NO_TS", asof_dt=datetime(2026, 9, 1, 11, 20), policy_store=self.policy_store)
         self.assertEqual(len(snaps), 1)
-        self.assertIsNone(snaps[0]["completed_45m_timestamp"])
+        self.assertIsNone(snaps[0]["completed_30m_timestamp"])
 
-    def test_20_policy_observer_reuses_authoritative_45m_raw_fields(self):
-        """20. Cloud Policy observer reuses authoritative is_45m_bearish_2plus and is_45m_breakdown."""
-        held_with_45m = [{
+    def test_20_policy_observer_reuses_authoritative_30m_raw_fields(self):
+        """20. Cloud Policy observer reuses authoritative is_30m_bearish_2plus and is_30m_breakdown."""
+        held_with_30m = [{
             "stock_code": "005930",
             "stock_name": "삼성전자",
             "quantity": 10,
@@ -461,16 +461,16 @@ class TestCloudRunPhase1(unittest.TestCase):
             "atr_14": 1500.0,
             "f_score": 80.0,
             "t_score": 75.0,
-            "is_45m_bearish_2plus": True,
-            "is_45m_breakdown": False,
-            "completed_45m_timestamp": "2026-09-01 11:15:00",
+            "is_30m_bearish_2plus": True,
+            "is_30m_breakdown": False,
+            "completed_30m_timestamp": "2026-09-01 11:00:00",
             "is_etf": False,
         }]
-        snaps = observe_report_policy_shadow(self.db, held_with_45m, "RUN_45M_RAW", asof_dt=datetime(2026, 9, 1, 11, 20), policy_store=self.policy_store)
+        snaps = observe_report_policy_shadow(self.db, held_with_30m, "RUN_30M_RAW", asof_dt=datetime(2026, 9, 1, 11, 20), policy_store=self.policy_store)
         self.assertEqual(len(snaps), 1)
-        self.assertEqual(snaps[0]["is_45m_bearish_2plus"], 1)
-        self.assertEqual(snaps[0]["is_45m_breakdown"], 0)
-        self.assertEqual(snaps[0]["completed_45m_timestamp"], "2026-09-01 11:15:00")
+        self.assertEqual(snaps[0]["is_30m_bearish_2plus"], 1)
+        self.assertEqual(snaps[0]["is_30m_breakdown"], 0)
+        self.assertEqual(snaps[0]["completed_30m_timestamp"], "2026-09-01 11:00:00")
 
     def test_21_policy_failure_preserves_v4_mail_and_sets_data_unavailable(self):
         """21. Policy observation failure logs warning, maintains V4 report generation, and sets DATA_UNAVAILABLE."""
@@ -564,7 +564,7 @@ class TestCloudRunPhase1(unittest.TestCase):
             "atr_14": 1500.0,
             "f_score": 80.0,
             "t_score": 30.0,
-            "is_45m_bearish_2plus": 1,
+            "is_30m_bearish_2plus": 1,
             "is_etf": False,
         }]
         snaps = observe_report_policy_shadow(self.db, held_loss, "RUN_DEFENSE", asof_dt=datetime(2026, 9, 4, 11, 20), policy_store=self.policy_store)

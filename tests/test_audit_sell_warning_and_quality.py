@@ -10,7 +10,7 @@ os.environ["STOCKBOT_TEST_MODE"] = "1"
 
 from src.policy.policy_shadow_observer import observe_report_policy_shadow
 from src.runtime.runtime_scheduler import RuntimeScheduler
-from src.analysis.sell_warning_45m_engine import SellWarning45mEngine
+from src.analysis.sell_warning_30m_engine import SellWarning30mEngine
 
 
 class TestAuditSellWarningAndQuality(unittest.TestCase):
@@ -25,7 +25,7 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
             "market_price": 71000.0,
             "data_validity_flag": 0,
             "trade_mode": "ACTIVE",
-            "completed_45m_timestamp": "2026-10-22 15:00:00",
+            "completed_30m_timestamp": "2026-10-22 15:00:00",
         }]
         with patch("src.policy.policy_shadow_observer.PolicyShadowService") as mock_svc_cls:
             mock_svc = MagicMock()
@@ -52,7 +52,7 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
                 "market_price": 71000.0,
                 "data_validity_flag": 1,
                 "trade_mode": "ACTIVE",
-                "completed_45m_timestamp": "2026-10-22 15:00:00",
+                "completed_30m_timestamp": "2026-10-22 15:00:00",
             }]
             observe_report_policy_shadow(mock_db, held_valid, "RUN_TEST_V", asof_dt=datetime(2026, 10, 22, 15, 5), policy_store=mock_store)
             call_raw_v = mock_svc.observe.call_args[0][0]
@@ -64,14 +64,14 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
                 "avg_buy_price": 70000.0,
                 "market_price": 71000.0,
                 "trade_mode": "ACTIVE",
-                "completed_45m_timestamp": "2026-10-22 15:00:00",
+                "completed_30m_timestamp": "2026-10-22 15:00:00",
             }]
             observe_report_policy_shadow(mock_db, held_none, "RUN_TEST_N", asof_dt=datetime(2026, 10, 22, 15, 5), policy_store=mock_store)
             call_raw_n = mock_svc.observe.call_args[0][0]
             self.assertIsNone(call_raw_n["data_validity"])
 
     def test_policy_shadow_filters_unaligned_completed_timestamp(self):
-        """Execution timestamps like 11:20 or 15:02 must NOT be accepted as completed 45m bar ts."""
+        """Execution timestamps like 11:20 or 15:02 must NOT be accepted as completed 30m bar ts."""
         mock_db = MagicMock()
         mock_store = MagicMock()
         with patch("src.policy.policy_shadow_observer.PolicyShadowService") as mock_svc_cls:
@@ -86,17 +86,17 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
                 "market_price": 71000.0,
                 "data_validity_flag": 1,
                 "trade_mode": "ACTIVE",
-                "completed_45m_timestamp": "2026-10-22 11:20:00",
+                "completed_30m_timestamp": "2026-10-22 11:20:00",
             }]
             observe_report_policy_shadow(mock_db, held, "RUN_TEST_UNALIGNED", asof_dt=datetime(2026, 10, 22, 11, 20, 5), policy_store=mock_store)
             call_raw_unaligned = mock_svc.observe.call_args[0][0]
-            self.assertIsNone(call_raw_unaligned["completed_45m_timestamp"], "Unaligned 11:20:00 must be rejected")
+            self.assertIsNone(call_raw_unaligned["completed_30m_timestamp"], "Unaligned 11:20:00 must be rejected")
 
             # Canonical bar end (11:15:00) must be accepted
-            held[0]["completed_45m_timestamp"] = "2026-10-22 11:15:00"
+            held[0]["completed_30m_timestamp"] = "2026-10-22 11:00:00"
             observe_report_policy_shadow(mock_db, held, "RUN_TEST_ALIGNED", asof_dt=datetime(2026, 10, 22, 11, 20, 5), policy_store=mock_store)
             call_raw_aligned = mock_svc.observe.call_args[0][0]
-            self.assertEqual(call_raw_aligned["completed_45m_timestamp"], "2026-10-22 11:15:00")
+            self.assertEqual(call_raw_aligned["completed_30m_timestamp"], "2026-10-22 11:00:00")
 
     def test_runtime_scheduler_propagates_intraday_data_quality(self):
         """RuntimeScheduler must propagate the actual engine data quality instead of hardcoding VALID."""
@@ -154,22 +154,22 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
             for value, expected in [("VALID", 1), ("INVALID", 0), ("PARTIAL", 0), ("UNKNOWN", None), (None, None), (0, 0)]:
                 with self.subTest(value=value):
                     held = [{"stock_code": "005930", "quantity": 1, "data_validity_flag": value,
-                             "completed_45m_timestamp": "2026-10-22 15:00:01"}]
+                             "completed_30m_timestamp": "2026-10-22 15:00:01"}]
                     observe_report_policy_shadow(None, held, "TEST", datetime(2026, 10, 22, 15, 5), MagicMock())
                     raw = service.observe.call_args.args[0]
                     self.assertEqual(raw["data_validity"], expected)
-                    self.assertIsNone(raw["completed_45m_timestamp"])
+                    self.assertIsNone(raw["completed_30m_timestamp"])
 
     def test_runtime_policy_uses_observed_bar_not_scheduled_cutoff(self):
         scheduler = RuntimeScheduler.__new__(RuntimeScheduler)
         scheduler.db = MagicMock()
         scheduler.db.execute_query.return_value = [{"stock_code": "005930", "data_validity_flag": "UNKNOWN"}]
         with patch("src.policy.policy_shadow_store.PolicyShadowService") as cls, patch("src.policy.policy_shadow_store.PolicyShadowStore"):
-            for timestamp, expected in [("2026-10-22 14:15:00", "2026-10-22 14:15:00"), (None, None), ("2026-10-22 15:00:00", None)]:
-                scheduler._capture_policy_shadow({"stock_code": "005930", "completed_45m_timestamp": timestamp},
+            for timestamp, expected in [("2026-10-22 14:30:00", "2026-10-22 14:30:00"), (None, None), ("2026-10-22 15:00:00", None)]:
+                scheduler._capture_policy_shadow({"stock_code": "005930", "completed_30m_timestamp": timestamp},
                     "2026-10-22", "2026-10-22 14:50:00", "2026-10-22 15:00:00", "TEST")
                 raw = cls.return_value.observe.call_args.args[0]
-                self.assertEqual(raw["completed_45m_timestamp"], expected)
+                self.assertEqual(raw["completed_30m_timestamp"], expected)
                 self.assertIsNone(raw["data_validity"])
 
     def test_sidecar_guards_against_none_and_unaligned_bar_ts(self):
@@ -197,7 +197,7 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
 
     def test_sell_warning_diagnoses_cutoff_mismatch_feed_delay(self):
         """When 15m data lags behind cutoff, CUTOFF_MISMATCH reason code must detail data feed delay."""
-        engine = SellWarning45mEngine(intraday_analyzer=MagicMock())
+        engine = SellWarning30mEngine(intraday_analyzer=MagicMock())
         # Use TEST_15M_BAR_START which is recognized by _source_interval_minutes
         idx = pd.date_range("2026-10-22 09:00", "2026-10-22 14:30", freq="15min")
         mock_df = pd.DataFrame({"Open": 100.0, "High": 105.0, "Low": 95.0, "Close": 100.0, "Volume": 1000.0}, index=idx)
@@ -210,7 +210,7 @@ class TestAuditSellWarningAndQuality(unittest.TestCase):
         self.assertEqual(result["data_quality"], "INVALID (CUTOFF_MISMATCH)")
 
 
-class TestObservedCompleted45mContract(unittest.TestCase):
+class TestObservedCompleted30mContract(unittest.TestCase):
     """Conservative source-observed completion, never synthetic cutoff."""
 
     @staticmethod
@@ -219,35 +219,30 @@ class TestObservedCompleted45mContract(unittest.TestCase):
                              "Close": 100.0, "Volume": 1000.0}, index=timestamps)
 
     def test_three_yfinance_left_labelled_bars_verify_one_completed_window(self):
-        from src.analysis.intraday_analysis import Intraday45mAnalyzer
-        bars = self.candles(pd.date_range("2026-10-22 09:00", periods=3,
-                                          freq="15min", tz="Asia/Seoul"))
-        got = Intraday45mAnalyzer.observed_completed_45m_end(
-            bars, "YFINANCE_15M (005930.KS)", now="2026-10-22 09:46:00+09:00")
-        self.assertEqual(got, "2026-10-22 09:45:00")
+        from src.analysis.intraday_analysis import Intraday30mAnalyzer as A
+        bars=self.candles(pd.date_range("2026-10-22 09:00",periods=3,freq="15min",tz="Asia/Seoul"))
+        bars.attrs["source_watermark"]="2026-10-22T09:31:00+09:00"
+        # Two source intervals prove 09:30; the partial 09:30 next interval
+        # must not replace it or be folded into the completed candle.
+        self.assertEqual(A.observed_completed_30m_end(bars,"YFINANCE_15M_RAW_CHART",now="2026-10-22T09:31:00+09:00"),"2026-10-22 09:30:00")
 
     def test_partial_next_window_missing_bar_wrong_source_and_stale_are_unverified(self):
-        from src.analysis.intraday_analysis import Intraday45mAnalyzer as A
-        bars = pd.date_range("2026-10-22 09:00", periods=3,
-                             freq="15min", tz="Asia/Seoul")
-        def get(idx, src="YFINANCE_15M (005930.KS)", at="2026-10-22 09:48:00+09:00"):
-            return A.observed_completed_45m_end(self.candles(idx), src, now=at)
-        self.assertIsNone(get(bars[:2]))
-        self.assertIsNone(get(bars.delete(1)))
-        self.assertIsNone(get(bars.append(pd.DatetimeIndex([pd.Timestamp("2026-10-22 09:45", tz="Asia/Seoul")]))))
-        self.assertIsNone(get(bars[:2].append(pd.DatetimeIndex([pd.Timestamp("2026-10-22 09:45", tz="Asia/Seoul")]))))
-        later = pd.date_range("2026-10-22 10:30", periods=4, freq="15min", tz="Asia/Seoul")
-        self.assertEqual(get(later[:3], at="2026-10-22 11:20:00+09:00"),
-                         "2026-10-22 11:15:00")
-        self.assertIsNone(get(bars.append(later), at="2026-10-22 11:20:00+09:00"))
-        self.assertIsNone(get(bars, "NAVER_MINUTE_API"))
-        self.assertIsNone(get(bars.tz_localize(None)))
-        self.assertIsNone(get(bars, at="2026-10-22 09:45:30+09:00"))
-        self.assertIsNone(get(bars, at="2026-10-22 11:10:00+09:00"))
-        self.assertIsNone(get(bars, at="2026-10-23 09:48:00+09:00"))
+        from src.analysis.intraday_analysis import Intraday30mAnalyzer as A
+        index=pd.date_range("2026-10-22 09:00",periods=2,freq="15min",tz="Asia/Seoul")
+        def observe(index,source="YFINANCE_15M_RAW_CHART",at="2026-10-22T09:31:00+09:00",watermark="2026-10-22T09:31:00+09:00"):
+            raw=self.candles(index)
+            if watermark is not None:raw.attrs["source_watermark"]=watermark
+            return A.observed_completed_30m_end(raw,source,now=at)
+        self.assertIsNone(observe(index[:1]))
+        self.assertIsNone(observe(index,watermark=None))
+        self.assertIsNone(observe(index,watermark="2026-10-22T09:29:59+09:00"))
+        self.assertIsNone(observe(index,source="UNVERIFIED_SOURCE"))
+        self.assertIsNone(observe(index,at="2026-10-22T09:29:59+09:00"))
+        self.assertIsNone(observe(index,at="2026-10-22T10:01:00+09:00",watermark="2026-10-22T10:01:00+09:00"))
+        self.assertIsNone(observe(index,at="2026-10-23T09:31:00+09:00",watermark="2026-10-23T09:31:00+09:00"))
 
     def test_analyzer_exposes_provenance_without_promoting_left_resample_index(self):
-        from src.analysis.intraday_analysis import Intraday45mAnalyzer as A
+        from src.analysis.intraday_analysis import Intraday30mAnalyzer as A
         analyzer = A()
         # Two days of distinct left-labelled 15m candles, no network access.
         idx = pd.DatetimeIndex([
@@ -255,12 +250,13 @@ class TestObservedCompleted45mContract(unittest.TestCase):
             for stamp in pd.date_range(day + " 09:00", periods=24, freq="15min", tz="Asia/Seoul")
         ])
         data = self.candles(idx)
+        data.attrs["source_watermark"]="2026-10-22T15:01:00+09:00"
         with patch.object(analyzer, "fetch_canonical_15m_data",
                           return_value=(data, "YFINANCE_15M (005930.KS)", "NONE")), \
-             patch.object(analyzer, "observed_completed_45m_end", return_value=None):
-            result = analyzer.analyze_45m_indicators("005930")
-        self.assertTrue(result["has_45m_data"], result)
-        self.assertIsNone(result["completed_45m_timestamp"])
+             patch.object(analyzer, "observed_completed_30m_end", return_value=None):
+            result = analyzer.analyze_30m_indicators("005930", asof_dt=datetime(2026,10,22,15,1))
+        self.assertTrue(result["has_30m_data"], result)
+        self.assertIsNone(result["completed_30m_timestamp"])
         self.assertNotEqual(result["intraday_last_timestamp"], "N/A")
 
 

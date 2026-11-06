@@ -171,7 +171,7 @@ class TestMobileRendererV2(unittest.TestCase):
         ]
         FORBIDDEN_HTML_STRINGS = [
             '5단계 매매 대응전략 매트릭스',
-            '일봉/45분봉 수급 원자값 연동 표',
+            '일봉/30분봉 수급 원자값 연동 표',
             '내 계좌 보유 종목 정밀 평가',
             '관심 종목 리포트',
             '신규 매수 신호',
@@ -689,8 +689,8 @@ class TestMobileRendererV2(unittest.TestCase):
                     except Exception:
                         pass
 
-    def test_19_freshness_guard_morning_before_first_45m_bar(self):
-        """테스트 19: 08:30~09:49 아침 메일 생성 시 전일 신호 재사용 금지 및 '당일 45분봉 대기' 표시 검증"""
+    def test_19_freshness_guard_morning_before_first_30m_bar(self):
+        """테스트 19: 08:30~09:49 아침 메일 생성 시 전일 신호 재사용 금지 및 '당일 30분봉 대기' 표시 검증"""
         from src.notifications.mobile_renderer_v2 import (
             get_latest_add_advisory_entry,
             format_advisory_evidence_korean,
@@ -706,7 +706,7 @@ class TestMobileRendererV2(unittest.TestCase):
         try:
             db = DatabaseManager(db_path)
             # 전일(2026-08-27) 15:00 VALID ADD_STRONG 데이터 적재
-            db.insert_add_advisory_45m({
+            db.insert_add_advisory_30m({
                 "trading_date": "2026-08-27",
                 "stock_code": "004960",
                 "bar_timestamp": "2026-08-27 15:00:00",
@@ -730,7 +730,7 @@ class TestMobileRendererV2(unittest.TestCase):
             badge, action = format_add_advisory_badge_and_action(entry["add_advisory_state"])
             self.assertEqual(action, "<span style='color:#64748B;'>데이터 확인</span>")
             evidence = format_advisory_evidence_korean(entry)
-            self.assertEqual(evidence, "당일 45분봉 대기")
+            self.assertEqual(evidence, "당일 30분봉 대기")
 
             # HTML 리포트 생성 검증
             html_out = generate_mobile_html_report_v2(
@@ -741,7 +741,7 @@ class TestMobileRendererV2(unittest.TestCase):
                 held_portfolio=FIXTURE_NORMAL,
                 db_manager=db
             )
-            self.assertIn("당일 45분봉 대기", html_out)
+            self.assertIn("당일 30분봉 대기", html_out)
             self.assertIn("데이터 확인", html_out)
             self.assertNotIn("추가매수 검토", html_out)
         finally:
@@ -767,21 +767,21 @@ class TestMobileRendererV2(unittest.TestCase):
         try:
             db = DatabaseManager(db_path)
             # 오늘 09:45 봉 적재
-            db.insert_add_advisory_45m({
+            db.insert_add_advisory_30m({
                 "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 09:45:00",
                 "evaluated_at": "2026-08-28 09:50:00 KST",
                 "vwap_state": "VWAP_GOLD", "obv_state": "OBV_GOLD", "obv_gap_state": "EXPANDING", "chaikin_state": "CHAIKIN_RISING",
                 "add_advisory_state": "ADD_STRONG", "data_quality": "VALID (40 bars)"
             })
             # 오늘 10:30 봉 적재
-            db.insert_add_advisory_45m({
+            db.insert_add_advisory_30m({
                 "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 10:30:00",
                 "evaluated_at": "2026-08-28 10:35:00 KST",
                 "vwap_state": "VWAP_GOLD", "obv_state": "OBV_GOLD", "obv_gap_state": "CONTRACTING", "chaikin_state": "CHAIKIN_FALLING",
                 "add_advisory_state": "ADD_WATCH", "data_quality": "VALID (40 bars)"
             })
             # 오늘 15:00 봉 적재
-            db.insert_add_advisory_45m({
+            db.insert_add_advisory_30m({
                 "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 15:00:00",
                 "evaluated_at": "2026-08-28 15:05:00 KST",
                 "vwap_state": "VWAP_DEAD", "obv_state": "OBV_DEAD", "obv_gap_state": "EXPANDING", "chaikin_state": "CHAIKIN_FALLING",
@@ -827,7 +827,7 @@ class TestMobileRendererV2(unittest.TestCase):
         try:
             db = DatabaseManager(db_path)
             # 전일 데이터만 존재
-            db.insert_add_advisory_45m({
+            db.insert_add_advisory_30m({
                 "trading_date": "2026-08-27", "stock_code": "004960", "bar_timestamp": "2026-08-27 15:00:00",
                 "evaluated_at": "2026-08-27 15:05:00 KST",
                 "add_advisory_state": "ADD_STRONG", "data_quality": "VALID (40 bars)"
@@ -837,7 +837,7 @@ class TestMobileRendererV2(unittest.TestCase):
             entry = get_latest_add_advisory_entry("004960", target_date="2026-08-28", max_bar_timestamp="2026-08-28 14:00:00", db_manager=db)
             self.assertEqual(entry["add_advisory_state"], "UNKNOWN")
             self.assertNotEqual(entry.get("bar_timestamp"), "2026-08-27 15:00:00")
-            self.assertEqual(format_advisory_evidence_korean(entry), "당일 45분봉 대기")
+            self.assertEqual(format_advisory_evidence_korean(entry), "당일 30분봉 대기")
         finally:
             if os.path.exists(db_path):
                 try:
@@ -857,13 +857,13 @@ class TestMobileRendererV2(unittest.TestCase):
         try:
             db = DatabaseManager(db_path)
             # 오늘 09:45 봉 (과거)
-            db.insert_add_advisory_45m({
+            db.insert_add_advisory_30m({
                 "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 09:45:00",
                 "evaluated_at": "2026-08-28 09:50:00 KST",
                 "add_advisory_state": "ADD_STRONG", "data_quality": "VALID (40 bars)"
             })
             # 미래 11:15 봉 (아직 오지 않은 시각)
-            db.insert_add_advisory_45m({
+            db.insert_add_advisory_30m({
                 "trading_date": "2026-08-28", "stock_code": "004960", "bar_timestamp": "2026-08-28 11:15:00",
                 "evaluated_at": "2026-08-28 11:20:00 KST",
                 "add_advisory_state": "ADD_BLOCKED", "data_quality": "VALID (40 bars)"

@@ -5,7 +5,7 @@ GoogleFinance 장중감시 Sheet Exporter (Sidecar)
 - Google Sheet용 Excel 템플릿('보유관심종목_GoogleFinance_장중감시.xlsx') 생성
 - WATCHLIST 탭: Active, 종목명, 시장, 종목코드, Ticker
 - LIVE 탭: GOOGLEFINANCE 수식 연동 (price, changepct/100, volume, volumeavg, volume ratio, high, low, high52, high52 distance, tradetime, datadelay, data quality)
-- Shadow V1.0, ATR V4, 45M ADD ADVISORY 코어에 완전 무영향 독립 사이드카
+- Shadow V1.0, ATR V4, 30M ADD ADVISORY 코어에 완전 무영향 독립 사이드카
 """
 
 from pathlib import Path

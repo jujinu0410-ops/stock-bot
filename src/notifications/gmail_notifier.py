@@ -190,6 +190,10 @@ class GmailNotifier:
         disclosures: Optional[List[Dict[str, Any]]] = None,
         policy_display: Optional[Dict[str, Any]] = None,
         marketcap_radar_items: Optional[List[Dict[str, Any]]] = None,
+        report_session: Optional[str] = None,
+        recent_alerts: Optional[Dict[str, Any]] = None,
+        intraday_holdings: Optional[List[Dict[str, Any]]] = None,
+        intraday_db_manager: Any = None,
     ) -> str:
         """
         환경변수 EMAIL_RENDER_VERSION에 따라 V1 또는 V2 렌더러로 라우팅 (V2 예외 시 V1 Fallback 절대 금지 및 RuntimeError 발생)
@@ -201,6 +205,14 @@ class GmailNotifier:
         if render_ver == "V2":
             self.fallback_occurred = False
             try:
+                if report_session in ("1120", "1335"):
+                    from src.notifications.intraday_renderer import generate_intraday_html_report
+                    return generate_intraday_html_report(
+                        date_str=date_str,
+                        held_portfolio=intraday_holdings if intraday_holdings is not None else held_portfolio,
+                        disclosures=disclosures, policy_display=policy_display,
+                        recent_alerts=recent_alerts, db_manager=intraday_db_manager,
+                    )
                 return generate_mobile_html_report_v2(
                     date_str=date_str,
                     total_count=total_count,
@@ -407,11 +419,11 @@ class GmailNotifier:
                 else:
                     name_formatted = name
 
-                adx_45m = h.get('adx_14_45m', 0.0)
+                adx_30m = h.get('adx_14_30m', 0.0)
                 if trade_mode == "SUSPENDED_HOLD" or code == "234920":
-                    atr_display_html = f'<span style="font-weight:bold; color:#64748B;">N/A (거래정지)</span><br><span style="font-size:9px; color:#64748B;">45m: N/A</span>'
+                    atr_display_html = f'<span style="font-weight:bold; color:#64748B;">N/A (거래정지)</span><br><span style="font-size:9px; color:#64748B;">30m: N/A</span>'
                 else:
-                    atr_display_html = f'<span style="font-weight:bold; color:#334155;">{atr_display}</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">45m ADX: {adx_45m:.1f}</span>'
+                    atr_display_html = f'<span style="font-weight:bold; color:#334155;">{atr_display}</span><br><span style="font-size:9px; color:#4338CA; font-weight:bold;">30m ADX: {adx_30m:.1f}</span>'
 
                 held_rows_html += f"""
                 <tr style="border-bottom:1px solid #E2E8F0; font-size:11px;">
@@ -433,7 +445,7 @@ class GmailNotifier:
                 
                 if trade_mode == "SUSPENDED_HOLD" or code == "234920":
                     obv_daily_html = '<span style="color:#64748B; font-weight:bold;">N/A</span>'
-                    obv_45m_html = '<span style="color:#64748B; font-weight:bold;">N/A</span>'
+                    obv_30m_html = '<span style="color:#64748B; font-weight:bold;">N/A</span>'
                     daily_cho_html = '<span style="color:#64748B;">[N/A, N/A]</span>'
                     intra_cho_html = '<span style="color:#64748B;">[N/A, N/A]</span>'
                     di_dom_html = '<span style="color:#64748B;">N/A (거래정지)</span>'
@@ -443,8 +455,8 @@ class GmailNotifier:
                     obv_d_days = h.get('obv_dead_elapsed_days', 0)
                     obv_daily_html = f'<span style="color:#1D4ED8; font-weight:bold;">{obv_d_date} ({obv_d_days}일차)</span>' if obv_d_date != "N/A" and "상승" not in obv_d_date and obv_d_days >= 1 else '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
 
-                    is_45m_obv_dead = h.get('is_obv_dead', False) or (h.get('obv_45m_trend', '') and '데드' in h.get('obv_45m_trend', ''))
-                    obv_45m_html = '<span style="color:#1D4ED8; font-weight:bold;">45m 이탈</span>' if is_45m_obv_dead else '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
+                    is_30m_obv_dead = h.get('is_obv_dead', False) or (h.get('obv_30m_trend', '') and '데드' in h.get('obv_30m_trend', ''))
+                    obv_30m_html = '<span style="color:#1D4ED8; font-weight:bold;">30m 이탈</span>' if is_30m_obv_dead else '<span style="color:#DC2626; font-size:14px; font-weight:bold;">▲</span>'
 
                     daily_cho_html = format_cho_array_html(h.get('daily_cho_recent2', [0, 0]))
                     intra_cho_html = format_cho_array_html(h.get('intraday_cho_recent2', [0, 0]))
@@ -456,7 +468,7 @@ class GmailNotifier:
                     <td style="padding:6px 6px; background:#EFF6FF; text-align:center;">{colored_strategy_html}</td>
                     <td style="padding:6px 4px; font-weight:bold; color:#0F172A;">{name} <span style="font-size:9.5px; color:#64748B; font-weight:normal;">({code})</span></td>
                     <td style="padding:6px 4px; text-align:center;">{obv_daily_html}</td>
-                    <td style="padding:6px 4px; text-align:center;">{obv_45m_html}</td>
+                    <td style="padding:6px 4px; text-align:center;">{obv_30m_html}</td>
                     <td style="padding:6px 4px; text-align:center;">{daily_cho_html}</td>
                     <td style="padding:6px 4px; text-align:center;">{intra_cho_html}</td>
                     <td style="padding:6px 4px; color:#475569;">{di_dom_html}</td>
@@ -523,7 +535,7 @@ class GmailNotifier:
             held_section_html = f"""
             {swing_section_html}
             <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; padding:14px; margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.03);">
-                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">⏱️ 5단계 매매 대응전략 매트릭스 및 일봉/45분봉 수급 원자값 연동 표</h3>
+                <h3 style="margin-top:0; color:#4338CA; font-size:14px; margin-bottom:8px;">⏱️ 5단계 매매 대응전략 매트릭스 및 일봉/30분봉 수급 원자값 연동 표</h3>
                 <div style="font-size:11px; color:#64748B; margin-bottom:10px;">※ 매도대응 및 위험관리 종목 우선 배치 ➔ 종합점수 오름차순(낮은 순) 정렬</div>
                 <table style="width:100%; border-collapse:collapse; font-size:11px;">
                     <thead>
@@ -531,9 +543,9 @@ class GmailNotifier:
                             <th style="padding:6px 6px; background:#EFF6FF; color:#1E40AF; text-align:center;">대응 전략</th>
                             <th style="padding:6px 4px;">종목명 (코드)</th>
                             <th style="padding:6px 4px; text-align:center;">OBV (데드발생일자)</th>
-                            <th style="padding:6px 4px; text-align:center;">45m OBV</th>
+                            <th style="padding:6px 4px; text-align:center;">30m OBV</th>
                             <th style="padding:6px 4px; text-align:center;">일봉 Chaikin 최근2봉</th>
-                            <th style="padding:6px 4px; text-align:center;">45m Chaikin 최근2봉</th>
+                            <th style="padding:6px 4px; text-align:center;">30m Chaikin 최근2봉</th>
                             <th style="padding:6px 4px;">ADX +DI/-DI 우세방향</th>
                         </tr>
                     </thead>

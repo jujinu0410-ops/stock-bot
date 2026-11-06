@@ -19,7 +19,7 @@ class TestPolicyShadowLive(unittest.TestCase):
 
     def raw(self, code="000001", day="2026-08-20", price=100.0, qty=10, avg=100.0, f=70, t=50, loss=0, atr=10, bear=False, breakdown=False, valid=1, suspension="ACTIVE", concentration="CLEAR", daily="NEUTRAL", risk_target_qty=25, is_etf=False):
         self.seq += 1
-        return {"asof_timestamp": f"{day} 10:{self.seq:02d}:00", "source_identifier": f"S{self.seq}", "stock_code": code, "market_price": price, "quantity": qty, "weighted_avg_price": avg, "loss_pct": loss, "atr14": atr, "f_score": f, "t_score": t, "daily_state": daily, "is_45m_bearish_2plus": int(bear), "is_45m_breakdown": int(breakdown), "is_45m_bearish_gate": int(bear or breakdown), "completed_45m_timestamp": f"{day} 09:45:00", "concentration_state": concentration, "data_validity": valid, "suspension_state": suspension, "v4_effective_stop": 90.0, "risk_target_qty": risk_target_qty, "is_etf": is_etf}
+        return {"asof_timestamp": f"{day} 10:{self.seq:02d}:00", "source_identifier": f"S{self.seq}", "stock_code": code, "market_price": price, "quantity": qty, "weighted_avg_price": avg, "loss_pct": loss, "atr14": atr, "f_score": f, "t_score": t, "daily_state": daily, "is_30m_bearish_2plus": int(bear), "is_30m_breakdown": int(breakdown), "is_30m_bearish_gate": int(bear or breakdown), "completed_30m_timestamp": f"{day} 09:30:00", "concentration_state": concentration, "data_validity": valid, "suspension_state": suspension, "v4_effective_stop": 90.0, "risk_target_qty": risk_target_qty, "is_etf": is_etf}
 
     def obs(self, raw, boot=()): return self.service.observe(raw, list(boot))
     def legacy(self, **kw): return self.obs(self.raw(**kw), (kw.get("code", "000001"),))
@@ -33,7 +33,7 @@ class TestPolicyShadowLive(unittest.TestCase):
     def test_02_schema_has_two_core_tables(self):
         import sqlite3
         c = sqlite3.connect(self.store.db_path)
-        try: self.assertTrue({"policy_shadow_cycles", "policy_shadow_snapshots"}.issubset({r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}))
+        try: self.assertTrue({"policy_shadow_cycles_m30", "policy_shadow_snapshots_m30"}.issubset({r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}))
         finally: c.close()
     def test_03_snapshot_append(self): self.legacy(); self.assertEqual(self.store.counts(), (1, 1))
     def test_04_duplicate_source_is_idempotent(self):
@@ -50,7 +50,7 @@ class TestPolicyShadowLive(unittest.TestCase):
     def test_12_stage2_ready(self): self.assertEqual(self.obs(self.new_three_days())["stage2_gate"],"STAGE2_READY")
     def test_missing_completed_bar_cannot_open_stage2_or_promote(self):
         raw = self.new_three_days()
-        raw.update(completed_45m_timestamp=None, quantity=11)
+        raw.update(completed_30m_timestamp=None, quantity=11)
         self.assertEqual(self.obs(raw)["stage2_gate"], "NOT_READY")
         self.assertEqual(self.store.latest_cycle("000001")["stage"], 1)
 
@@ -58,7 +58,7 @@ class TestPolicyShadowLive(unittest.TestCase):
         self.new_three_days()
         self.obs(self.raw(day="2026-08-24", t=55, price=106, qty=11))
         raw = self.raw(day="2026-08-25", t=60, price=108, qty=18)
-        raw["completed_45m_timestamp"] = None
+        raw["completed_30m_timestamp"] = None
         self.assertEqual(self.obs(raw)["stage3_gate"], "NOT_READY")
         self.assertEqual(self.store.latest_cycle("000001")["stage"], 2)
     def test_13_ready_does_not_raise_stage(self): self.new_three_days(); self.assertEqual(self.store.latest_cycle("000001")["stage"],1)
@@ -101,11 +101,11 @@ class TestPolicyShadowLive(unittest.TestCase):
     def test_40_runtime_policy_store_failure_is_isolated(self):
         scheduler = RuntimeScheduler.__new__(RuntimeScheduler); scheduler.db = MagicMock()
         with patch("src.policy.policy_shadow_store.PolicyShadowStore", side_effect=RuntimeError("store down")):
-            scheduler._capture_policy_shadow({"stock_code":"000001"}, "2026-08-24", "2026-08-24 10:00:00", "2026-08-24 09:45:00", "RUN")
+            scheduler._capture_policy_shadow({"stock_code":"000001"}, "2026-08-24", "2026-08-24 10:00:00", "2026-08-24 09:30:00", "RUN")
     def test_41_runtime_policy_calculation_failure_is_isolated(self):
         scheduler = RuntimeScheduler.__new__(RuntimeScheduler); scheduler.db = MagicMock()
         with patch("src.policy.policy_shadow_store.PolicyShadowService.observe", side_effect=RuntimeError("calc down")):
-            scheduler._capture_policy_shadow({"stock_code":"000001", "market_price":100, "existing_f_score":70, "t_score":50, "atr14":10}, "2026-08-24", "2026-08-24 10:00:00", "2026-08-24 09:45:00", "RUN")
+            scheduler._capture_policy_shadow({"stock_code":"000001", "market_price":100, "existing_f_score":70, "t_score":50, "atr14":10}, "2026-08-24", "2026-08-24 10:00:00", "2026-08-24 09:30:00", "RUN")
 
     def test_42_authoritative_f_is_preserved_not_defaulted(self):
         self.obs(self.raw(f=56), ())
@@ -155,12 +155,12 @@ class TestPolicyShadowLive(unittest.TestCase):
             scheduler.db = MagicMock()
             scheduler.db.execute_query.side_effect = [[position], [{"stock_code": "000001"}]]
             with patch("src.policy.policy_shadow_store.PolicyShadowStore"), patch("src.policy.policy_shadow_store.PolicyShadowService.observe") as observe:
-                scheduler._capture_policy_shadow({"stock_code":"000001", "market_price":100, "existing_f_score":value, "t_score":50, "atr14":10}, "2026-08-24", "2026-08-24 10:00:00", "2026-08-24 09:45:00", "RUN")
+                scheduler._capture_policy_shadow({"stock_code":"000001", "market_price":100, "existing_f_score":value, "t_score":50, "atr14":10}, "2026-08-24", "2026-08-24 10:00:00", "2026-08-24 09:30:00", "RUN")
                 self.assertEqual(observe.call_args.args[0]["f_score"], value)
         scheduler.db = MagicMock()
         scheduler.db.execute_query.side_effect = [[position], [{"stock_code": "000001"}]]
         with patch("src.policy.policy_shadow_store.PolicyShadowStore"), patch("src.policy.policy_shadow_store.PolicyShadowService.observe") as observe:
-            scheduler._capture_policy_shadow({"stock_code":"000001", "market_price":100, "existing_f_score":50, "is_etf":True, "t_score":50, "atr14":10}, "2026-08-24", "2026-08-24 10:00:00", "2026-08-24 09:45:00", "RUN")
+            scheduler._capture_policy_shadow({"stock_code":"000001", "market_price":100, "existing_f_score":50, "is_etf":True, "t_score":50, "atr14":10}, "2026-08-24", "2026-08-24 10:00:00", "2026-08-24 09:30:00", "RUN")
             self.assertIsNone(observe.call_args.args[0]["f_score"])
 
     def test_50_regular_stock_f_score_preserved_in_snapshot_and_cycle(self):
@@ -201,7 +201,7 @@ class TestPolicyShadowLive(unittest.TestCase):
         ]
         te = TradingEngine(db_mock)
         with patch("src.engine.trading_engine.TechnicalAnalysis") as mock_ta, \
-             patch.object(te.intraday_analyzer, "analyze_45m_indicators", return_value={"intraday_quality": "VALID", "is_45m_bearish_2plus": False, "is_45m_breakdown": False}):
+             patch.object(te.intraday_analyzer, "analyze_30m_indicators", return_value={"intraday_quality": "VALID", "is_30m_bearish_2plus": False, "is_30m_breakdown": False}):
             mock_ta_inst = MagicMock()
             mock_ta_inst.evaluate_signals.return_value = {
                 "tech_completeness": 100.0, "t_raw": 80.0, "t_score": 80.0,

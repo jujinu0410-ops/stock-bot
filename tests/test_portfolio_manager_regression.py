@@ -101,7 +101,7 @@ class TestPortfolioManagerRegression(unittest.TestCase):
 
         # 평가 수행
         with patch(
-            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            "src.analysis.intraday_analysis.Intraday30mAnalyzer.fetch_canonical_15m_data",
             return_value=_normal_intraday_response(70000.0),
         ):
             held_status = self.pm.get_held_portfolio_status()

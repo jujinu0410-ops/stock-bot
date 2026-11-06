@@ -19,15 +19,15 @@ from src.policy.policy_shadow_engine import (
 
 
 class TestPolicyShadowEngine(unittest.TestCase):
-    def test_01_mid_loss_t_minus_8_triggers_when_45m_bearish(self):
+    def test_01_mid_loss_t_minus_8_triggers_when_30m_bearish(self):
         self.assertEqual(
-            evaluate_loss_defense(loss_pct=-20.0, t_change_3d=-8.0, is_45m_bearish=True),
+            evaluate_loss_defense(loss_pct=-20.0, t_change_3d=-8.0, is_30m_bearish=True),
             LOSS_DEFENSE_ON,
         )
 
-    def test_02_deep_loss_t_minus_5_triggers_when_45m_bearish(self):
+    def test_02_deep_loss_t_minus_5_triggers_when_30m_bearish(self):
         self.assertEqual(
-            evaluate_loss_defense(loss_pct=-30.0, t_change_3d=-5.0, is_45m_bearish=True),
+            evaluate_loss_defense(loss_pct=-30.0, t_change_3d=-5.0, is_30m_bearish=True),
             LOSS_DEFENSE_ON,
         )
 
@@ -98,7 +98,7 @@ class TestPolicyShadowEngine(unittest.TestCase):
 
     def test_14_missing_historical_input_does_not_get_inferred(self):
         self.assertEqual(
-            evaluate_loss_defense(loss_pct=None, t_change_3d=-10.0, is_45m_bearish=None),
+            evaluate_loss_defense(loss_pct=None, t_change_3d=-10.0, is_30m_bearish=None),
             LOSS_DEFENSE_NOT_DETERMINABLE,
         )
         self.assertEqual(t_gate_for_loss_band(None, -10.0), DATA_GAP)

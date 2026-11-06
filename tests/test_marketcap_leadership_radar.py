@@ -127,7 +127,7 @@ class TestMarketCapLeadershipRadar(unittest.TestCase):
 
         self.assertNotIn("📊 시총 리더십 레이더", html_out)
         self.assertNotIn("전 거래일/최근 GoogleFinance 기준", html_out)
-        self.assertIn("45M ADD ADVISORY", html_out)
+        self.assertIn("30M ADD ADVISORY", html_out)
         self.assertIn("📊 전체 보유종목 현황", html_out)
 
 

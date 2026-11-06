@@ -82,7 +82,7 @@ def audit(db_path: Path) -> int:
         held_codes = [row[0] for row in conn.execute("SELECT stock_code FROM portfolio_positions ORDER BY stock_code")]
         print("Policy Shadow Phase 1 — Offline Retrospective (read-only)")
         print("Position class: LEGACY_POSITION; NEW_433_CYCLE stages are not reconstructed.")
-        print("| 종목 | T 3D 변화 | T Gate | 손실 Gate | 45m Gate | LOSS_DEFENSE | 0.6/0.4 | Hard Stop | 계산등급 | DATA_GAP 이유 |")
+        print("| 종목 | T 3D 변화 | T Gate | 손실 Gate | 30m Gate | LOSS_DEFENSE | 0.6/0.4 | Hard Stop | 계산등급 | DATA_GAP 이유 |")
         print("|---|---:|---|---|---|---|---|---|---|---|")
 
         for stock_code in held_codes:
@@ -106,7 +106,7 @@ def audit(db_path: Path) -> int:
                 t_gate = f"MID={'PASS' if t_change <= -8 else 'FAIL'}; DEEP={'PASS' if t_change <= -5 else 'FAIL'}"
             loss_gate = DATA_GAP
             bearish_gate = DATA_GAP
-            loss_defense = evaluate_loss_defense(loss_pct=None, t_change_3d=t_change, is_45m_bearish=None)
+            loss_defense = evaluate_loss_defense(loss_pct=None, t_change_3d=t_change, is_30m_bearish=None)
 
             atr = latest["atr14"] if latest else None
             daily = _daily_ranges(conn, stock_code)
@@ -133,7 +133,7 @@ def audit(db_path: Path) -> int:
             else:
                 hard_display = f"RETRO=DATA_GAP; CURRENT_ONLY={current_status} @ {current_hard_stop.hard_stop:.1f}"
 
-            gaps = ["historical loss_pct", "persisted is_45m_bearish", "historical avg_buy_price"]
+            gaps = ["historical loss_pct", "persisted is_30m_bearish", "historical avg_buy_price"]
             if len(daily) != len(WINDOW_DATES):
                 gaps.append("daily OHLC window incomplete")
             if start is None or latest is None:

@@ -3,8 +3,8 @@ from src.utils.logger import logger
 
 class TechnicalGate:
     """
-    Phase 3: 45분봉 Technical Gate Engine.
-    - 45분봉 지표(ADX/DMI 14, OBV 9, Chaikin 13/26, 일목 구름대)를 활용하여
+    Phase 3: 30분봉 Technical Gate Engine.
+    - 30분봉 지표(ADX/DMI 14, OBV 9, Chaikin 13/26, 일목 구름대)를 활용하여
       기존 F/T 매수판정을 검증·세분화(Gate)하고 보유종목의 비중축소/관망 전술을 판정합니다.
     - 원칙:
       1) F/T 점수, 가중치, ATR Risk Engine, DB 로직 일체 불변.
@@ -28,7 +28,7 @@ class TechnicalGate:
         is_cloud_breakdown: bool = False
     ) -> Dict[str, Any]:
         """
-        45분봉 원천 지표로부터 TechnicalState(STRONG/NEUTRAL/WEAK/DAMAGED/UNKNOWN)를 판정합니다.
+        30분봉 원천 지표로부터 TechnicalState(STRONG/NEUTRAL/WEAK/DAMAGED/UNKNOWN)를 판정합니다.
         """
         if intraday_cho_recent2 is None:
             intraday_cho_recent2 = [0, 0]
@@ -37,14 +37,14 @@ class TechnicalGate:
         if "INVALID" in data_quality:
             return {
                 "technical_state": "UNKNOWN",
-                "state_summary": "45분봉 데이터 미수집/오류",
+                "state_summary": "30분봉 데이터 미수집/오류",
                 "reasons": ["데이터 결측으로 기술상태 판정 불가"]
             }
 
         if "PARTIAL" in data_quality and (adx_14 == 0.0 and plus_di == 0.0 and intraday_cho_recent2 == [0, 0]):
             return {
                 "technical_state": "UNKNOWN",
-                "state_summary": "45분봉 지표 계산용 데이터 부족",
+                "state_summary": "30분봉 지표 계산용 데이터 부족",
                 "reasons": ["분봉 수급 지표 산출 미완료"]
             }
 
@@ -84,11 +84,11 @@ class TechnicalGate:
         # WEAK = DMI Bear AND OBV Bear AND Chaikin Bear (3개 지표 동시 악화)
         is_composite_weak = is_dmi_bear and is_obv_bear and is_cho_bear
 
-        # DAMAGED = 복합 악화 + 45m 일목 구름 하단 이탈
+        # DAMAGED = 복합 악화 + 30m 일목 구름 하단 이탈
         if is_composite_weak and is_cloud_breakdown:
             tech_state = "DAMAGED"
             state_summary = "복합 수급 붕괴 및 구름 하단 이탈 (심각)"
-            reasons.append("45분봉 일목 구름대 하단 완전 이탈")
+            reasons.append("30분봉 일목 구름대 하단 완전 이탈")
         elif is_composite_weak:
             tech_state = "WEAK"
             state_summary = "DMI-/OBV데드/CHO유출 3대 복합 수급 악화"
@@ -137,38 +137,38 @@ class TechnicalGate:
         if "INVALID" in data_quality or tech_state == "UNKNOWN":
             return {
                 "technical_action": "BUY_WAIT_DATA",
-                "action_description": "45분봉 데이터 미수집 또는 부족 (데이터 확인 대기)",
+                "action_description": "30분봉 데이터 미수집 또는 부족 (데이터 확인 대기)",
                 "gate_passed": False
             }
 
         if tech_state == "DAMAGED":
             return {
                 "technical_action": "BUY_BLOCKED",
-                "action_description": "45분봉 복합 수급 붕괴 및 구름 이탈 (매수 전면 차단)",
+                "action_description": "30분봉 복합 수급 붕괴 및 구름 이탈 (매수 전면 차단)",
                 "gate_passed": False
             }
         elif tech_state == "WEAK":
             return {
                 "technical_action": "BUY_WAIT",
-                "action_description": "45분봉 복합 수급 약세 (DMI-/OBV데드/CHO유출 - 진입 보류/관망)",
+                "action_description": "30분봉 복합 수급 약세 (DMI-/OBV데드/CHO유출 - 진입 보류/관망)",
                 "gate_passed": False
             }
         elif tech_state == "NEUTRAL":
             return {
                 "technical_action": "BUY_ALLOWED_CONDITIONAL",
-                "action_description": "45분봉 수급 중립/혼조 (1차 50% 조건부 분할매수 승인)",
+                "action_description": "30분봉 수급 중립/혼조 (1차 50% 조건부 분할매수 승인)",
                 "gate_passed": True
             }
         elif tech_state == "STRONG":
             return {
                 "technical_action": "BUY_ALLOWED",
-                "action_description": "45분봉 전 지표 상방 정렬 (1차 50% 신규 진입 승인)",
+                "action_description": "30분봉 전 지표 상방 정렬 (1차 50% 신규 진입 승인)",
                 "gate_passed": True
             }
         else:
             return {
                 "technical_action": "BUY_WAIT_DATA",
-                "action_description": "45분봉 상태 미확정 (대기)",
+                "action_description": "30분봉 상태 미확정 (대기)",
                 "gate_passed": False
             }
 
@@ -195,19 +195,19 @@ class TechnicalGate:
         if "INVALID" in data_quality or tech_state in ("WEAK", "DAMAGED", "UNKNOWN"):
             return {
                 "technical_action": "ADD_BLOCKED",
-                "action_description": "2차 반등 시도 중 45분봉 수급 훼손/데이터이상 (추매 차단)",
+                "action_description": "2차 반등 시도 중 30분봉 수급 훼손/데이터이상 (추매 차단)",
                 "gate_passed": False
             }
         elif tech_state == "NEUTRAL":
             return {
                 "technical_action": "ADD_WAIT",
-                "action_description": "45분봉 수급 중립 (확실한 상방 반등 확인 대기)",
+                "action_description": "30분봉 수급 중립 (확실한 상방 반등 확인 대기)",
                 "gate_passed": False
             }
         elif tech_state == "STRONG":
             return {
                 "technical_action": "ADD_ALLOWED",
-                "action_description": "45분봉 수급 상방 반등 확인 (2차 30% 추가매수 승인)",
+                "action_description": "30분봉 수급 상방 반등 확인 (2차 30% 추가매수 승인)",
                 "gate_passed": True
             }
         else:
@@ -240,20 +240,20 @@ class TechnicalGate:
         if "INVALID" in data_quality or tech_state in ("WEAK", "DAMAGED", "UNKNOWN"):
             return {
                 "technical_action": "ADD_BLOCKED",
-                "action_description": "고점 돌파 중 45분봉 수급 훼손 (3차 추매 차단)",
+                "action_description": "고점 돌파 중 30분봉 수급 훼손 (3차 추매 차단)",
                 "gate_passed": False
             }
 
         if is_dmi_bull and is_obv_bull and is_cho_bull and tech_state == "STRONG":
             return {
                 "technical_action": "ADD_ALLOWED",
-                "action_description": "고점 돌파 및 45분봉 강력 상방 추세 유지 (3차 20% 상승확인 추매 승인)",
+                "action_description": "고점 돌파 및 30분봉 강력 상방 추세 유지 (3차 20% 상승확인 추매 승인)",
                 "gate_passed": True
             }
         else:
             return {
                 "technical_action": "ADD_WAIT",
-                "action_description": "45분봉 추세 지속성 추가 확인 필요 (3차 추매 보류)",
+                "action_description": "30분봉 추세 지속성 추가 확인 필요 (3차 추매 보류)",
                 "gate_passed": False
             }
 
@@ -282,19 +282,19 @@ class TechnicalGate:
         if tech_state == "DAMAGED" or (tech_state == "WEAK" and is_cloud_breakdown):
             return {
                 "technical_action": "REDUCE_CONSIDER",
-                "action_description": "45분봉 복합 수급 붕괴 및 구름 하향 이탈 (비중 축소 적극 고려)",
+                "action_description": "30분봉 복합 수급 붕괴 및 구름 하향 이탈 (비중 축소 적극 고려)",
                 "preemptive_warning": True
             }
         elif tech_state == "WEAK" and consecutive_weak_bars >= 2:
             return {
                 "technical_action": "PREEMPTIVE_REDUCE_WARNING",
-                "action_description": "45분봉 복합 수급 악화 지속 (선제적 위험 관리 경고)",
+                "action_description": "30분봉 복합 수급 악화 지속 (선제적 위험 관리 경고)",
                 "preemptive_warning": True
             }
         elif tech_state == "WEAK":
             return {
                 "technical_action": "HOLD",
-                "action_description": "45분봉 단기 수급 약세 (추매 금지 및 기존 ATR 손절선 기준 HOLD)",
+                "action_description": "30분봉 단기 수급 약세 (추매 금지 및 기존 ATR 손절선 기준 HOLD)",
                 "preemptive_warning": False
             }
         else:

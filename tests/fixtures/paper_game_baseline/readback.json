@@ -1,0 +1,50 @@
+{
+  "at": "2026-11-03T05:09:42.928Z",
+  "files": [
+    {
+      "name": "Code.js",
+      "sha256": "c116cb6f5d56eeeabb0f231c9794448e6de5708892cd1a7dbaeab7843d4bba20",
+      "unchangedSinceAudit": true
+    },
+    {
+      "name": "DailyCloseSync.js",
+      "sha256": "0f499497396dd84415737a8494b5fe97a90606ffd2908f562d81e0b531e8cae9",
+      "unchangedSinceAudit": true
+    },
+    {
+      "name": "ETFWatch.js",
+      "sha256": "91e829da2d6ea0207fafac83c506c40566321aee6b43943cbbb33f9553083958",
+      "unchangedSinceAudit": true
+    },
+    {
+      "name": "HeldMonitor5m_v1.js",
+      "sha256": "77ac4494fa6a8578a3676880455a66fca01955073e1ee624de90903d9d8e9d90",
+      "unchangedSinceAudit": true
+    },
+    {
+      "name": "Index.html",
+      "sha256": "514e73889adb97f160daf67bc6172f72e86926ec53a76231c630a1142d592648",
+      "unchangedSinceAudit": true
+    },
+    {
+      "name": "PaperGame.js",
+      "sha256": "4964f303e780c9980129cc0b6a47552a0163199a93fb1aa588116cce300ced83",
+      "unchangedSinceAudit": true
+    },
+    {
+      "name": "PaperGameD.js",
+      "sha256": "523efacf9ad228cab4dd1971920c0c98ab9f85195e3791f3b33bb2c85e24e0dd",
+      "unchangedSinceAudit": true
+    },
+    {
+      "name": "UnifiedWatchlists.js",
+      "sha256": "768a06cf24d8480569d1b8e32541341318905a1c6f2fddfd296c37429c3e2db1",
+      "unchangedSinceAudit": true
+    },
+    {
+      "name": "WebApp.js",
+      "sha256": "837dab145006ab00b4c7323e5ec266efb6a893255cdb1f4211a0435412058b4d",
+      "unchangedSinceAudit": true
+    }
+  ]
+}

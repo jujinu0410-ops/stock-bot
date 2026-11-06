@@ -31,6 +31,20 @@ class DatabaseManager:
                 )
 
         self._init_db()
+        # Add M30 metadata columns without renaming or changing M45 history.
+        from contextlib import closing
+        with closing(self.get_connection()) as conn:
+            for row in list(conn.execute("SELECT name FROM sqlite_master WHERE type='table'")):
+                table=row[0]
+                if not table.replace('_','').isalnum():continue
+                columns=list(conn.execute('PRAGMA table_info("'+table+'")'))
+                names={c[1] for c in columns}
+                for column in columns:
+                    old=column[1];newname=old.replace('45m','30m').replace('45M','30M')
+                    if newname!=old and newname not in names:
+                        conn.execute('ALTER TABLE "'+table+'" ADD COLUMN "'+newname+'" '+(column[2] or 'TEXT'))
+            conn.commit()
+
 
     def get_connection(self) -> sqlite3.Connection:
         """데이터베이스 커넥션 생성 및 반환 (디렉토리 자동 생성)"""
@@ -281,11 +295,11 @@ class DatabaseManager:
                 cursor.execute("DELETE FROM dart_financials WHERE quarter_code = 'Q4' OR stock_code IN ('161510', '490590', '088500', '371460', '484730')")
                 cursor.execute("DELETE FROM kiwoom_daily WHERE stk_date IN ('20260808', '20260809') OR strftime('%w', substr(stk_date, 1, 4) || '-' || substr(stk_date, 5, 2) || '-' || substr(stk_date, 7, 2)) IN ('0', '6')")
 
-                # sell_warning_45m 컬럼 마이그레이션
-                cursor.execute("PRAGMA table_info(sell_warning_45m)")
+                # sell_warning_30m 컬럼 마이그레이션
+                cursor.execute("PRAGMA table_info(sell_warning_30m)")
                 sw_cols = [row[1] for row in cursor.fetchall()]
                 if sw_cols and "sell_confirmed" not in sw_cols:
-                    cursor.execute("ALTER TABLE sell_warning_45m ADD COLUMN sell_confirmed INTEGER DEFAULT 0;")
+                    cursor.execute("ALTER TABLE sell_warning_30m ADD COLUMN sell_confirmed INTEGER DEFAULT 0;")
 
                 conn.commit()
                 logger.info("모든 DB 테이블 및 인덱스 초기화 완료")
@@ -1312,12 +1326,12 @@ class DatabaseManager:
                 run_id, scheduled_time, actual_start_time, actual_end_time,
                 trading_date, task_type, status,
                 stocks_scanned, journals_created, signal_changes,
-                last_completed_45m_bar, error_code, error_message
+                last_completed_30m_bar, error_code, error_message
             ) VALUES (
                 :run_id, :scheduled_time, :actual_start_time, :actual_end_time,
                 :trading_date, :task_type, :status,
                 :stocks_scanned, :journals_created, :signal_changes,
-                :last_completed_45m_bar, :error_code, :error_message
+                :last_completed_30m_bar, :error_code, :error_message
             )
         """
         params = {
@@ -1331,7 +1345,7 @@ class DatabaseManager:
             "stocks_scanned": int(run.get("stocks_scanned", 0)),
             "journals_created": int(run.get("journals_created", 0)),
             "signal_changes": int(run.get("signal_changes", 0)),
-            "last_completed_45m_bar": run.get("last_completed_45m_bar"),
+            "last_completed_30m_bar": run.get("last_completed_30m_bar"),
             "error_code": run.get("error_code"),
             "error_message": run.get("error_message")
         }
@@ -1378,12 +1392,12 @@ class DatabaseManager:
         return dict(rows[0])
 
     # =========================================================================
-    # Phase 1: 45m ADD ADVISORY Persistence Methods
+    # Phase 1: 30m ADD ADVISORY Persistence Methods
     # =========================================================================
-    def insert_add_advisory_45m(self, entry: Dict[str, Any]) -> bool:
-        """45m ADD ADVISORY 레코드 저장 (UNIQUE(stock_code, bar_timestamp) 중복 적재 방지)"""
+    def insert_add_advisory_30m(self, entry: Dict[str, Any]) -> bool:
+        """30m ADD ADVISORY 레코드 저장 (UNIQUE(stock_code, bar_timestamp) 중복 적재 방지)"""
         query = """
-            INSERT OR IGNORE INTO add_advisory_45m (
+            INSERT OR IGNORE INTO add_advisory_30m (
                 trading_date, stock_code, bar_timestamp, evaluated_at,
                 vwap9, vwap26, vwap_state, vwap_cross_state, vwap_cross_age,
                 obv, obv9, obv_state, obv_gap, obv_gap_delta, obv_gap_state,
@@ -1447,45 +1461,45 @@ class DatabaseManager:
         trading_date: Optional[str] = None,
         max_bar_timestamp: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """특정 종목의 가장 최근 45m ADD ADVISORY 조회 (trading_date 및 max_bar_timestamp 지정 시 Freshness 필터링)"""
+        """특정 종목의 가장 최근 30m ADD ADVISORY 조회 (trading_date 및 max_bar_timestamp 지정 시 Freshness 필터링)"""
         if trading_date and max_bar_timestamp:
-            query = "SELECT * FROM add_advisory_45m WHERE stock_code = ? AND trading_date = ? AND bar_timestamp <= ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
+            query = "SELECT * FROM add_advisory_30m WHERE stock_code = ? AND trading_date = ? AND bar_timestamp <= ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
             rows = self.execute_query(query, (stock_code, trading_date, max_bar_timestamp))
         elif trading_date:
-            query = "SELECT * FROM add_advisory_45m WHERE stock_code = ? AND trading_date = ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
+            query = "SELECT * FROM add_advisory_30m WHERE stock_code = ? AND trading_date = ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
             rows = self.execute_query(query, (stock_code, trading_date))
         else:
-            query = "SELECT * FROM add_advisory_45m WHERE stock_code = ? ORDER BY id DESC LIMIT 1"
+            query = "SELECT * FROM add_advisory_30m WHERE stock_code = ? ORDER BY id DESC LIMIT 1"
             rows = self.execute_query(query, (stock_code,))
         if not rows:
             return None
         return dict(rows[0])
 
     def get_add_advisories_by_date(self, trading_date: str) -> List[Dict[str, Any]]:
-        """특정 거래일의 45m ADD ADVISORY 목록 조회"""
-        query = "SELECT * FROM add_advisory_45m WHERE trading_date = ? ORDER BY id ASC"
+        """특정 거래일의 30m ADD ADVISORY 목록 조회"""
+        query = "SELECT * FROM add_advisory_30m WHERE trading_date = ? ORDER BY id ASC"
         rows = self.execute_query(query, (trading_date,))
         return [dict(r) for r in rows] if rows else []
 
     # =========================================================================
-    # 45m SELL WARNING Sidecar Persistence (isolated from scan_journal/orders)
+    # 30m SELL WARNING Sidecar Persistence (isolated from scan_journal/orders)
     # =========================================================================
-    def insert_sell_warning_45m(self, entry: Dict[str, Any]) -> bool:
-        """45m sell-warning 저장; 동일 종목/완성봉은 최초 1건만 보존."""
+    def insert_sell_warning_30m(self, entry: Dict[str, Any]) -> bool:
+        """30m sell-warning 저장; 동일 종목/완성봉은 최초 1건만 보존."""
         columns = (
             "trading_date", "stock_code", "bar_timestamp", "evaluated_at",
             "engine_version", "sell_warning_state", "sell_confirmed", "data_quality", "reason_codes",
             "bearish_axes_count", "price_weakness", "obv_weakness",
             "chaikin_weakness", "bear_trend", "chaikin_recovery_conflict",
-            "bull_trend_conflict", "vwap_dead", "is_price_below_cloud_45m",
-            "completed_45m_timestamp", "completed_45m_bar_count", "vwap9", "vwap26",
-            "close_45m", "cloud_bottom_45m", "obv", "obv_wma9", "obv_gap",
+            "bull_trend_conflict", "vwap_dead", "is_price_below_cloud_30m",
+            "completed_30m_timestamp", "completed_30m_bar_count", "vwap9", "vwap26",
+            "close_30m", "cloud_bottom_30m", "obv", "obv_wma9", "obv_gap",
             "obv_gap_delta", "obv_gap_state", "chaikin_value", "chaikin_delta",
-            "chaikin_state", "adx_14_45m", "plus_di_45m", "minus_di_45m",
+            "chaikin_state", "adx_14_30m", "plus_di_30m", "minus_di_30m",
         )
         placeholders = ", ".join("?" for _ in columns)
         query = (
-            f"INSERT OR IGNORE INTO sell_warning_45m ({', '.join(columns)}) "
+            f"INSERT OR IGNORE INTO sell_warning_30m ({', '.join(columns)}) "
             f"VALUES ({placeholders})"
         )
         conn = None
@@ -1498,7 +1512,7 @@ class DatabaseManager:
         except Exception:
             if conn:
                 conn.rollback()
-            logger.error("45m sell-warning 저장 실패", exc_info=True)
+            logger.error("30m sell-warning 저장 실패", exc_info=True)
             return False
         finally:
             if conn:
@@ -1524,7 +1538,7 @@ class DatabaseManager:
             clauses.append("bar_timestamp < ?")
             params.append(before_bar_timestamp)
         query = (
-            "SELECT * FROM sell_warning_45m WHERE "
+            "SELECT * FROM sell_warning_30m WHERE "
             + " AND ".join(clauses)
             + " ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
         )
@@ -1533,7 +1547,7 @@ class DatabaseManager:
 
     def get_sell_warnings_by_date(self, trading_date: str) -> List[Dict[str, Any]]:
         rows = self.execute_query(
-            "SELECT * FROM sell_warning_45m WHERE trading_date = ? ORDER BY id ASC",
+            "SELECT * FROM sell_warning_30m WHERE trading_date = ? ORDER BY id ASC",
             (trading_date,),
         )
         return [dict(row) for row in rows] if rows else []

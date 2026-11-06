@@ -131,16 +131,16 @@ def evaluate_loss_defense(
     *,
     loss_pct: Optional[float],
     t_change_3d: Optional[float],
-    is_45m_bearish: Optional[bool],
+    is_30m_bearish: Optional[bool],
 ) -> str:
     """Return a final result only if both historical gates are actually known."""
 
     t_gate = t_gate_for_loss_band(loss_pct, t_change_3d)
-    if t_gate == DATA_GAP or is_45m_bearish is None:
+    if t_gate == DATA_GAP or is_30m_bearish is None:
         return LOSS_DEFENSE_NOT_DETERMINABLE
     if t_gate == "NOT_APPLICABLE":
         return LOSS_DEFENSE_OFF
-    return LOSS_DEFENSE_ON if t_gate == "PASS" and is_45m_bearish else LOSS_DEFENSE_OFF
+    return LOSS_DEFENSE_ON if t_gate == "PASS" and is_30m_bearish else LOSS_DEFENSE_OFF
 
 
 def calculate_daily_rebound_threshold(

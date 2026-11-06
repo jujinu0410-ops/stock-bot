@@ -1,4 +1,4 @@
-"""Contrast and preservation tests for the completed-45m sell-warning sidecar."""
+"""Contrast and preservation tests for the completed-30m sell-warning sidecar."""
 
 import copy
 import gc
@@ -12,8 +12,8 @@ import pandas as pd
 
 os.environ["STOCKBOT_TEST_MODE"] = "1"
 
-from src.analysis.add_advisory_engine import AddAdvisory45mEngine
-from src.analysis.sell_warning_45m_engine import SellWarning45mEngine
+from src.analysis.add_advisory_engine import AddAdvisory30mEngine
+from src.analysis.sell_warning_30m_engine import SellWarning30mEngine
 from src.database.db_manager import DatabaseManager
 
 
@@ -36,11 +36,11 @@ def add_metrics(**overrides):
 
 def trend_metrics(**overrides):
     values = {
-        "close_45m": 110.0,
-        "cloud_bottom_45m": 100.0,
-        "adx_14_45m": 18.0,
-        "plus_di_45m": 24.0,
-        "minus_di_45m": 16.0,
+        "close_30m": 110.0,
+        "cloud_bottom_30m": 100.0,
+        "adx_14_30m": 18.0,
+        "plus_di_30m": 24.0,
+        "minus_di_30m": 16.0,
     }
     values.update(overrides)
     return values
@@ -72,12 +72,12 @@ def completed_market_15m(days=4, partial_extreme=False):
         "Close": partial_close,
         "Volume": [9_000_000.0, 9_000_000.0],
     }, index=partial_index)
-    # Replace the regular rows at/after 11:15 so the index remains unique.
+    # Replace the regular rows at/after 11:00 so the index remains unique.
     return pd.concat([frame.loc[frame.index < partial_index[0]], partial]).sort_index()
 
 
 def legacy_add_15m():
-    index = pd.date_range("2026-08-27 09:00", periods=90, freq="15min")
+    index = pd.DatetimeIndex([t for day in pd.bdate_range("2026-08-20", "2026-08-27") for t in pd.date_range(day+pd.Timedelta(hours=9),periods=24,freq="15min")][-90:])
     base = np.arange(90, dtype=float)
     close = 10_000.0 + base * 40.0 + 15.0
     return pd.DataFrame({
@@ -89,13 +89,13 @@ def legacy_add_15m():
     }, index=index)
 
 
-class TestSellWarning45m(unittest.TestCase):
+class TestSellWarning30m(unittest.TestCase):
     def setUp(self):
-        self.engine = SellWarning45mEngine(intraday_analyzer=MagicMock())
+        self.engine = SellWarning30mEngine(intraday_analyzer=MagicMock())
 
     def evaluate(self, add_values, trend_values):
         return self.engine.evaluate_canonical_axes(
-            "004960", "2026-09-17", "2026-09-17 11:15:00",
+            "004960", "2026-09-17", "2026-09-17 11:00:00",
             add_values, trend_values, completed_bar_count=27,
         )
 
@@ -109,8 +109,8 @@ class TestSellWarning45m(unittest.TestCase):
                 chaikin_state="CHAIKIN_FALLING",
             ),
             trend_metrics(
-                close_45m=80.0, cloud_bottom_45m=95.0,
-                adx_14_45m=31.0, plus_di_45m=10.0, minus_di_45m=32.0,
+                close_30m=80.0, cloud_bottom_30m=95.0,
+                adx_14_30m=31.0, plus_di_30m=10.0, minus_di_30m=32.0,
             ),
         )
         self.assertEqual(result["sell_warning_state"], "SELL_WARNING")
@@ -125,7 +125,7 @@ class TestSellWarning45m(unittest.TestCase):
                 chaikin_value=-20.0, chaikin_delta=7.0,
                 chaikin_state="CHAIKIN_RISING",
             ),
-            trend_metrics(adx_14_45m=20.0, plus_di_45m=21.0, minus_di_45m=20.0),
+            trend_metrics(adx_14_30m=20.0, plus_di_30m=21.0, minus_di_30m=20.0),
         )
         self.assertEqual(result["sell_warning_state"], "CAUTION")
         self.assertEqual(result["chaikin_recovery_conflict"], 1)
@@ -133,7 +133,7 @@ class TestSellWarning45m(unittest.TestCase):
     def test_03_dongkook_pharma_shape_is_normal(self):
         result = self.evaluate(
             add_metrics(),
-            trend_metrics(adx_14_45m=35.0, plus_di_45m=34.0, minus_di_45m=12.0),
+            trend_metrics(adx_14_30m=35.0, plus_di_30m=34.0, minus_di_30m=12.0),
         )
         self.assertEqual(result["sell_warning_state"], "NORMAL")
         self.assertEqual(result["bear_trend"], 0)
@@ -148,7 +148,7 @@ class TestSellWarning45m(unittest.TestCase):
     def test_05_high_adx_plus_di_dominance_never_warns(self):
         result = self.evaluate(
             add_metrics(vwap9=90.0, vwap26=100.0),
-            trend_metrics(adx_14_45m=42.0, plus_di_45m=38.0, minus_di_45m=11.0),
+            trend_metrics(adx_14_30m=42.0, plus_di_30m=38.0, minus_di_30m=11.0),
         )
         self.assertNotEqual(result["sell_warning_state"], "SELL_WARNING")
         self.assertFalse(result["bear_trend"])
@@ -162,7 +162,7 @@ class TestSellWarning45m(unittest.TestCase):
                 chaikin_value=-50.0, chaikin_delta=12.0,
                 chaikin_state="CHAIKIN_RISING",
             ),
-            trend_metrics(adx_14_45m=30.0, plus_di_45m=10.0, minus_di_45m=30.0),
+            trend_metrics(adx_14_30m=30.0, plus_di_30m=10.0, minus_di_30m=30.0),
         )
         self.assertEqual(result["bearish_axes_count"], 3)
         self.assertEqual(result["sell_warning_state"], "CAUTION")
@@ -180,8 +180,8 @@ class TestSellWarning45m(unittest.TestCase):
 
     def test_08_partial_bar_and_future_rows_are_excluded(self):
         analyzer = MagicMock()
-        engine = SellWarning45mEngine(intraday_analyzer=analyzer)
-        cutoff = "2026-09-17 11:15:00"
+        engine = SellWarning30mEngine(intraday_analyzer=analyzer)
+        cutoff = "2026-09-17 11:00:00"
         analyzer.fetch_canonical_15m_data.return_value = (
             completed_market_15m(partial_extreme=False), "TEST_15M_BAR_START", "NONE"
         )
@@ -192,8 +192,8 @@ class TestSellWarning45m(unittest.TestCase):
         extreme = engine.evaluate_stock_warning("004960", "2026-09-17", cutoff)
 
         self.assertTrue(baseline["data_quality"].startswith("VALID"))
-        self.assertEqual(baseline["completed_45m_timestamp"], cutoff)
-        for field in ("vwap9", "vwap26", "obv", "chaikin_value", "adx_14_45m"):
+        self.assertEqual(baseline["completed_30m_timestamp"], cutoff)
+        for field in ("vwap9", "vwap26", "obv", "chaikin_value", "adx_14_30m"):
             self.assertAlmostEqual(baseline[field], extreme[field], places=8)
 
     def test_09_insufficient_completed_bars_is_unknown(self):
@@ -201,19 +201,19 @@ class TestSellWarning45m(unittest.TestCase):
         analyzer.fetch_canonical_15m_data.return_value = (
             completed_market_15m(days=1), "TEST_15M_BAR_START", "NONE"
         )
-        result = SellWarning45mEngine(analyzer).evaluate_stock_warning(
-            "004960", "2026-09-14", "2026-09-14 11:15:00"
+        result = SellWarning30mEngine(analyzer).evaluate_stock_warning(
+            "004960", "2026-09-14", "2026-09-14 11:00:00"
         )
         self.assertEqual(result["sell_warning_state"], "UNKNOWN")
-        self.assertIn("INSUFFICIENT_COMPLETED_45M_BARS", result["reason_codes"])
+        self.assertIn("INSUFFICIENT_COMPLETED_30M_BARS", result["reason_codes"])
 
     def test_10_duplicate_prevention_and_scan_journal_isolation(self):
         result = self.evaluate(add_metrics(), trend_metrics())
         temp_dir = tempfile.TemporaryDirectory()
         try:
             db = DatabaseManager(db_path=os.path.join(temp_dir.name, "sidecar.db"))
-            self.assertTrue(db.insert_sell_warning_45m(result))
-            self.assertFalse(db.insert_sell_warning_45m(result))
+            self.assertTrue(db.insert_sell_warning_30m(result))
+            self.assertFalse(db.insert_sell_warning_30m(result))
             self.assertEqual(len(db.get_sell_warnings_by_date("2026-09-17")), 1)
             self.assertIsNone(db.get_latest_scan_journal_for_stock("004960"))
         finally:
@@ -224,8 +224,8 @@ class TestSellWarning45m(unittest.TestCase):
 
     def test_11_existing_add_advisory_state_is_unchanged(self):
         analyzer = MagicMock()
-        analyzer.fetch_canonical_15m_data.return_value = (legacy_add_15m(), "MOCK_SOURCE", "NONE")
-        result = AddAdvisory45mEngine(analyzer).evaluate_stock_advisory(
+        analyzer.fetch_canonical_15m_data.return_value = (legacy_add_15m(), "TEST_15M_BAR_START", "NONE")
+        result = AddAdvisory30mEngine(analyzer).evaluate_stock_advisory(
             "005930", "2026-08-27", "2026-08-27 15:00:00", technical_state_reference="STRONG"
         )
         self.assertEqual(result["add_advisory_state"], "ADD_STRONG")

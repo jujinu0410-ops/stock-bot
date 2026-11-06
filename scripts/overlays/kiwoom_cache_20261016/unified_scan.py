@@ -39,12 +39,12 @@ def cached(key, ttl, loader, cache_if=None):
         if entry and time.monotonic() - entry[0] < ttl:
             return entry[1]
         value = loader()
-        # Do not retain transient 45m/Yahoo/quote failures as valid evidence.
+        # Do not retain transient 30m/Yahoo/quote failures as valid evidence.
         if cache_if is None or cache_if(value):
             now_mono = time.monotonic()
             if len(_CACHE) >= 1000:
                 # Prune expired entries first; never flush all warm token/market
-                # caches simultaneously after 1,500 historical 45m keys.
+                # caches simultaneously after 1,500 historical 30m keys.
                 for stale_key, entry in list(_CACHE.items()):
                     if now_mono - entry[0] >= (entry[2] if len(entry) > 2 else 0):
                         _CACHE.pop(stale_key, None)
@@ -73,21 +73,8 @@ def previous_day(now):
     raise ValueError("PREVIOUS_TRADING_DAY_UNAVAILABLE")
 
 
-_HTTP_LOCAL = threading.local()
-
-
-def _daily_http_get(url, *, params, headers, timeout):
-    if getattr(requests.get, "__module__", "") != "requests.api":
-        return requests.get(url, params=params, headers=headers, timeout=timeout)
-    session = getattr(_HTTP_LOCAL, "session", None)
-    if session is None:
-        session = requests.Session()
-        _HTTP_LOCAL.session = session
-    return session.get(url, params=params, headers=headers, timeout=timeout)
-
-
 def daily_frame(ticker):
-    r = _daily_http_get("https://fchart.stock.naver.com/sise.nhn",
+    r = requests.get("https://fchart.stock.naver.com/sise.nhn",
         params={"symbol": ticker, "timeframe": "day", "count": 90, "requestType": 0},
         headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
     r.raise_for_status()
@@ -170,11 +157,11 @@ def minute_is_current(minute, now):
         return False
 
 
-def entry_guard(price, atr, anchor, daily, m45, minute, quote):
+def entry_guard(price, atr, anchor, daily, m30, minute, quote):
     reasons = []
-    if not m45.get("available"): reasons.append("45M_UNAVAILABLE")
-    elif not m45.get("gold") or price < m45["vwap9"]:
-        reasons.append("45M_NOT_GOLD_OR_PRICE_BELOW_VWAP9")
+    if not m30.get("available"): reasons.append("30M_UNAVAILABLE")
+    elif not m30.get("gold") or price < m30["vwap9"]:
+        reasons.append("30M_NOT_GOLD_OR_PRICE_BELOW_VWAP9")
     if not minute.get("current"): reasons.append("LIVE_MINUTES_UNAVAILABLE_OR_STALE")
     if not atr or not anchor: reasons.append("ATR_OR_ANCHOR_UNAVAILABLE")
     elif price < anchor + .5*atr: reasons.append("BELOW_0_5ATR_SETUP")
@@ -191,31 +178,6 @@ def entry_guard(price, atr, anchor, daily, m45, minute, quote):
     if daily.get("ma20") and price > daily["ma20"] + 1.5*(atr or 0):
         reasons.append("ABOVE_OVERHEAT_LIMIT")
     return reasons
-
-
-# Market-wide direction alerts are observations, never confirmed buy entries.
-# Only these three benchmark products receive the fast-path.
-INDEX_INVERSE_PROXIES = {"114800": "069500", "251340": "229200"}
-
-
-def inverse_market_early(ticker, sources, daily, own_pct, proxy_pct):
-    """Require live inverse strength AND a verified fall in its own benchmark."""
-    return (
-        ticker in INDEX_INVERSE_PROXIES and "ETF" in sources
-        and own_pct is not None and own_pct >= .01
-        and proxy_pct is not None and proxy_pct <= -.01
-        and daily.get("stage") in BUY_STAGES
-        and daily.get("vwap_rel") == "GOLD"
-        and daily.get("vwap9_dir") == "RISING"
-    )
-
-
-def market_weak_early(ticker, sources, own_pct):
-    """KOSPI200 -1.5% early alert; -3% onward uses existing crash levels."""
-    return (
-        ticker == "069500" and "ETF" in sources
-        and own_pct is not None and -.03 < own_pct <= -.015
-    )
 
 
 def scan(payload, service, now=None):
@@ -252,12 +214,9 @@ def scan(payload, service, now=None):
         level = 7 if quote["change_pct"] <= -.07 else 5 if quote["change_pct"] <= -.05 else 3 if quote["change_pct"] <= -.03 else 0
         if level:
             events.append({"key": "MARKET_CRASH", "stage": "RISK", "reason": "코스피200 급락 위험", "level": level})
-        elif market_weak_early(ticker, sources, quote["change_pct"]):
-            events.append({"key": "MARKET_WEAK_EARLY", "stage": "DOWN_EARLY",
-                           "reason": "시장조기경보: KODEX 200 -1.5% 이상 하락(실시간 검증)", "level": 1})
     daily, atr, anchor, ref = {}, number(payload.get("atr14")), None, None
     try:
-        df = cached(("daily", ticker, now.date().isoformat()), 600, lambda: daily_frame(ticker)).copy()
+        df = cached(("daily", ticker, now.date().isoformat()), 240, lambda: daily_frame(ticker)).copy()
         atr, anchor, ref = atr_and_anchor(df, now)
         if df.index[-1].date() > now.date(): raise ValueError("FUTURE_DAILY_BAR")
         if price and df.index[-1].date() == now.date():
@@ -267,25 +226,25 @@ def scan(payload, service, now=None):
         daily = {**indicators(df), "ma20": float(df.Close.tail(20).mean())}
     except Exception as exc:
         reasons.append("DAILY_UNAVAILABLE:" + type(exc).__name__)
-    minute, m45, obv15, exit_risk = {}, {}, {}, {}
+    minute, m30, obv15, exit_risk = {}, {}, {}, {}
     need_history = bool(daily) or bool(price and atr)
     if price and need_history:
         try:
             minute = service._fetch_kiwoom_minute_bars(session, token, ticker, limit=65, base_date=now.date())
             minute["current"] = minute_is_current(minute, now)
-            slot = KRXCalendar.get_completed_45m_bar(now)
+            slot = KRXCalendar.get_completed_30m_bar(now)
             cutoff = datetime.combine(now.date() if slot else previous_day(now),
                 datetime.strptime(slot[2] if slot else "15:00", "%H:%M").time(), tzinfo=KST)
-            # Completed candles are immutable for this 45m cutoff. Cache valid
+            # Completed candles are immutable for this 30m cutoff. Cache valid
             # results for 15m; a new completed cutoff always creates a new key.
             # Failures are never cached, so subsequent runs can recover.
-            frame, source, quality = cached(("45m", ticker, cutoff.isoformat()), 900,
-                lambda: service.get_strictly_sliced_45m_df(ticker, cutoff, allow_sparse_completed=True),
+            frame, source, quality = cached(("30m", ticker, cutoff.isoformat()), 900,
+                lambda: service.get_strictly_sliced_30m_df(ticker, cutoff),
                 cache_if=lambda r: r[0] is not None and r[2] == "VALID")
             if frame is not None and quality == "VALID" and len(frame) >= 28:
                 values = indicators(frame)
                 fresh = frame.index[-1].date() == cutoff.date()
-                m45 = {"available": fresh, "gold": values["vwap_rel"] == "GOLD",
+                m30 = {"available": fresh, "gold": values["vwap_rel"] == "GOLD",
                        "vwap9": values["vwap9"], "vwap26": values["vwap26"],
                        "completed_bar": str(frame.index[-1]), "source": source}
                 if fresh and atr and minute.get("current"):
@@ -293,43 +252,21 @@ def scan(payload, service, now=None):
                         today=now.date(), fresh_price=price, atr14=atr)
                     if obv15.get("decision") == "WARN":
                         events.append({"key": "OBV15_WARNING", "stage": "RISK", "level": 1,
-                            "reason": "45분봉 OBV %s봉 연속 약세·실시간 회복 미확인" % obv15.get("consecutive_no_gold_bars")})
-                    exit_risk = service._analyze_45m_exit_risk_df(frame, source)
+                            "reason": "30분봉 OBV %s봉 연속 약세·실시간 회복 미확인" % obv15.get("consecutive_no_gold_bars")})
+                    exit_risk = service._analyze_30m_exit_risk_df(frame, source)
                     if exit_risk.get("decision") == "WARN":
                         events.append({"key": "SELL_PREP_WARNING", "stage": "RISK", "level": 1,
-                            "reason": "45분봉 OBV·MACD 지속 약화"})
+                            "reason": "30분봉 OBV·MACD 지속 약화"})
         except Exception as exc:
             reasons.append("INTRADAY_UNAVAILABLE:" + type(exc).__name__)
     stage = daily.get("stage", "WATCH")
-    inverse_info_only = False
     if stage in BUY_STAGES:
-        blockers = entry_guard(price or 0, atr, anchor, daily, m45, minute, quote)
+        blockers = entry_guard(price or 0, atr, anchor, daily, m30, minute, quote)
         reasons.extend(blockers)
-        # A verified market-wide inverse turn deserves an early observation even
-        # if the normal stock-entry guards (overheat/45m) are not yet satisfied.
-        # The strong BUY_CONFIRMED rules remain untouched for every symbol.
-        inverse_early = False
-        if ticker in INDEX_INVERSE_PROXIES and "ETF" in sources and price:
-            try:
-                benchmark = quote_for(INDEX_INVERSE_PROXIES[ticker])
-            except Exception:
-                benchmark = {}  # No verified benchmark: no early inverse alert.
-            inverse_early = inverse_market_early(
-                ticker, sources, daily, quote.get("change_pct"),
-                benchmark.get("change_pct") if benchmark.get("available") else None)
-        if blockers:
-            if inverse_early and "RECENT_1M_WEAKENING" not in blockers:
-                stage = "BUY_SETUP"
-                inverse_info_only = True
-                reasons.append("INDEX_INVERSE_EARLY_ONLY_NOT_BUY_CONFIRMED")
-            else:
-                stage = "WATCH"
-        elif stage == "BUY_CONFIRMED" and price < anchor + .6*atr:
-            stage = "BUY_SETUP"
+        if blockers: stage = "WATCH"
+        elif stage == "BUY_CONFIRMED" and price < anchor + .6*atr: stage = "BUY_SETUP"
     if stage != "WATCH" and price:
-        event_reason = ("인버스 시장상승조짐(실시간 기초지수 하락 확인·매수확인 아님·추격주의)"
-                        if inverse_info_only else daily.get("regime", stage))
-        events.append({"key": stage, "stage": stage, "level": 1, "reason": event_reason})
+        events.append({"key": stage, "stage": stage, "level": 1, "reason": daily.get("regime", stage)})
     if price and ref and atr and price <= ref - atr:
         events.append({"key": "ATR_DOWN_1_0", "stage": "DOWN_EARLY", "level": 1, "reason": "전일종가 대비 1 ATR 이상 하락"})
     if events:
@@ -352,22 +289,16 @@ def scan(payload, service, now=None):
     # One active Jev policy for every buy, independent of discovery source.
     gate = {"decision":"SEND", "reason":"RISK_BYPASS_OR_NO_BUY"}
     if stage in BUY_STAGES and decision["send_allowed"] and payload.get("evaluate_jev", True):
-        if inverse_info_only:
-            # Explicitly informational, non-executable alert. JEV still guards
-            # confirmed entries; it must not hide market-wide early observations.
-            gate = {"status": "EARLY_MARKET_INFO", "decision": "SEND",
-                    "reason": "INDEX_INVERSE_EARLY_ONLY_NO_CONFIRMED_BUY"}
-        else:
-            cfg = replace(JevGateSettings.from_env("UNIFIED"), mode="ACTIVE")
-            gate = evaluate_jev_alert_gate({"source":"UNIFIED", "ticker":ticker, "name":base["name"],
-                "event_keys":[stage], "current_price":price, "change_pct":quote.get("change_pct"),
-                **daily, "context":{"market_adjustment":decision["confidence_adjustment"], "45m":m45}}, settings=cfg)
-            # Inability to verify the final buy filter is a hold, never a new buy.
-            if gate.get("status") != "OK" or gate.get("decision") != "SEND":
-                decision["send_allowed"] = False
-                reasons.append("JEV_BUY_HOLD:" + str(gate.get("reason")))
+        cfg = replace(JevGateSettings.from_env("UNIFIED"), mode="ACTIVE")
+        gate = evaluate_jev_alert_gate({"source":"UNIFIED", "ticker":ticker, "name":base["name"],
+            "event_keys":[stage], "current_price":price, "change_pct":quote.get("change_pct"),
+            **daily, "context":{"market_adjustment":decision["confidence_adjustment"], "30m":m30}}, settings=cfg)
+        # Inability to verify the final buy filter is a hold, never a new buy.
+        if gate.get("status") != "OK" or gate.get("decision") != "SEND":
+            decision["send_allowed"] = False
+            reasons.append("JEV_BUY_HOLD:" + str(gate.get("reason")))
     return {**base, **decision, "engine_version": VERSION, "events": events,
-        "technical": daily, "m45": m45, "obv15": obv15, "exit_risk": exit_risk,
+        "technical": daily, "m30": m30, "obv15": obv15, "exit_risk": exit_risk,
         "live_price": price, "live_change_pct": quote.get("change_pct"),
         "live_price_source": quote.get("source"), "atr14":atr, "anchor":anchor,
         "market_proxy":proxy, "sector_etf":sector, "jev_gate":gate,

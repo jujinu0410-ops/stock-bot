@@ -1,6 +1,6 @@
 """
-Phase 1: 45m ADD ADVISORY Sidecar Engine
-- Calculates VWAP9/26, OBV/OBV9, Chaikin Oscillator (13, 26) on completed 45m bars
+Phase 1: 30m ADD ADVISORY Sidecar Engine
+- Calculates VWAP9/26, OBV/OBV9, Chaikin Oscillator (13, 26) on completed 30m bars
 - Evaluates ADD_STRONG, ADD_WATCH, ADD_BLOCKED, NEUTRAL, UNKNOWN
 - Tracks alert_candidate state transitions
 - Sidecar / Shadow ONLY: strictly preserves existing V1.0 technical_state and scan_journal semantics
@@ -11,41 +11,41 @@ import numpy as np
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from src.utils.logger import logger
-from src.analysis.intraday_analysis import Intraday45mAnalyzer
+from src.analysis.intraday_analysis import Intraday30mAnalyzer
 
-class AddAdvisory45mEngine:
-    """Sidecar evaluation engine for 45m ADD ADVISORY"""
+class AddAdvisory30mEngine:
+    """Sidecar evaluation engine for 30m ADD ADVISORY"""
 
-    def __init__(self, intraday_analyzer: Optional[Intraday45mAnalyzer] = None):
-        self.intraday_analyzer = intraday_analyzer or Intraday45mAnalyzer()
+    def __init__(self, intraday_analyzer: Optional[Intraday30mAnalyzer] = None):
+        self.intraday_analyzer = intraday_analyzer or Intraday30mAnalyzer()
 
     @staticmethod
-    def calculate_canonical_45m_indicators(df_45m: pd.DataFrame) -> Dict[str, Any]:
-        """Return the ADD sidecar's canonical raw indicators for prepared 45m bars.
+    def calculate_canonical_30m_indicators(df_30m: pd.DataFrame) -> Dict[str, Any]:
+        """Return the ADD sidecar's canonical raw indicators for prepared 30m bars.
 
         The caller owns bar-completeness validation.  Keeping the calculation
         here prevents WMA9 OBV, VWAP and Chaikin definitions from being copied
         by read-only consumers such as the sell-warning sidecar.
         """
-        if not isinstance(df_45m, pd.DataFrame) or len(df_45m) < 26:
-            raise ValueError("INSUFFICIENT_COMPLETED_45M_BARS")
+        if not isinstance(df_30m, pd.DataFrame) or len(df_30m) < 26:
+            raise ValueError("INSUFFICIENT_COMPLETED_30M_BARS")
 
         required = {"High", "Low", "Close", "Volume"}
-        if not required.issubset(df_45m.columns):
-            raise ValueError("MALFORMED_45M_OHLCV")
+        if not required.issubset(df_30m.columns):
+            raise ValueError("MALFORMED_30M_OHLCV")
 
-        typical_price = (df_45m["High"] + df_45m["Low"] + df_45m["Close"]) / 3.0
-        tp_vol = typical_price * df_45m["Volume"]
-        vol_sum9 = df_45m["Volume"].rolling(window=9).sum()
-        vol_sum26 = df_45m["Volume"].rolling(window=26).sum()
+        typical_price = (df_30m["High"] + df_30m["Low"] + df_30m["Close"]) / 3.0
+        tp_vol = typical_price * df_30m["Volume"]
+        vol_sum9 = df_30m["Volume"].rolling(window=9).sum()
+        vol_sum26 = df_30m["Volume"].rolling(window=26).sum()
         vwap9_series = tp_vol.rolling(window=9).sum() / (vol_sum9 + 1e-9)
         vwap26_series = tp_vol.rolling(window=26).sum() / (vol_sum26 + 1e-9)
 
-        close = df_45m["Close"]
-        vol = df_45m["Volume"]
+        close = df_30m["Close"]
+        vol = df_30m["Volume"]
         price_diff = close.diff()
         obv_direction = np.where(price_diff > 0, 1.0, np.where(price_diff < 0, -1.0, 0.0))
-        obv_series = pd.Series(np.cumsum(obv_direction * vol), index=df_45m.index)
+        obv_series = pd.Series(np.cumsum(obv_direction * vol), index=df_30m.index)
         wma_weights = np.arange(1, 10, dtype=float)
         obv9_series = obv_series.rolling(window=9).apply(
             lambda window: np.dot(window, wma_weights) / wma_weights.sum(), raw=True
@@ -53,8 +53,8 @@ class AddAdvisory45mEngine:
         obv_gap_series = obv_series - obv9_series
         obv_gap_delta_series = obv_gap_series.diff()
 
-        high = df_45m["High"]
-        low = df_45m["Low"]
+        high = df_30m["High"]
+        low = df_30m["Low"]
         hl_diff = high - low
         mfm = np.where(
             hl_diff == 0,
@@ -62,7 +62,7 @@ class AddAdvisory45mEngine:
             ((close - low) - (high - close)) / (hl_diff + 1e-9),
         )
         mfv = mfm * vol
-        adl_series = pd.Series(mfv, index=df_45m.index).cumsum()
+        adl_series = pd.Series(mfv, index=df_30m.index).cumsum()
         chaikin_series = (
             adl_series.ewm(span=13, adjust=False).mean()
             - adl_series.ewm(span=26, adjust=False).mean()
@@ -147,10 +147,11 @@ class AddAdvisory45mEngine:
         trading_date: str,
         bar_timestamp: str,
         technical_state_reference: str = "UNKNOWN",
-        latest_previous_advisory: Optional[Dict[str, Any]] = None
+        latest_previous_advisory: Optional[Dict[str, Any]] = None,
+        holding_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Evaluates 45m ADD ADVISORY for a single stock code on completed 45m bars.
+        Evaluates 30m ADD ADVISORY for a single stock code on completed 30m bars.
         """
         code = str(stock_code).strip().zfill(6)
         default_result = {
@@ -187,21 +188,20 @@ class AddAdvisory45mEngine:
             return default_result
 
         try:
-            # 2. Resample to 45m OHLCV
-            df_45m = df_15m.resample('45min').agg({
-                'Open': 'first',
-                'High': 'max',
-                'Low': 'min',
-                'Close': 'last',
-                'Volume': 'sum'
-            }).dropna()
+            # 2. Resample to 30m OHLCV
+            from src.analysis.m30_bars import prepare_completed_30m_data
+            cutoff = datetime.strptime(bar_timestamp, "%Y-%m-%d %H:%M:%S")
+            df_30m, quality = prepare_completed_30m_data(df_15m, source_name, cutoff, allow_sparse_completed=True)
+            if df_30m is None:
+                default_result["data_quality"] = "INVALID_30M_"+quality
+                return default_result
 
-            if len(df_45m) < 26:
-                default_result["data_quality"] = f"INVALID (INSUFFICIENT_BARS_{len(df_45m)})"
+            if len(df_30m) < 26:
+                default_result["data_quality"] = f"INVALID (INSUFFICIENT_BARS_{len(df_30m)})"
                 return default_result
 
             # 3. Indicator Calculations (canonical ADD definitions)
-            metrics = self.calculate_canonical_45m_indicators(df_45m)
+            metrics = self.calculate_canonical_30m_indicators(df_30m)
             v9 = metrics["vwap9"]
             v26 = metrics["vwap26"]
             vwap_state = metrics["vwap_state"]
@@ -251,6 +251,12 @@ class AddAdvisory45mEngine:
                 advisory_state = "NEUTRAL"
                 reasons.append("NEUTRAL_CONDITIONS")
 
+            from src.analysis.advisory_safety import priority
+            protection = priority(holding_context)
+            if protection:
+                advisory_state = "ADD_BLOCKED"
+                reasons.insert(0, protection)
+
             # Determine alert_candidate
             prev_state = latest_previous_advisory.get("add_advisory_state") if latest_previous_advisory else None
             alert_candidate = 0
@@ -289,10 +295,10 @@ class AddAdvisory45mEngine:
                 "add_advisory_state": advisory_state,
                 "alert_candidate": alert_candidate,
                 "reason_codes": ",".join(reasons),
-                "data_quality": f"VALID ({len(df_45m)} bars)"
+                "data_quality": f"VALID ({len(df_30m)} bars)"
             }
 
         except Exception as e:
-            logger.error(f"[AddAdvisory45mEngine] Error evaluating {code}: {e}", exc_info=True)
+            logger.error(f"[AddAdvisory30mEngine] Error evaluating {code}: {e}", exc_info=True)
             default_result["data_quality"] = f"INVALID (EXCEPTION: {e})"
             return default_result

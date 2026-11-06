@@ -121,7 +121,7 @@ class TestV4AnchorRatchetIntegrity(unittest.TestCase):
 
         # 3. 8월 19일 평가 수행
         with patch(
-            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            "src.analysis.intraday_analysis.Intraday30mAnalyzer.fetch_canonical_15m_data",
             return_value=_normal_intraday_response(10000.0),
         ):
             eval_list = self.pm.get_held_portfolio_status()
@@ -171,7 +171,7 @@ class TestV4AnchorRatchetIntegrity(unittest.TestCase):
         self._insert_daily_bars(code, base_price=current_price, count=15)
 
         with patch(
-            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            "src.analysis.intraday_analysis.Intraday30mAnalyzer.fetch_canonical_15m_data",
             return_value=_normal_intraday_response(current_price),
         ):
             eval_list = self.pm.get_held_portfolio_status()
@@ -212,7 +212,7 @@ class TestV4AnchorRatchetIntegrity(unittest.TestCase):
 
         # 1. 첫 번째 평가 수행
         with patch(
-            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            "src.analysis.intraday_analysis.Intraday30mAnalyzer.fetch_canonical_15m_data",
             return_value=_normal_intraday_response(76000.0),
         ):
             self.pm.get_held_portfolio_status()
@@ -331,8 +331,8 @@ class TestV4AnchorRatchetIntegrity(unittest.TestCase):
         self.assertIn("상승추세 보유", html_out)
         self.assertIn("익절 목표가 9,350원", html_out)
 
-        # 단언 3: 보유 0주인데 45m 눌림목 분할매수가 나오지 않는지 검증
-        self.assertNotIn("45m 눌림목 분할매수", html_out)
+        # 단언 3: 보유 0주인데 30m 눌림목 분할매수가 나오지 않는지 검증
+        self.assertNotIn("30m 눌림목 분할매수", html_out)
 
     def test_05_fail_closed_ratchet_decrease_rejection(self):
         """테스트 5: 동일 사이클 내 손절 래칫 하향 발생 시 Fail-Closed 차단 단언"""

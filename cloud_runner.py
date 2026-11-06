@@ -93,7 +93,7 @@ def resolve_session_code(kst_dt: datetime, report_mode: str) -> str:
         return "1535"
     elif mode == "SHADOW_SCAN":
         from src.runtime.krx_calendar import KRXCalendar
-        bar_info = KRXCalendar.get_completed_45m_bar(kst_dt)
+        bar_info = KRXCalendar.get_completed_30m_bar(kst_dt)
         if bar_info:
             return bar_info[2].replace(":", "")
         return kst_dt.strftime("%H%M")
@@ -568,7 +568,7 @@ class CloudRunner:
         db: DatabaseManager,
     ) -> Dict[str, Any]:
         """
-        SHADOW_SCAN: 45m completed bar shadow recording only.
+        SHADOW_SCAN: 30m completed bar shadow recording only.
         - Advisory & shadow recording only (ZERO Gmail / ZERO Kakao / ZERO Orders).
         - NO dispatch receipt created or checked.
         - Fail-isolated: failures do not disrupt existing reports.
@@ -577,7 +577,7 @@ class CloudRunner:
         os.environ["STOCKBOT_STATE_DIR"] = str(self.state_dir)
         os.environ["STOCKBOT_CLOUD_MODE"] = "1"
 
-        logger.info("[CloudRunner SHADOW_SCAN] Executing 45m Intraday Shadow Scan...")
+        logger.info("[CloudRunner SHADOW_SCAN] Executing 30m Intraday Shadow Scan...")
         from src.runtime.runtime_scheduler import RuntimeScheduler
         scheduler = RuntimeScheduler(db_manager=db)
 
@@ -599,7 +599,7 @@ class CloudRunner:
                     "report_mode": "SHADOW_SCAN",
                     "stocks_scanned": scan_res.get("stocks_scanned", 0),
                     "journals_created": scan_res.get("journals_created", 0),
-                    "last_completed_45m_bar": scan_res.get("last_completed_45m_bar"),
+                    "last_completed_30m_bar": scan_res.get("last_completed_30m_bar"),
                 },
             )
             logger.info(f"[CloudRunner SHADOW_SCAN] State bundle committed: {committed_bundle}")
@@ -651,7 +651,7 @@ def main():
             "SUCCESS",
             _SM_ALREADY_COMPLETED,
             _SM_RESUME,
-            "SKIPPED_NO_NEW_45M_BAR",
+            "SKIPPED_NO_NEW_30M_BAR",
             "SKIPPED_NON_TRADING_DAY",
         ):
             sys.exit(0)

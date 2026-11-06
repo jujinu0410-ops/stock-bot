@@ -6,7 +6,7 @@ Features:
 - Non-resident invocation via Windows Task Scheduler.
 - KRX Calendar & Holiday Gate (fail-closed).
 - Blackout window protection for existing 11:20 and 15:35 operational reports.
-- Completed 45-minute bar execution only (no intraday backfill / no fake 45m bars).
+- Completed 30-minute bar execution only (no intraday backfill / no fake 30m bars).
 - Scan Journal Append-Only Deduplication (DAILY_FIRST, SIGNAL_CHANGE, BLOCKER_CHANGE, TECHNICAL_STATE_CHANGE, MANUAL_RUNTIME_VERIFICATION).
 - Zero Order API calls & Zero email spam.
 - Audit logging to scheduler_runs.
@@ -159,31 +159,31 @@ class RuntimeScheduler:
                 self._record_run(run_id, time_str, now_str, now_str, trading_date, "INTRADAY_SHADOW_SCAN", "SKIPPED_EXISTING_JOB_ACTIVE", error_code="EXISTING_JOB_ACTIVE")
                 return {"status": "SKIPPED_EXISTING_JOB_ACTIVE", "run_id": run_id}
 
-        # 4. 45-Minute Completed Bar Resolution
-        bar_info = KRXCalendar.get_completed_45m_bar(now)
+        # 4. 30-Minute Completed Bar Resolution
+        bar_info = KRXCalendar.get_completed_30m_bar(now)
         if bar_info is None and not is_manual:
-            logger.warning(f"[IntradayScan] No completed 45-minute bar available yet (Market starts 09:00, 1st bar completes 09:45).")
-            self._record_run(run_id, time_str, now_str, now_str, trading_date, "INTRADAY_SHADOW_SCAN", "SKIPPED_NO_NEW_45M_BAR", error_code="BEFORE_FIRST_45M_BAR")
-            return {"status": "SKIPPED_NO_NEW_45M_BAR", "run_id": run_id}
+            logger.warning(f"[IntradayScan] No completed 30-minute bar available yet (Market starts 09:00, 1st bar completes 09:45).")
+            self._record_run(run_id, time_str, now_str, now_str, trading_date, "INTRADAY_SHADOW_SCAN", "SKIPPED_NO_NEW_30M_BAR", error_code="BEFORE_FIRST_30M_BAR")
+            return {"status": "SKIPPED_NO_NEW_30M_BAR", "run_id": run_id}
 
         slot_name = bar_info[0] if bar_info else "MANUAL"
-        bar_end = bar_info[2] if bar_info else None
-        completed_bar_ts = f"{trading_date} {bar_end}:00" if bar_end else None
+        bar_end = bar_info[2] if bar_info else now.strftime("%H:%M")
+        completed_bar_ts = f"{trading_date} {bar_end}:00"
 
-        # 5. Check if this exact 45m bar was already scanned
-        if not is_manual and completed_bar_ts:
+        # 5. Check if this exact 30m bar was already scanned
+        if not is_manual:
             latest_run = self.db.get_latest_scheduler_run("INTRADAY_SHADOW_SCAN")
-            if latest_run and latest_run.get("last_completed_45m_bar") == completed_bar_ts and latest_run.get("status") == "SUCCESS":
-                logger.info(f"[IntradayScan] 45m bar '{completed_bar_ts}' already processed in previous run '{latest_run['run_id']}'. Skipping duplicate scan.")
-                self._record_run(run_id, time_str, now_str, now_str, trading_date, "INTRADAY_SHADOW_SCAN", "SKIPPED_NO_NEW_45M_BAR", last_completed_45m_bar=completed_bar_ts)
-                return {"status": "SKIPPED_NO_NEW_45M_BAR", "last_completed_45m_bar": completed_bar_ts, "run_id": run_id}
+            if latest_run and latest_run.get("last_completed_30m_bar") == completed_bar_ts and latest_run.get("status") == "SUCCESS":
+                logger.info(f"[IntradayScan] 30m bar '{completed_bar_ts}' already processed in previous run '{latest_run['run_id']}'. Skipping duplicate scan.")
+                self._record_run(run_id, time_str, now_str, now_str, trading_date, "INTRADAY_SHADOW_SCAN", "SKIPPED_NO_NEW_30M_BAR", last_completed_30m_bar=completed_bar_ts)
+                return {"status": "SKIPPED_NO_NEW_30M_BAR", "last_completed_30m_bar": completed_bar_ts, "run_id": run_id}
 
         # 6. Acquire Lock
         if not self.lock_mgr.acquire_lock("SHADOW_INTRADAY_SCAN_LOCK", "INTRADAY_SHADOW_SCAN", ttl_seconds=600):
             return {"status": "SKIPPED_LOCK_BUSY", "run_id": run_id}
 
         try:
-            self._record_run(run_id, time_str, now_str, None, trading_date, "INTRADAY_SHADOW_SCAN", "STARTED", last_completed_45m_bar=completed_bar_ts)
+            self._record_run(run_id, time_str, now_str, None, trading_date, "INTRADAY_SHADOW_SCAN", "STARTED", last_completed_30m_bar=completed_bar_ts)
 
             # 7. Collect Active Stock Universe
             universe_stocks = self._get_active_universe()
@@ -209,12 +209,11 @@ class RuntimeScheduler:
                 # Any failure is intentionally non-fatal to the existing scan.
                 self._capture_policy_shadow(scan_res, trading_date, now_str, completed_bar_ts, run_id)
 
-                # Phase 1: 45m ADD ADVISORY Sidecar Evaluation (Isolated persistence to add_advisory_45m)
-                if completed_bar_ts:
-                    self._evaluate_add_advisory_sidecar(code, scan_res, trading_date, completed_bar_ts)
+                # Phase 1: 30m ADD ADVISORY Sidecar Evaluation (Isolated persistence to add_advisory_30m)
+                self._evaluate_add_advisory_sidecar(code, scan_res, trading_date, completed_bar_ts)
 
-                    # 45m SELL WARNING Sidecar Evaluation (Isolated persistence to sell_warning_45m)
-                    self._evaluate_sell_warning_sidecar(code, scan_res, trading_date, completed_bar_ts)
+                # 30m SELL WARNING Sidecar Evaluation (Isolated persistence to sell_warning_30m)
+                self._evaluate_sell_warning_sidecar(code, scan_res, trading_date, completed_bar_ts)
 
                 # Deduplication & Snapshot Reason Decision
                 snapshot_reason = self._determine_snapshot_reason(code, scan_res, trading_date, is_manual)
@@ -299,7 +298,7 @@ class RuntimeScheduler:
                 "stocks_scanned": stocks_scanned,
                 "journals_created": journals_created,
                 "signal_changes": signal_changes,
-                "last_completed_45m_bar": completed_bar_ts,
+                "last_completed_30m_bar": completed_bar_ts,
                 "error_code": error_code,
                 "error_message": error_msg
             })
@@ -311,7 +310,7 @@ class RuntimeScheduler:
                 "stocks_scanned": stocks_scanned,
                 "journals_created": journals_created,
                 "signal_changes": signal_changes,
-                "last_completed_45m_bar": completed_bar_ts,
+                "last_completed_30m_bar": completed_bar_ts,
                 "error_code": error_code,
                 "error_message": error_msg
             }
@@ -400,7 +399,7 @@ class RuntimeScheduler:
         stocks_scanned: int = 0,
         journals_created: int = 0,
         signal_changes: int = 0,
-        last_completed_45m_bar: Optional[str] = None,
+        last_completed_30m_bar: Optional[str] = None,
         error_code: Optional[str] = None,
         error_message: Optional[str] = None
     ) -> None:
@@ -415,7 +414,7 @@ class RuntimeScheduler:
             "stocks_scanned": stocks_scanned,
             "journals_created": journals_created,
             "signal_changes": signal_changes,
-            "last_completed_45m_bar": last_completed_45m_bar,
+            "last_completed_30m_bar": last_completed_30m_bar,
             "error_code": error_code,
             "error_message": error_message
         })
@@ -510,10 +509,7 @@ class RuntimeScheduler:
                 t_score = eng_res.get("t_score", 65.0)
                 tech_state = eng_res.get("technical_state", "NEUTRAL")
                 tech_action = eng_res.get("technical_action", "BUY_WAIT")
-                raw_dq = eng_res.get("intraday_data_quality")
-                if raw_dq is None:
-                    raw_dq = eng_res.get("intraday_quality")
-                intraday_dq = raw_dq if raw_dq is not None else "UNKNOWN"
+                intraday_dq = eng_res.get("intraday_data_quality", "VALID")
                 existing_f = eng_res.get("f_score")
                 if not isinstance(existing_f, (int, float)):
                     existing_f = fundamental_f_score if isinstance(fundamental_f_score, (int, float)) else None
@@ -522,7 +518,7 @@ class RuntimeScheduler:
                 t_score = 65.0
                 tech_state = "NEUTRAL"
                 tech_action = "BUY_WAIT"
-                intraday_dq = "UNKNOWN"
+                intraday_dq = "VALID"
                 existing_f = fundamental_f_score if isinstance(fundamental_f_score, (int, float)) else None
                 existing_fin = round(0.4 * f_score + 0.6 * t_score, 1)
 
@@ -569,12 +565,11 @@ class RuntimeScheduler:
                 "forward_risk_override_tag": fwd_risk_tag,
                 "book_to_bill_summary": b2b_summary,
                 "t_score": t_score,
-                "is_45m_bearish_2plus": bool(eng_res.get("is_45m_bearish_2plus", False)) if eng_res else False,
-                "is_45m_breakdown": bool(eng_res.get("is_45m_breakdown", False)) if eng_res else False,
+                "is_30m_bearish_2plus": bool(eng_res.get("is_30m_bearish_2plus", False)) if eng_res else False,
+                "is_30m_breakdown": bool(eng_res.get("is_30m_breakdown", False)) if eng_res else False,
                 "technical_state": tech_state,
                 "technical_action": tech_action,
-                "intraday_data_quality": intraday_dq,
-                "completed_45m_timestamp": eng_res.get("completed_45m_timestamp") if eng_res else None,
+                "intraday_data_quality": (eng_res.get("intraday_data_quality") if eng_res.get("intraday_data_quality") is not None else eng_res.get("intraday_quality", "UNKNOWN")) if eng_res else "UNKNOWN",
                 "atr14": atr14,
                 "natr": natr,
                 "candidate_ref_price": market_price,
@@ -599,7 +594,8 @@ class RuntimeScheduler:
                 "position_cycle_id": "NONE",
                 "financial_data_asof": "2026-06-30",
                 "forward_data_asof": trading_date,
-                "intraday_last_timestamp": now_str
+                "intraday_last_timestamp": (eng_res.get("intraday_last_timestamp") or "N/A") if eng_res else "N/A",
+                "completed_30m_timestamp": eng_res.get("completed_30m_timestamp") if eng_res else None,
             }
         except Exception as e:
             logger.error(f"[ShadowScan] Error evaluating stock {stock_code}: {e}", exc_info=True)
@@ -611,7 +607,6 @@ class RuntimeScheduler:
         """Best-effort Policy Shadow bridge.  It must never affect V4/Runtime status."""
         try:
             from src.policy.policy_shadow_store import PolicyShadowService, PolicyShadowStore
-            from src.policy.policy_shadow_observer import policy_validity, observed_completed_timestamp
 
             code = str(scan_res["stock_code"]).zfill(6)
             rows = self.db.execute_query(
@@ -622,6 +617,7 @@ class RuntimeScheduler:
             all_positions = self.db.execute_query("SELECT stock_code FROM portfolio_positions WHERE quantity > 0") or []
             data_hold = str(pos.get("data_hold_reason") or "")
             mode = str(pos.get("trade_mode") or "")
+            from src.runtime.m30_contract import completed_timestamp, normalize_validity
             raw = {
                 "asof_timestamp": now_str,
                 "source_identifier": f"{run_id}:{code}", "stock_code": code,
@@ -640,12 +636,12 @@ class RuntimeScheduler:
                 # than reading recommendation/order fields or recalculating.
                 "risk_target_qty": scan_res.get("risk_target_qty"),
                 "daily_state": scan_res.get("technical_state"),
-                "is_45m_bearish_2plus": int(bool(scan_res.get("is_45m_bearish_2plus"))),
-                "is_45m_breakdown": int(bool(scan_res.get("is_45m_breakdown"))),
-                "is_45m_bearish_gate": int(bool(scan_res.get("is_45m_bearish_2plus") or scan_res.get("is_45m_breakdown"))),
-                "completed_45m_timestamp": observed_completed_timestamp(scan_res.get("completed_45m_timestamp"), now_str),
+                "is_30m_bearish_2plus": int(bool(scan_res.get("is_30m_bearish_2plus"))),
+                "is_30m_breakdown": int(bool(scan_res.get("is_30m_breakdown"))),
+                "is_30m_bearish_gate": int(bool(scan_res.get("is_30m_bearish_2plus") or scan_res.get("is_30m_breakdown"))),
+                "completed_30m_timestamp": completed_timestamp(scan_res.get("completed_30m_timestamp"), now_str, trading_date),
                 "concentration_state": "BLOCKED" if mode == "CONCENTRATION_RISK" else "CLEAR",
-                "data_validity": policy_validity(pos.get("data_validity_flag")),
+                "data_validity": normalize_validity(pos.get("data_validity_flag")),
                 "suspension_state": "SUSPENDED" if mode == "SUSPENDED_HOLD" or "거래정지" in data_hold else "ACTIVE",
                 "v4_effective_stop": pos.get("effective_exit_line"),
             }
@@ -661,21 +657,16 @@ class RuntimeScheduler:
         completed_bar_ts: str
     ):
         """
-        Phase 1: 45m ADD ADVISORY sidecar evaluation and persistence into add_advisory_45m.
+        Phase 1: 30m ADD ADVISORY sidecar evaluation and persistence into add_advisory_30m.
         Failures in sidecar evaluation are caught so they do not disrupt the core scan_journal flow.
         """
         try:
-            if not completed_bar_ts:
+            from src.runtime.m30_contract import completed_timestamp
+            if completed_timestamp(completed_bar_ts, trading_date=trading_date) is None:
                 return
-            valid_bar_ends = {"09:45", "10:30", "11:15", "12:00", "12:45", "13:30", "14:15", "15:00"}
-            bar_time = completed_bar_ts.split(" ")[1][:5] if " " in completed_bar_ts else ""
-            if bar_time not in valid_bar_ends:
-                logger.info(f"[AddAdvisorySidecar] Skipping non-completed bar timestamp: {completed_bar_ts}")
-                return
-
-            from src.analysis.add_advisory_engine import AddAdvisory45mEngine
+            from src.analysis.add_advisory_engine import AddAdvisory30mEngine
             if not hasattr(self, "_add_advisory_engine") or self._add_advisory_engine is None:
-                self._add_advisory_engine = AddAdvisory45mEngine()
+                self._add_advisory_engine = AddAdvisory30mEngine()
 
             tech_ref = scan_res.get("technical_state", "UNKNOWN")
             prev_advisory = self.db.get_latest_add_advisory_for_stock(stock_code)
@@ -684,17 +675,18 @@ class RuntimeScheduler:
                 trading_date=trading_date,
                 bar_timestamp=completed_bar_ts,
                 technical_state_reference=tech_ref,
-                latest_previous_advisory=prev_advisory
+                latest_previous_advisory=prev_advisory,
+                holding_context=scan_res,
             )
-            self.db.insert_add_advisory_45m(advisory_entry)
+            self.db.insert_add_advisory_30m(advisory_entry)
         except Exception as e:
             logger.error(f"[AddAdvisorySidecar] {stock_code} sidecar evaluation error: {e}", exc_info=True)
 
     @staticmethod
-    def _is_immediately_preceding_45m_bar(prev_ts: str, curr_ts: str) -> bool:
+    def _is_immediately_preceding_30m_bar(prev_ts: str, curr_ts: str) -> bool:
         """
-        Check if prev_ts is the immediately preceding completed 45m bar before curr_ts.
-        Canonical completed 45m bar end times: 09:45, 10:30, 11:15, 12:00, 12:45, 13:30, 14:15, 15:00.
+        Check if prev_ts is the immediately preceding completed 30m bar before curr_ts.
+        Canonical completed 30m bar end times: 09:45, 10:30, 11:15, 12:00, 12:45, 13:30, 14:15, 15:00.
         Two bars are immediately preceding if:
         1. Same trading date: curr_dt - prev_dt == 45 minutes
         2. Across trading dates: prev_dt is 15:00, curr_dt is 09:45, and no KRX trading day lies strictly between them.
@@ -705,15 +697,21 @@ class RuntimeScheduler:
         except Exception:
             return False
 
-        if curr_dt <= prev_dt:
+        from src.runtime.krx_calendar import COMPLETED_30M_BAR_SCHEDULE
+        ends = {end for _, _, _, end in COMPLETED_30M_BAR_SCHEDULE}
+        if (curr_dt <= prev_dt or prev_dt.strftime("%H:%M") not in ends
+                or curr_dt.strftime("%H:%M") not in ends
+                or prev_dt.second or curr_dt.second
+                or not KRXCalendar.is_krx_trading_day(prev_dt)
+                or not KRXCalendar.is_krx_trading_day(curr_dt)):
             return False
 
         # Same day check: exactly 45 minutes difference
         if curr_dt.date() == prev_dt.date():
-            return int((curr_dt - prev_dt).total_seconds()) == 45 * 60
+            return int((curr_dt - prev_dt).total_seconds()) == 30 * 60
 
         # Across days check: prev must be 15:00:00 and curr must be 09:45:00
-        if prev_dt.time() == time(15, 0) and curr_dt.time() == time(9, 45):
+        if prev_dt.time() == time(15, 0) and curr_dt.time() == time(9, 30):
             cur_check = prev_dt.date() + timedelta(days=1)
             while cur_check < curr_dt.date():
                 if KRXCalendar.is_krx_trading_day(cur_check):
@@ -731,24 +729,26 @@ class RuntimeScheduler:
         completed_bar_ts: str
     ):
         """
-        45m SELL WARNING sidecar evaluation and persistence into sell_warning_45m.
+        30m SELL WARNING sidecar evaluation and persistence into sell_warning_30m.
         - Advisory & shadow recording only (no notifications, no orders, no portfolio mutation).
         - Evaluates 1st SELL_WARNING vs 2nd consecutive SELL (sell_confirmed=1).
         - Fail-isolated: failures in sidecar evaluation are caught so they do not disrupt the core scan flow.
         """
         try:
-            if not completed_bar_ts:
+            from src.runtime.m30_contract import completed_timestamp
+            if completed_timestamp(completed_bar_ts, trading_date=trading_date) is None:
                 return
-            # Only evaluate when completed_bar_ts is a canonical completed 45m bar end time
-            valid_bar_ends = {"09:45", "10:30", "11:15", "12:00", "12:45", "13:30", "14:15", "15:00"}
+            # Only evaluate when completed_bar_ts is a canonical completed 30m bar end time
+            from src.runtime.krx_calendar import COMPLETED_30M_BAR_SCHEDULE
+            valid_bar_ends = {end for _, _, _, end in COMPLETED_30M_BAR_SCHEDULE}
             bar_time = completed_bar_ts.split(" ")[1][:5] if " " in completed_bar_ts else ""
             if bar_time not in valid_bar_ends:
                 logger.info(f"[SellWarningSidecar] Skipping non-completed bar timestamp: {completed_bar_ts}")
                 return
 
-            from src.analysis.sell_warning_45m_engine import SellWarning45mEngine
+            from src.analysis.sell_warning_30m_engine import SellWarning30mEngine
             if not hasattr(self, "_sell_warning_engine") or self._sell_warning_engine is None:
-                self._sell_warning_engine = SellWarning45mEngine()
+                self._sell_warning_engine = SellWarning30mEngine()
 
             warning_entry = self._sell_warning_engine.evaluate_stock_warning(
                 stock_code=stock_code,
@@ -765,11 +765,11 @@ class RuntimeScheduler:
                 )
                 if prev_entry and prev_entry.get("sell_warning_state") == "SELL_WARNING":
                     prev_ts = prev_entry.get("bar_timestamp")
-                    if prev_ts and self._is_immediately_preceding_45m_bar(prev_ts, completed_bar_ts):
+                    if prev_ts and self._is_immediately_preceding_30m_bar(prev_ts, completed_bar_ts):
                         sell_confirmed = 1
 
             warning_entry["sell_confirmed"] = sell_confirmed
-            self.db.insert_sell_warning_45m(warning_entry)
+            self.db.insert_sell_warning_30m(warning_entry)
 
         except Exception as e:
             logger.error(f"[SellWarningSidecar] {stock_code} sidecar evaluation error: {e}", exc_info=True)
@@ -833,7 +833,7 @@ def main():
     parser.add_argument(
         "--manual",
         action="store_true",
-        help="Run in manual verification mode (bypasses trading day / 45m bar timing gates and tags snapshot as MANUAL_RUNTIME_VERIFICATION)"
+        help="Run in manual verification mode (bypasses trading day / 30m bar timing gates and tags snapshot as MANUAL_RUNTIME_VERIFICATION)"
     )
 
     args = parser.parse_args()
@@ -841,7 +841,7 @@ def main():
     result = scheduler.run_task(args.task, is_manual=args.manual)
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    if result.get("status") in ["SUCCESS", "DEGRADED", "DATA_HOLD", "SKIPPED_NON_TRADING_DAY", "SKIPPED_RESERVED_WINDOW", "SKIPPED_EXISTING_JOB_ACTIVE", "SKIPPED_NO_NEW_45M_BAR"]:
+    if result.get("status") in ["SUCCESS", "DEGRADED", "DATA_HOLD", "SKIPPED_NON_TRADING_DAY", "SKIPPED_RESERVED_WINDOW", "SKIPPED_EXISTING_JOB_ACTIVE", "SKIPPED_NO_NEW_30M_BAR"]:
         sys.exit(0)
     else:
         sys.exit(1)

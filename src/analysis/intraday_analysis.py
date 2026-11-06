@@ -1,6 +1,6 @@
+import requests
 import math
 import threading
-import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -62,14 +62,14 @@ def _compute_naver_bar_volumes(df: pd.DataFrame, cum_col: str = "AccumulatedVolu
     return volumes
 
 
-class Intraday45mAnalyzer:
+class Intraday30mAnalyzer:
     """
-    Phase 3.1: 45분봉 정밀 수급 및 전술 지표 연산기
-    - 최근 3~5영업일(24~40개 45분봉) 데이터를 수집하여 표준 보조지표를 연산합니다:
-      1) OBV 9봉 MA (1거래일 9개 45분봉 기준)
+    Phase 3.1: 30분봉 정밀 수급 및 전술 지표 연산기
+    - 최근 3~5영업일(24~40개 30분봉) 데이터를 수집하여 표준 보조지표를 연산합니다:
+      1) OBV 9봉 MA (13개 정규장 슬롯; 지표기간 9 유지)
       2) ADX 14 + DMI (+DI / -DI 방향성 결합)
       3) Chaikin Oscillator (13, 26)
-      4) 45분봉 일목 구름대 (9, 26, 52)
+      4) 30분봉 일목 구름대 (9, 26, 52)
     - Data Provenance (데이터 출처, 수집 봉 수, 마지막 타임스탬프, 에러 코드)를 완전 추적합니다.
     - 결측 시 [0, 0]이나 0으로 정상값을 위장하지 않고 명시적 None 및 에러 코드를 반환합니다.
     """
@@ -78,22 +78,22 @@ class Intraday45mAnalyzer:
         pass
 
     @staticmethod
-    def calculate_canonical_45m_trend(df_45m: pd.DataFrame) -> Dict[str, Any]:
-        """Calculate raw 45m ADX/DMI and pure Ichimoku price structure.
+    def calculate_canonical_30m_trend(df_30m: pd.DataFrame) -> Dict[str, Any]:
+        """Calculate raw 30m ADX/DMI and pure Ichimoku price structure.
 
         This method intentionally does not include OBV in the cloud-breakdown
         result.  Existing composite fields remain defined by
-        ``analyze_45m_indicators`` for backward compatibility.
+        ``analyze_30m_indicators`` for backward compatibility.
         """
-        if not isinstance(df_45m, pd.DataFrame) or len(df_45m) < 16:
-            raise ValueError("INSUFFICIENT_COMPLETED_45M_BARS")
+        if not isinstance(df_30m, pd.DataFrame) or len(df_30m) < 16:
+            raise ValueError("INSUFFICIENT_COMPLETED_30M_BARS")
         required = {"High", "Low", "Close"}
-        if not required.issubset(df_45m.columns):
-            raise ValueError("MALFORMED_45M_OHLCV")
+        if not required.issubset(df_30m.columns):
+            raise ValueError("MALFORMED_30M_OHLCV")
 
-        high = df_45m["High"]
-        low = df_45m["Low"]
-        close = df_45m["Close"]
+        high = df_30m["High"]
+        low = df_30m["Low"]
+        close = df_30m["Close"]
         up_move = high.diff()
         down_move = -low.diff()
         plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
@@ -102,15 +102,15 @@ class Intraday45mAnalyzer:
             high - low,
             np.maximum((high - close.shift(1)).abs(), (low - close.shift(1)).abs()),
         )
-        tr_s = pd.Series(tr, index=df_45m.index).ewm(alpha=1 / 14, adjust=False).mean()
+        tr_s = pd.Series(tr, index=df_30m.index).ewm(alpha=1 / 14, adjust=False).mean()
         plus_di_series = (
             100
-            * pd.Series(plus_dm, index=df_45m.index).ewm(alpha=1 / 14, adjust=False).mean()
+            * pd.Series(plus_dm, index=df_30m.index).ewm(alpha=1 / 14, adjust=False).mean()
             / (tr_s + 1e-9)
         )
         minus_di_series = (
             100
-            * pd.Series(minus_dm, index=df_45m.index).ewm(alpha=1 / 14, adjust=False).mean()
+            * pd.Series(minus_dm, index=df_30m.index).ewm(alpha=1 / 14, adjust=False).mean()
             / (tr_s + 1e-9)
         )
         dx = 100 * (plus_di_series - minus_di_series).abs() / (
@@ -132,66 +132,35 @@ class Intraday45mAnalyzer:
         close_value = float(close.iloc[-1])
 
         return {
-            "adx_14_45m": float(adx_series.iloc[-1]),
-            "plus_di_45m": float(plus_di_series.iloc[-1]),
-            "minus_di_45m": float(minus_di_series.iloc[-1]),
-            "close_45m": close_value,
-            "cloud_bottom_45m": cloud_bottom,
-            "is_price_below_cloud_45m": bool(close_value < cloud_bottom),
+            "adx_14_30m": float(adx_series.iloc[-1]),
+            "plus_di_30m": float(plus_di_series.iloc[-1]),
+            "minus_di_30m": float(minus_di_series.iloc[-1]),
+            "close_30m": close_value,
+            "cloud_bottom_30m": cloud_bottom,
+            "is_price_below_cloud_30m": bool(close_value < cloud_bottom),
         }
 
-    @staticmethod
-    def observed_completed_45m_end(df_15m: pd.DataFrame, source_name: str, now=None) -> Optional[str]:
-        """Prove completion from three *source-observed* 15m candle start labels.
-
-        YFinance 15m bars use opening timestamps.  The Naver API's 15m
-        timestamp semantics are not established by our adapter, so NEVER infer
-        a completed candle from its raw timestamp alone.  In particular,
-        a 45m resampling index is the LEFT edge, not evidence of completion.
-        No network calls or changes to indicators/trading decisions.
-        """
-        if not str(source_name).startswith("YFINANCE_15M"):
-            return None
-        if not isinstance(df_15m, pd.DataFrame) or not isinstance(df_15m.index, pd.DatetimeIndex):
-            return None
-        stamps = df_15m.index
-        if len(stamps) < 3 or stamps.tz is None or not stamps.is_monotonic_increasing or not stamps.is_unique:
-            return None
-        try:
-            stamps = stamps.tz_convert("Asia/Seoul")
-            current = pd.Timestamp.now(tz="Asia/Seoul") if now is None else pd.Timestamp(now)
-            if current.tzinfo is None:
-                return None
-            current = current.tz_convert("Asia/Seoul")
-            start = stamps[-1].floor("45min")
-            end = start + pd.Timedelta(minutes=45)
-            expected = pd.date_range(start, periods=3, freq="15min")
-            valid_ends = {"09:45", "10:30", "11:15", "12:00",
-                          "12:45", "13:30", "14:15", "15:00"}
-            if (not stamps[-3:].equals(expected)
-                    or end.strftime("%H:%M") not in valid_ends
-                    or end.date() != current.date()
-                    or not pd.Timedelta(minutes=1) <= current - end <= pd.Timedelta(minutes=75)):
-                return None
-            return end.strftime("%Y-%m-%d %H:%M:%S")
-        except (TypeError, ValueError, OverflowError):
-            return None
-
     def _fetch_from_yfinance(self, stock_code: str) -> Optional[Tuple[pd.DataFrame, str]]:
-        """yfinance를 통한 15분봉 데이터 수집 (KS / KQ 순차 시도)"""
-        code = str(stock_code).zfill(6)
-        candidates = [f"{code}.KS", f"{code}.KQ"]
-
-        for sym in candidates:
+        # Read the original chart OHLCV without yfinance's live-row repair/merge.
+        # The metadata watermark and rows come from this same HTTP response.
+        for sym in [f"{stock_code}.KS", f"{stock_code}.KQ"]:
             try:
-                ticker = yf.Ticker(sym)
-                df_15m = ticker.history(interval="15m", period="10d")
-                if not df_15m.empty and len(df_15m) >= 15:
-                    df_clean = df_15m[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-                    if len(df_clean) >= 15:
-                        return df_clean, f"YFINANCE_15M ({sym})"
-            except Exception as e:
-                logger.debug(f"[Intraday45mAnalyzer] yfinance {sym} 수집 실패: {e}")
+                response = _naver_http_get(
+                    f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=15m&range=5d",
+                    headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+                response.raise_for_status()
+                chart = response.json()["chart"]["result"][0]
+                quote = chart["indicators"]["quote"][0]
+                index = pd.to_datetime(chart["timestamp"],unit="s",utc=True).tz_convert("Asia/Seoul")
+                frame = pd.DataFrame({key:quote[key.lower()] for key in ["Open","High","Low","Close","Volume"]},index=index).dropna()
+                if len(frame)<15:continue
+                watermark=chart["meta"].get("regularMarketTime")
+                if not isinstance(watermark,(int,float)):continue
+                frame.attrs["source_watermark"]=pd.Timestamp(watermark,unit="s",tz="UTC").tz_convert("Asia/Seoul").isoformat()
+                frame.attrs["raw_ohlcv_unmodified"]=True
+                return frame, f"YFINANCE_15M_RAW_CHART ({sym})"
+            except Exception as exc:
+                logger.debug(f"[M30] Yahoo raw chart {sym} unavailable: {type(exc).__name__}")
         return None
 
     def _fetch_from_naver_api(self, stock_code: str) -> Optional[Tuple[pd.DataFrame, str]]:
@@ -223,59 +192,62 @@ class Intraday45mAnalyzer:
                     df = df[["Open", "High", "Low", "Close", "Volume"]]
                     return df, "NAVER_MINUTE_API"
         except Exception as e:
-            logger.debug(f"[Intraday45mAnalyzer] Naver minute API {code} 수집 실패: {e}")
+            logger.debug(f"[Intraday30mAnalyzer] Naver minute API {code} 수집 실패: {e}")
         return None
 
     def fetch_canonical_15m_data(self, stock_code: str) -> Tuple[Optional[pd.DataFrame], str, str]:
-        """
-        다중 소스(yfinance -> Naver API)로부터 표준 15분봉 OHLCV 데이터를 수집합니다.
-        Returns: (df_15m, source_name, error_code)
-        """
-        # 1차 시도: yfinance
-        res = self._fetch_from_yfinance(stock_code)
-        if res is not None:
-            return res[0], res[1], "NONE"
+        from src.analysis.m30_kiwoom import fetch_canonical
+        return fetch_canonical(str(stock_code))
 
-        # 2차 시도: Naver API
-        res = self._fetch_from_naver_api(stock_code)
-        if res is not None:
-            return res[0], res[1], "NONE"
+    @staticmethod
+    def observed_completed_30m_end(raw_df, source, now=None):
+        """Return an end only when original source data prove its completion."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from src.runtime.krx_calendar import KRXCalendar
+        from src.runtime.m30_contract import kst_datetime
+        from src.analysis.m30_bars import prepare_completed_30m_data
+        at=kst_datetime(now) if now is not None else datetime.now(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
+        slot=KRXCalendar.get_completed_30m_bar(at)
+        if slot is None: return None
+        cutoff=at.replace(hour=int(slot[2][:2]),minute=int(slot[2][3:]),second=0,microsecond=0)
+        frame,quality=prepare_completed_30m_data(raw_df,source,cutoff,allow_sparse_completed=True)
+        if frame is None or quality!="VALID": return None
+        return frame.index[-1].strftime("%Y-%m-%d %H:%M:%S")
 
-        return None, "NONE", "NO_INTRADAY_DATA"
-
-    def analyze_45m_indicators(self, stock_code: str) -> Dict[str, Any]:
+    def analyze_30m_indicators(self, stock_code: str, asof_dt=None) -> Dict[str, Any]:
         """
-        45분봉 정밀 수급 및 기술 지표 연산 + Data Provenance 메타데이터 생성
+        30분봉 정밀 수급 및 기술 지표 연산 + Data Provenance 메타데이터 생성
         """
         default_res = {
             "stock_code": stock_code,
-            "has_45m_data": False,
+            "has_30m_data": False,
+            "completed_30m_timestamp": None,
             "intraday_source": "NONE",
             "intraday_row_count": 0,
             "intraday_last_timestamp": "N/A",
-            "completed_45m_timestamp": None,
             "intraday_quality": "🔴 INVALID (분봉 데이터 미수집)",
             "intraday_error_code": "NO_INTRADAY_DATA",
-            "adx_14_45m": None,
-            "plus_di_45m": None,
-            "minus_di_45m": None,
-            "adx_di_dominance_45m": "N/A (데이터 결측)",
-            "close_45m": None,
-            "cloud_bottom_45m": None,
-            "is_price_below_cloud_45m": None,
-            "obv_45m": None,
-            "obv_45m_trend": "N/A (데이터 결측)",
-            "chaikin_osc_45m": None,
-            "chaikin_flow_45m": "N/A (데이터 결측)",
+            "adx_14_30m": None,
+            "plus_di_30m": None,
+            "minus_di_30m": None,
+            "adx_di_dominance_30m": "N/A (데이터 결측)",
+            "close_30m": None,
+            "cloud_bottom_30m": None,
+            "is_price_below_cloud_30m": None,
+            "obv_30m": None,
+            "obv_30m_trend": "N/A (데이터 결측)",
+            "chaikin_osc_30m": None,
+            "chaikin_flow_30m": "N/A (데이터 결측)",
             "intraday_cho_recent2": None,
             "intraday_cho_is_subzero_2bars": False,
             "intraday_cho_note": "",
-            "is_45m_breakdown": False,
+            "is_30m_breakdown": False,
             "is_obv_dead": False,
             "is_cho_outflow": False,
-            "is_45m_bearish_2plus": False,
-            "signal_45m_text": "45분봉 데이터 결측",
-            "action_45m_recommendation": ""
+            "is_30m_bearish_2plus": False,
+            "signal_30m_text": "30분봉 데이터 결측",
+            "action_30m_recommendation": ""
         }
 
         # 1. 15분봉 Canonical 데이터 수집
@@ -284,42 +256,44 @@ class Intraday45mAnalyzer:
             default_res["intraday_source"] = source_name
             default_res["intraday_error_code"] = err_code if err_code != "NONE" else "INSUFFICIENT_BARS"
             default_res["intraday_quality"] = f"🔴 INVALID ({default_res['intraday_error_code']})"
-            logger.warning(f"[Intraday45mAnalyzer] {stock_code} 15분봉 데이터 수집 실패 ({default_res['intraday_error_code']})")
+            logger.warning(f"[Intraday30mAnalyzer] {stock_code} 15분봉 데이터 수집 실패 ({default_res['intraday_error_code']})")
             return default_res
 
         try:
-            # 2. 45분봉 리샘플링 (1일 = 약 8~9개 45분봉)
-            df_45m = df_15m.resample('45min').agg({
-                'Open': 'first',
-                'High': 'max',
-                'Low': 'min',
-                'Close': 'last',
-                'Volume': 'sum'
-            }).dropna()
+            # 2. 30분봉 리샘플링 (1일 = 약 8~9개 30분봉)
+            from src.analysis.m30_bars import completed_frame
+            df_30m, frame_quality = completed_frame(df_15m, source_name, asof=asof_dt)
+            if df_30m is None:
+                default_res["intraday_error_code"] = frame_quality
+                default_res["intraday_quality"] = "INVALID_30M_" + frame_quality
+                return default_res
+            default_res["bar_interval_minutes"] = 30
+            default_res["timeframe_contract"] = "KRX_M30_V1"
 
-            if len(df_45m) < 16: # 최소 2거래일(16봉) 이상 필요
+            if len(df_30m) < 16: # 최소 2거래일(16봉) 이상 필요
                 default_res["intraday_source"] = source_name
-                default_res["intraday_row_count"] = len(df_45m)
+                default_res["intraday_row_count"] = len(df_30m)
                 default_res["intraday_error_code"] = "INSUFFICIENT_BARS"
-                default_res["intraday_quality"] = f"🟡 PARTIAL (45분봉 {len(df_45m)}봉 부족 - 최소 16봉 필요)"
+                default_res["intraday_quality"] = f"🟡 PARTIAL (30분봉 {len(df_30m)}봉 부족 - 최소 16봉 필요)"
                 return default_res
 
-            high = df_45m['High']
-            low = df_45m['Low']
-            close = df_45m['Close']
-            vol = df_45m['Volume']
+            high = df_30m['High']
+            low = df_30m['Low']
+            close = df_30m['Close']
+            vol = df_30m['Volume']
 
-            last_ts = str(df_45m.index[-1])
+            last_ts = str(df_30m.index[-1])
+            observed_end = self.observed_completed_30m_end(df_15m, source_name, now=asof_dt)
 
-            # 3. 45분봉 DMI / ADX (14) 및 순수 가격구조 연산
-            trend_metrics = self.calculate_canonical_45m_trend(df_45m)
-            latest_adx = trend_metrics["adx_14_45m"]
-            latest_plus_di = trend_metrics["plus_di_45m"]
-            latest_minus_di = trend_metrics["minus_di_45m"]
+            # 3. 30분봉 DMI / ADX (14) 및 순수 가격구조 연산
+            trend_metrics = self.calculate_canonical_30m_trend(df_30m)
+            latest_adx = trend_metrics["adx_14_30m"]
+            latest_plus_di = trend_metrics["plus_di_30m"]
+            latest_minus_di = trend_metrics["minus_di_30m"]
 
             di_dom_str = f"+DI: {latest_plus_di:.1f} / -DI: {latest_minus_di:.1f} (ADX {latest_adx:.1f}, {'+DI우세' if latest_plus_di >= latest_minus_di else '-DI우세'})"
 
-            # 4. 45분봉 OBV (9) 및 데드크로스 연산
+            # 4. 30분봉 OBV (9) 및 데드크로스 연산
             obv_series = (np.sign(close.diff()) * vol).fillna(0).cumsum()
             obv_ema9 = obv_series.ewm(span=9, adjust=False).mean()
 
@@ -339,11 +313,11 @@ class Intraday45mAnalyzer:
             else:
                 obv_trend_str = "📈 OBV(9) 매집 유지 (상승)"
 
-            # 5. 45분봉 Chaikin Oscillator (13, 26)
+            # 5. 30분봉 Chaikin Oscillator (13, 26)
             hl_diff = high - low
             mfm = np.where(hl_diff == 0, 0, ((close - low) - (high - close)) / (hl_diff + 1e-9))
             mfv = mfm * vol
-            adl_series = pd.Series(mfv, index=df_45m.index).cumsum()
+            adl_series = pd.Series(mfv, index=df_30m.index).cumsum()
             cho_series = adl_series.ewm(span=13, adjust=False).mean() - adl_series.ewm(span=26, adjust=False).mean()
 
             latest_cho = int(cho_series.iloc[-1])
@@ -362,51 +336,51 @@ class Intraday45mAnalyzer:
                 cho_flow_str = f"💧 CHO 자금유입 ({latest_cho:+,d})"
 
             # 6. 기존 breakdown 의미 유지: 순수 구름 하단 이탈 AND 기존 EMA9 OBV dead
-            is_price_below_cloud_45m = trend_metrics["is_price_below_cloud_45m"]
-            is_45m_breakdown = is_price_below_cloud_45m and obv_dead_flag
+            is_price_below_cloud_30m = trend_metrics["is_price_below_cloud_30m"]
+            is_30m_breakdown = is_price_below_cloud_30m and obv_dead_flag
 
             adx_bear_flag = (latest_adx >= 22.0) and (latest_minus_di > latest_plus_di)
             bearish_signals_count = sum([obv_dead_flag, cho_dead_flag, adx_bear_flag])
-            is_45m_bearish_2plus = (bearish_signals_count >= 2)
+            is_30m_bearish_2plus = (bearish_signals_count >= 2)
 
             is_obv_dead = obv_dead_flag and not cho_dead_flag
             is_cho_outflow = cho_dead_flag and not obv_dead_flag
 
-            logger.info(f"[Intraday45mAnalyzer] {stock_code} ({source_name}, {len(df_45m)}봉) 45분봉 정밀분석 완료 - ADX:{latest_adx:.1f}, OBV:{obv_trend_str}, CHO:{intraday_cho_recent2}")
+            logger.info(f"[Intraday30mAnalyzer] {stock_code} ({source_name}, {len(df_30m)}봉) 30분봉 정밀분석 완료 - ADX:{latest_adx:.1f}, OBV:{obv_trend_str}, CHO:{intraday_cho_recent2}")
 
             return {
                 "stock_code": stock_code,
-                "has_45m_data": True,
+                "has_30m_data": True, "bar_interval_minutes": 30, "timeframe_contract": "KRX_M30_V1",
                 "intraday_source": source_name,
-                "intraday_row_count": len(df_45m),
+                "intraday_row_count": len(df_30m),
                 "intraday_last_timestamp": last_ts,
-                "completed_45m_timestamp": self.observed_completed_45m_end(df_15m, source_name),
-                "intraday_quality": f"🟢 VALID ({len(df_45m)}봉 정상 산출)",
+                "completed_30m_timestamp": observed_end,
+                "intraday_quality": f"🟢 VALID ({len(df_30m)}봉 정상 산출)",
                 "intraday_error_code": "NONE",
-                "adx_14_45m": round(latest_adx, 1),
-                "plus_di_45m": round(latest_plus_di, 1),
-                "minus_di_45m": round(latest_minus_di, 1),
-                "adx_di_dominance_45m": di_dom_str,
-                "close_45m": round(trend_metrics["close_45m"], 2),
-                "cloud_bottom_45m": round(trend_metrics["cloud_bottom_45m"], 2),
-                "is_price_below_cloud_45m": is_price_below_cloud_45m,
-                "obv_45m": int(obv_series.iloc[-1]),
-                "obv_45m_trend": obv_trend_str,
-                "chaikin_osc_45m": latest_cho,
-                "chaikin_flow_45m": cho_flow_str,
+                "adx_14_30m": round(latest_adx, 1),
+                "plus_di_30m": round(latest_plus_di, 1),
+                "minus_di_30m": round(latest_minus_di, 1),
+                "adx_di_dominance_30m": di_dom_str,
+                "close_30m": round(trend_metrics["close_30m"], 2),
+                "cloud_bottom_30m": round(trend_metrics["cloud_bottom_30m"], 2),
+                "is_price_below_cloud_30m": is_price_below_cloud_30m,
+                "obv_30m": int(obv_series.iloc[-1]),
+                "obv_30m_trend": obv_trend_str,
+                "chaikin_osc_30m": latest_cho,
+                "chaikin_flow_30m": cho_flow_str,
                 "intraday_cho_recent2": intraday_cho_recent2,
                 "intraday_cho_is_subzero_2bars": intraday_cho_is_subzero_2bars,
-                "intraday_cho_note": " (일봉+45분봉 이중확인)" if intraday_cho_is_subzero_2bars else "",
-                "is_45m_breakdown": is_45m_breakdown,
+                "intraday_cho_note": " (일봉+30분봉 이중확인)" if intraday_cho_is_subzero_2bars else "",
+                "is_30m_breakdown": is_30m_breakdown,
                 "is_obv_dead": is_obv_dead,
                 "is_cho_outflow": is_cho_outflow,
-                "is_45m_bearish_2plus": is_45m_bearish_2plus,
-                "signal_45m_text": f"45m 분석 완료 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})",
-                "action_45m_recommendation": "45m 정상 연산"
+                "is_30m_bearish_2plus": is_30m_bearish_2plus,
+                "signal_30m_text": f"30m 분석 완료 (ADX {latest_adx:.1f} | CHO {latest_cho:+,d})",
+                "action_30m_recommendation": "30m 정상 연산"
             }
 
         except Exception as e:
-            logger.error(f"[Intraday45mAnalyzer] {stock_code} 지표 계산 중 예외: {e}", exc_info=True)
+            logger.error(f"[Intraday30mAnalyzer] {stock_code} 지표 계산 중 예외: {e}", exc_info=True)
             default_res["intraday_source"] = source_name
             default_res["intraday_error_code"] = "INDICATOR_ERROR"
             default_res["intraday_quality"] = "🔴 INVALID (지표 계산 오류)"

@@ -178,8 +178,8 @@ def get_latest_add_advisory_entry(
     db_manager: Any = None
 ) -> Dict[str, Any]:
     """
-    KST 당일(trading_date) 최신 완성 45분봉 add_advisory_45m 레코드 조회 (Freshness Guard)
-    - 당일 첫 45분 스캔 전 또는 당일 데이터 부재 시 전일 값을 재사용하지 않고 WAITING_TODAY_BAR 반환
+    KST 당일(trading_date) 최신 완성 30분봉 add_advisory_30m 레코드 조회 (Freshness Guard)
+    - 당일 첫 30분 스캔 전 또는 당일 데이터 부재 시 전일 값을 재사용하지 않고 WAITING_TODAY_BAR 반환
     """
     if target_date is None:
         target_date, max_bar_timestamp = parse_date_str_for_freshness(None)
@@ -198,17 +198,17 @@ def get_latest_add_advisory_entry(
                     "stock_code": stock_code,
                     "trading_date": target_date,
                     "add_advisory_state": "UNKNOWN",
-                    "data_quality": "INVALID",
-                    "reason_codes": "INVALID_DATA_QUALITY",
-                    "evidence_text": "데이터 결측"
+                    "data_quality": entry.get("data_quality", "INVALID"),
+                    "reason_codes": entry.get("reason_codes") or entry.get("data_quality") or "INVALID_DATA_QUALITY",
+                    "evidence_text": "데이터 결측 · " + html.escape(str(entry.get("data_quality") or entry.get("reason_codes") or "INVALID_DATA_QUALITY"))
                 }
             return {
                 "stock_code": stock_code,
                 "trading_date": target_date,
                 "add_advisory_state": "UNKNOWN",
                 "data_quality": "WAITING_TODAY_BAR",
-                "reason_codes": "WAITING_TODAY_45M_BAR",
-                "evidence_text": "당일 45분봉 대기"
+                "reason_codes": "WAITING_TODAY_30M_BAR",
+                "evidence_text": "당일 30분봉 대기"
             }
         except Exception as e:
             logger.warning(f"[MobileRendererV2] add_advisory DB조회 실패 ({stock_code}): {e}")
@@ -217,8 +217,8 @@ def get_latest_add_advisory_entry(
                 "trading_date": target_date,
                 "add_advisory_state": "UNKNOWN",
                 "data_quality": "WAITING_TODAY_BAR",
-                "reason_codes": "WAITING_TODAY_45M_BAR",
-                "evidence_text": "당일 45분봉 대기"
+                "reason_codes": "WAITING_TODAY_30M_BAR",
+                "evidence_text": "당일 30분봉 대기"
             }
 
     if os.environ.get("STOCKBOT_TEST_MODE") == "1":
@@ -227,8 +227,8 @@ def get_latest_add_advisory_entry(
             "trading_date": target_date,
             "add_advisory_state": "UNKNOWN",
             "data_quality": "WAITING_TODAY_BAR",
-            "reason_codes": "WAITING_TODAY_45M_BAR",
-            "evidence_text": "당일 45분봉 대기"
+            "reason_codes": "WAITING_TODAY_30M_BAR",
+            "evidence_text": "당일 30분봉 대기"
         }
 
     try:
@@ -245,13 +245,13 @@ def get_latest_add_advisory_entry(
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
                 if target_date and max_bar_timestamp:
-                    query = "SELECT * FROM add_advisory_45m WHERE stock_code = ? AND trading_date = ? AND bar_timestamp <= ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
+                    query = "SELECT * FROM add_advisory_30m WHERE stock_code = ? AND trading_date = ? AND bar_timestamp <= ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
                     row = c.execute(query, (stock_code, target_date, max_bar_timestamp)).fetchone()
                 elif target_date:
-                    query = "SELECT * FROM add_advisory_45m WHERE stock_code = ? AND trading_date = ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
+                    query = "SELECT * FROM add_advisory_30m WHERE stock_code = ? AND trading_date = ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
                     row = c.execute(query, (stock_code, target_date)).fetchone()
                 else:
-                    query = "SELECT * FROM add_advisory_45m WHERE stock_code = ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
+                    query = "SELECT * FROM add_advisory_30m WHERE stock_code = ? ORDER BY bar_timestamp DESC, id DESC LIMIT 1"
                     row = c.execute(query, (stock_code,)).fetchone()
                 conn.close()
                 if row:
@@ -273,13 +273,13 @@ def get_latest_add_advisory_entry(
         "trading_date": target_date,
         "add_advisory_state": "UNKNOWN",
         "data_quality": "WAITING_TODAY_BAR",
-        "reason_codes": "WAITING_TODAY_45M_BAR",
-        "evidence_text": "당일 45분봉 대기"
+        "reason_codes": "WAITING_TODAY_30M_BAR",
+        "evidence_text": "당일 30분봉 대기"
     }
 
 def format_add_advisory_badge_and_action(state: str) -> tuple:
     """
-    45분 ADD 상태 및 행동 문구 포맷팅:
+    30분 ADD 상태 및 행동 문구 포맷팅:
     - ADD_STRONG -> STRONG / 추가매수 검토
     - ADD_WATCH -> WATCH / 관찰
     - NEUTRAL -> NEUTRAL / 추가매수 보류
@@ -292,7 +292,7 @@ def format_add_advisory_badge_and_action(state: str) -> tuple:
         action = "<b style='color:#DC2626;'>추가매수 검토</b>"
     elif st_upper == "ADD_WATCH":
         badge = "<span style='background:#EFF6FF; border:1px solid #BFDBFE; color:#1D4ED8; font-weight:bold; padding:2px 6px; border-radius:4px; font-size:10.5px;'>WATCH</span>"
-        action = "<span style='color:#1D4ED8; font-weight:bold;'>관찰</span>"
+        action = "<span style='color:#1D4ED8; font-weight:bold;'>기술 관찰 · 매수 권고 아님</span>"
     elif st_upper == "NEUTRAL":
         badge = "<span style='background:#F8FAFC; border:1px solid #E2E8F0; color:#475569; font-weight:bold; padding:2px 6px; border-radius:4px; font-size:10.5px;'>NEUTRAL</span>"
         action = "<span style='color:#475569;'>추가매수 보류</span>"
@@ -308,13 +308,15 @@ def format_advisory_evidence_korean(entry: Optional[Dict[str, Any]]) -> str:
     """핵심근거 최대 2~3개 한국어 간결 문구 생성 (Freshness Guard 지원)"""
     if not entry:
         return "데이터 결측"
+    if str(entry.get("reason_codes") or "").startswith("STOP_BREACHED"):
+        return "손절선 침범 우선 · 추가매수 금지"
     
     if entry.get("evidence_text"):
         return entry["evidence_text"]
     
     data_quality = str(entry.get("data_quality", ""))
-    if data_quality == "WAITING_TODAY_BAR" or entry.get("reason_codes") == "WAITING_TODAY_45M_BAR":
-        return "당일 45분봉 대기"
+    if data_quality == "WAITING_TODAY_BAR" or entry.get("reason_codes") == "WAITING_TODAY_30M_BAR":
+        return "당일 30분봉 대기"
     
     if not data_quality.startswith("VALID") or entry.get("add_advisory_state") == "UNKNOWN":
         return "데이터 결측"
@@ -357,13 +359,13 @@ def format_advisory_evidence_korean(entry: Optional[Dict[str, Any]]) -> str:
 
     return " · ".join(items[:3])
 
-def build_45m_add_advisory_table_section_html(
+def build_30m_add_advisory_table_section_html(
     held_portfolio: Optional[List[Dict[str, Any]]],
     target_date: Optional[str] = None,
     max_bar_timestamp: Optional[str] = None,
     db_manager: Any = None
 ) -> str:
-    """모바일 최적화 45M ADD ADVISORY 4컬럼 요약 테이블 생성 HTML (Freshness Guard 적용)"""
+    """모바일 최적화 30M ADD ADVISORY 4컬럼 요약 테이블 생성 HTML (Freshness Guard 적용)"""
     if not held_portfolio:
         return ""
     
@@ -378,6 +380,8 @@ def build_45m_add_advisory_table_section_html(
             max_bar_timestamp=max_bar_timestamp,
             db_manager=db_manager
         )
+        from src.analysis.advisory_safety import apply_priority
+        entry = apply_priority(entry, h)
         st = entry.get("add_advisory_state", "UNKNOWN")
         badge_html, action_html = format_add_advisory_badge_and_action(st)
         evidence_str = format_advisory_evidence_korean(entry)
@@ -394,14 +398,14 @@ def build_45m_add_advisory_table_section_html(
     table_section_html = f"""
     <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:8px; padding:12px 10px; margin-bottom:12px; box-shadow:0 1px 4px rgba(0,0,0,0.03); box-sizing:border-box; width:100%;">
         <div style="font-size:13px; font-weight:bold; color:#0F172A; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
-            <span>📈 45M ADD ADVISORY (추가매수 관찰)</span>
-            <span style="font-size:10px; color:#64748B; font-weight:normal;">완성 45분봉 기준</span>
+            <span>📈 30M ADD ADVISORY (추가매수 관찰)</span>
+            <span style="font-size:10px; color:#64748B; font-weight:normal;">완성 30분봉 기준</span>
         </div>
         <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left; table-layout:fixed; box-sizing:border-box;">
             <thead>
                 <tr style="background:#F8FAFC; border-bottom:1px solid #E2E8F0; color:#475569; font-size:10.5px;">
                     <th style="padding:6px 4px; width:25%;">종목</th>
-                    <th style="padding:6px 4px; width:22%;">45분 ADD</th>
+                    <th style="padding:6px 4px; width:22%;">30분 ADD</th>
                     <th style="padding:6px 4px; width:31%;">핵심근거</th>
                     <th style="padding:6px 4px; width:22%;">행동</th>
                 </tr>
@@ -445,6 +449,11 @@ def build_today_action_summary_html(held_portfolio: Optional[List[Dict[str, Any]
     loss_defenses = []
     new_433_items = []
 
+    from src.analysis.advisory_safety import stop_breached
+    breaches=[str(h.get("stock_name") or h.get("stock_code")) for h in held_portfolio if stop_breached(h)]
+    if breaches:
+        lines.append(f"• 🚨 <b>손절선 침범 — 위험 우선 확인</b>: {' / '.join(breaches)}")
+
     # 1. 실제 권고 매도수량
     reductions = []
     for h in held_portfolio:
@@ -468,12 +477,12 @@ def build_today_action_summary_html(held_portfolio: Optional[List[Dict[str, Any]
         prev_stop = h.get("previous_confirmed_stop") if h.get("previous_confirmed_stop") is not None else h.get("prev_confirmed_stop")
         cur_stop = h.get("confirmed_stop_price") if h.get("confirmed_stop_price") is not None else h.get("kiwoom_stop_tick_price")
         name = h.get("stock_name") or code
+        if stop_breached(h):
+            continue
         if isinstance(prev_stop, (int, float)) and isinstance(cur_stop, (int, float)):
             if cur_stop > prev_stop and prev_stop > 0:
                 diff = round(cur_stop - prev_stop)
                 raised_stops.append(f"{name} {int(prev_stop):,} → {int(cur_stop):,} (+{diff:,})")
-        elif "상향" in str(h.get("smartphone_action", "")) or "상향" in str(h.get("stop_update_status", "")):
-            raised_stops.append(f"{name} 상향 수정")
     if raised_stops:
         lines.append(f"• <b>손절 상향</b>: {' / '.join(raised_stops)}")
 
@@ -863,7 +872,7 @@ def generate_mobile_html_report_v2(
     - 360px ~ 430px 모바일 뷰포트에서 가로 스크롤 없이 최적 가독성 제공
     - 1) 📌 오늘의 핵심 조치 (최대 4~5줄)
     - 2) 📊 전체 보유종목 현황 (현재 실제 보유종목 전부, 종목당 1회)
-    - 3) 📈 45M ADD ADVISORY
+    - 3) 📈 30M ADD ADVISORY
     - 4) 📢 DART 주요 공시 & 브리핑
     - 감사용 전체 보유 종목코드 집합을 data-held-stock-codes 속성에 기록
     - CSS Grid, JavaScript, 고정 min-width 테이블 배제 (이메일 클라이언트 표준 호환)
@@ -961,7 +970,7 @@ def generate_mobile_html_report_v2(
                 defense_st = format_display_val(p.get('defense_state'), "OFF")
                 policy_items.append(
                     f"<div style='margin:6px 0;'><b>⚠️ LOSS_DEFENSE SHADOW — {name} ({code})</b><br>"
-                    f"손실 {loss_disp}% | T 3D: {t_3d} | 45m Bearish {bool(p.get('is_45m_bearish_gate'))} | defense {html.escape(defense_st)} | hard stop {hard_text} | 가상판정 / 주문 영향 없음</div>"
+                    f"손실 {loss_disp}% | T 3D: {t_3d} | 30m Bearish {bool(p.get('is_30m_bearish_gate'))} | defense {html.escape(defense_st)} | hard stop {hard_text} | 가상판정 / 주문 영향 없음</div>"
                 )
             elif p.get("hard_stop_already_breached_at_shadow_start") or p.get("shadow_action") == "HARD_STOP_EXIT":
                 policy_items.append(
@@ -1069,14 +1078,14 @@ def generate_mobile_html_report_v2(
             excess_qty = h.get("weight_excess_qty", 0)
             risk_target_qty = h.get("risk_target_qty", 0)
 
-            # 45분봉 수급 원자값
+            # 30분봉 수급 원자값
             obv_d_date = h.get("obv_dead_date", "N/A")
             obv_d_days = h.get("obv_dead_elapsed_days", 0)
-            is_45m_obv_dead = h.get("is_obv_dead", False) or ("데드" in str(h.get("obv_45m_trend", "")))
+            is_30m_obv_dead = h.get("is_obv_dead", False) or ("데드" in str(h.get("obv_30m_trend", "")))
             daily_cho = h.get("daily_cho_recent2", [0, 0])
             intra_cho = h.get("intraday_cho_recent2", [0, 0])
             di_dom = h.get("adx_di_dominance", "-")
-            adx_45m = h.get("adx_14_45m", 0.0)
+            adx_30m = h.get("adx_14_30m", 0.0)
 
             # 색상 및 서명 처리
             price_color = "#DC2626" if daily_chg > 0 else ("#2563EB" if daily_chg < 0 else "#475569")
@@ -1211,13 +1220,15 @@ def generate_mobile_html_report_v2(
                 sp_border = "#E2E8F0"
                 sp_color = "#475569"
 
-            # 45M ADD ADVISORY 수급 지표 포맷 (절대수치 미표시 및 4컬럼 요약 규칙 적용)
+            # 30M ADD ADVISORY 수급 지표 포맷 (절대수치 미표시 및 4컬럼 요약 규칙 적용)
             adv_entry = get_latest_add_advisory_entry(
                 code,
                 target_date=target_date,
                 max_bar_timestamp=max_bar_ts,
                 db_manager=db_manager
             )
+            from src.analysis.advisory_safety import apply_priority
+            adv_entry = apply_priority(adv_entry, h)
             adv_state = adv_entry.get("add_advisory_state", "UNKNOWN")
             adv_badge, adv_action = format_add_advisory_badge_and_action(adv_state)
             adv_evidence = format_advisory_evidence_korean(adv_entry)
@@ -1289,9 +1300,9 @@ def generate_mobile_html_report_v2(
                     {sizing_disp}
                 </div>
 
-                <!-- 5. 45M ADD ADVISORY 요약 칩 바 -->
+                <!-- 5. 30M ADD ADVISORY 요약 칩 바 -->
                 <div style="font-size:10.5px; color:#475569; line-height:1.45; background:#F8FAFC; padding:5px 8px; border-radius:5px; box-sizing:border-box; width:100%; word-break:break-word; overflow-wrap:anywhere;">
-                    <div>• <b>45분 ADD:</b> {adv_badge} ({adv_action}) | <b>근거:</b> {adv_evidence}</div>
+                    <div>• <b>30분 ADD:</b> {adv_badge} ({adv_action}) | <b>근거:</b> {adv_evidence}</div>
                 </div>
             </div>
             """
@@ -1302,8 +1313,8 @@ def generate_mobile_html_report_v2(
         </div>
         """
 
-    # 45M ADD ADVISORY 요약 현황 섹션 생성 (Freshness Guard 적용)
-    add_advisory_section_html = build_45m_add_advisory_table_section_html(
+    # 30M ADD ADVISORY 요약 현황 섹션 생성 (Freshness Guard 적용)
+    add_advisory_section_html = build_30m_add_advisory_table_section_html(
         held_portfolio,
         target_date=target_date,
         max_bar_timestamp=max_bar_ts,
@@ -1393,7 +1404,7 @@ def generate_mobile_html_report_v2(
             <!-- 2) 📊 전체 보유종목 현황 -->
             {all_holdings_strategy_table_html}
 
-            <!-- 3) 📈 45M ADD ADVISORY 요약 현황 -->
+            <!-- 3) 📈 30M ADD ADVISORY 요약 현황 -->
             {add_advisory_section_html}
 
             <!-- 4) 📢 DART 주요 공시 & 브리핑 -->

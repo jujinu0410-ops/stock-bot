@@ -4,7 +4,7 @@ MarketCap Leadership Radar (Sidecar Module - Phase A & B)
 - 한국 대형주 35개 유니버스 기반 시가총액 순위 및 리더십 구간 추적
 - RankBand: TOP_9, RANK_10_20, RANK_21_30, RANK_31_50, OTHER, UNKNOWN
 - 이메일 요약 연동: RANK_10_20 및 RANK_21_30 상위 종목 최대 5개 선별 노출
-- Shadow Core, ATR V4, 45M ADD, 주문 로직과 100% 격리된 순수 읽기/표시 전용 모듈
+- Shadow Core, ATR V4, 30M ADD, 주문 로직과 100% 격리된 순수 읽기/표시 전용 모듈
 """
 
 import html

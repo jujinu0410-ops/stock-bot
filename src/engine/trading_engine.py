@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional, List
 from src.database.db_manager import DatabaseManager
 from src.analysis.technical_analysis import TechnicalAnalysis
 from src.analysis.fundamental_analysis import FundamentalAnalysis
-from src.analysis.intraday_analysis import Intraday45mAnalyzer
+from src.analysis.intraday_analysis import Intraday30mAnalyzer
 from src.utils.logger import logger
 
 class TradingEngine:
@@ -12,7 +12,7 @@ class TradingEngine:
     """
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
-        self.intraday_analyzer = Intraday45mAnalyzer()
+        self.intraday_analyzer = Intraday30mAnalyzer()
 
     def analyze_stock(self, stock_code: str, analysis_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
@@ -151,8 +151,8 @@ class TradingEngine:
             }
             self.db.upsert_trading_signal(signal_db_record)
 
-            # 5. 45분봉 정밀 수급 및 전술 지표 연산
-            intra_res = self.intraday_analyzer.analyze_45m_indicators(stock_code)
+            # 5. 30분봉 정밀 수급 및 전술 지표 연산
+            intra_res = self.intraday_analyzer.analyze_30m_indicators(stock_code)
 
             return {
                 "stock_code": stock_code,
@@ -204,27 +204,27 @@ class TradingEngine:
                 "daily_adx_di_dominance": tech_res.get("adx_di_dominance", "-"),
                 "is_minus_di_dominant": tech_res.get("is_minus_di_dominant", False),
 
-                # 45분봉 원자값 지표 및 Provenance 메타데이터
+                # 30분봉 원자값 지표 및 Provenance 메타데이터
                 "intraday_source": intra_res.get("intraday_source", "NONE"),
                 "intraday_row_count": intra_res.get("intraday_row_count", 0),
                 "intraday_last_timestamp": intra_res.get("intraday_last_timestamp", "N/A"),
-                "completed_45m_timestamp": intra_res.get("completed_45m_timestamp"),
+                "completed_30m_timestamp": intra_res.get("completed_30m_timestamp"),
                 "intraday_quality": intra_res.get("intraday_quality", "🔴 INVALID (분봉 데이터 미수집)"),
                 "intraday_error_code": intra_res.get("intraday_error_code", "NO_INTRADAY_DATA"),
-                "adx_14_45m": intra_res.get("adx_14_45m"),
-                "plus_di_45m": intra_res.get("plus_di_45m"),
-                "minus_di_45m": intra_res.get("minus_di_45m"),
-                "adx_di_dominance_45m": intra_res.get("adx_di_dominance_45m", "N/A"),
-                "obv_45m": intra_res.get("obv_45m"),
-                "obv_45m_trend": intra_res.get("obv_45m_trend", "N/A"),
-                "chaikin_osc_45m": intra_res.get("chaikin_osc_45m"),
-                "chaikin_flow_45m": intra_res.get("chaikin_flow_45m", "N/A"),
+                "adx_14_30m": intra_res.get("adx_14_30m"),
+                "plus_di_30m": intra_res.get("plus_di_30m"),
+                "minus_di_30m": intra_res.get("minus_di_30m"),
+                "adx_di_dominance_30m": intra_res.get("adx_di_dominance_30m", "N/A"),
+                "obv_30m": intra_res.get("obv_30m"),
+                "obv_30m_trend": intra_res.get("obv_30m_trend", "N/A"),
+                "chaikin_osc_30m": intra_res.get("chaikin_osc_30m"),
+                "chaikin_flow_30m": intra_res.get("chaikin_flow_30m", "N/A"),
                 "intraday_cho_recent2": intra_res.get("intraday_cho_recent2"),
                 "intraday_cho_is_subzero_2bars": intra_res.get("intraday_cho_is_subzero_2bars", False),
-                "is_45m_breakdown": intra_res.get("is_45m_breakdown", False),
+                "is_30m_breakdown": intra_res.get("is_30m_breakdown", False),
                 "is_obv_dead": intra_res.get("is_obv_dead", False),
                 "is_cho_outflow": intra_res.get("is_cho_outflow", False),
-                "is_45m_bearish_2plus": intra_res.get("is_45m_bearish_2plus", False)
+                "is_30m_bearish_2plus": intra_res.get("is_30m_bearish_2plus", False)
             }
 
         except Exception as e:

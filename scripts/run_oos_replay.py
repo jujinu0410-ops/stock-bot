@@ -1,4 +1,4 @@
-"""OOS Historical Replay and Entry Comparison Harness for SellWarning45mEngine.
+"""OOS Historical Replay and Entry Comparison Harness for SellWarning30mEngine.
 
 Research-only: does not modify engine, threshold, scheduler, notifier, or orders.
 Pre-fixes 17 public target stocks (excluding 004960, 267260, 086450).
@@ -23,11 +23,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.analysis.technical_analysis import calculate_wilder_atr
-from scripts.replay_sell_warning_45m import (
+from scripts.replay_sell_warning_30m import (
     build_episodes,
     completed_cutoffs,
     fetch_yfinance_15m,
-    realized_45m_bars,
+    realized_30m_bars,
     replay_stock,
 )
 
@@ -59,7 +59,7 @@ TARGET_STOCKS: Tuple[Tuple[str, str, str], ...] = (
 )
 
 OUTCOME_COLUMNS = (
-    "return_next_45m_pct",
+    "return_next_30m_pct",
     "return_next_90m_pct",
     "return_day_close_pct",
     "return_next_open_pct",
@@ -253,7 +253,7 @@ def compute_metrics(df: pd.DataFrame, prefix: str) -> Dict[str, Any]:
     if count == 0:
         return {
             "count": 0,
-            "next_45m_neg_pct": math.nan,
+            "next_30m_neg_pct": math.nan,
             "day_close_neg_pct": math.nan,
             "next_close_neg_pct": math.nan,
             "avg_mae_1d_pct": math.nan,
@@ -263,7 +263,7 @@ def compute_metrics(df: pd.DataFrame, prefix: str) -> Dict[str, Any]:
             "f2_false_pct": math.nan,
         }
 
-    n45 = valid[f"{prefix}_return_next_45m_pct"].dropna()
+    n45 = valid[f"{prefix}_return_next_30m_pct"].dropna()
     dc = valid[f"{prefix}_return_day_close_pct"].dropna()
     nc = valid[f"{prefix}_return_next_close_pct"].dropna()
     mae = valid[f"{prefix}_mae_1d_pct"].dropna()
@@ -274,7 +274,7 @@ def compute_metrics(df: pd.DataFrame, prefix: str) -> Dict[str, Any]:
 
     return {
         "count": count,
-        "next_45m_neg_pct": float((n45 < 0).mean() * 100.0) if not n45.empty else math.nan,
+        "next_30m_neg_pct": float((n45 < 0).mean() * 100.0) if not n45.empty else math.nan,
         "day_close_neg_pct": float((dc < 0).mean() * 100.0) if not dc.empty else math.nan,
         "next_close_neg_pct": float((nc < 0).mean() * 100.0) if not nc.empty else math.nan,
         "avg_mae_1d_pct": float(mae.mean()) if not mae.empty else math.nan,
@@ -314,7 +314,7 @@ def build_summary_csv(comparison: pd.DataFrame, stock_meta: Dict[str, Tuple[str,
             "second_consecutive_sell_count": second_m["count"],
             "retention_rate_pct": (second_m["count"] / first_m["count"] * 100.0) if first_m["count"] > 0 else math.nan,
             # 1st SELL outcomes
-            "first_next_45m_neg_pct": first_m["next_45m_neg_pct"],
+            "first_next_30m_neg_pct": first_m["next_30m_neg_pct"],
             "first_day_close_neg_pct": first_m["day_close_neg_pct"],
             "first_next_close_neg_pct": first_m["next_close_neg_pct"],
             "first_avg_mae_1d_pct": first_m["avg_mae_1d_pct"],
@@ -323,7 +323,7 @@ def build_summary_csv(comparison: pd.DataFrame, stock_meta: Dict[str, Tuple[str,
             "first_f1_false_pct": first_m["f1_false_pct"],
             "first_f2_false_pct": first_m["f2_false_pct"],
             # 2nd consecutive SELL outcomes
-            "second_next_45m_neg_pct": second_m["next_45m_neg_pct"],
+            "second_next_30m_neg_pct": second_m["next_30m_neg_pct"],
             "second_day_close_neg_pct": second_m["day_close_neg_pct"],
             "second_next_close_neg_pct": second_m["next_close_neg_pct"],
             "second_avg_mae_1d_pct": second_m["avg_mae_1d_pct"],
@@ -410,11 +410,11 @@ def build_draft_report(
     first_count = int(all_row["first_sell_count"])
     second_count = int(all_row["second_consecutive_sell_count"])
 
-    report = f"""# Out-Of-Sample (OOS) 17종목 SellWarning45mEngine 데이터 생성 및 1st vs 2nd 비교 보고서 (초안)
+    report = f"""# Out-Of-Sample (OOS) 17종목 SellWarning30mEngine 데이터 생성 및 1st vs 2nd 비교 보고서 (초안)
 
 ## 1. 개요 및 연구 조건
 
-- **목적**: 기존 3개 연구 종목(한신공영, HD현대일렉트릭, 동국제약)을 완전 배제하고, 사전 고정된 17개 대표 공개 종목에 대해 최근 60거래일 동안의 45분봉 `SellWarning45mEngine` Replay 및 1st SELL vs 2nd Consecutive SELL의 비교 통계 데이터셋 생성
+- **목적**: 기존 3개 연구 종목(한신공영, HD현대일렉트릭, 동국제약)을 완전 배제하고, 사전 고정된 17개 대표 공개 종목에 대해 최근 60거래일 동안의 30분봉 `SellWarning30mEngine` Replay 및 1st SELL vs 2nd Consecutive SELL의 비교 통계 데이터셋 생성
 - **대상 종목 (17개 사전 고정)**:
   - **KOSPI (10개)**: 삼성전자, SK하이닉스, 현대차, 기아, POSCO홀딩스, NAVER, 카카오, LG화학, 삼성바이오로직스, KB금융
   - **KOSDAQ (7개)**: 에코프로비엠, 에코프로, 알테오젠, HLB, 리가켐바이오, 삼천당제약, 셀트리온제약
@@ -429,7 +429,7 @@ def build_draft_report(
 
 ## 2. 데이터 표본 및 집계 현황
 
-- **총 생성 45분 완성 평가 Event**: {total_events:,} 건
+- **총 생성 30분 완성 평가 Event**: {total_events:,} 건
 - **총 유효 상태 Episode (CURRENT 기준)**: {total_episodes:,} 건
 - **총 1st SELL Episode 수**: {first_count:,} 건
 - **2nd Consecutive SELL 도달 Episode 수**: {second_count:,} 건 ({all_row['retention_rate_pct']:.2f}% 유지)
@@ -442,7 +442,7 @@ def build_draft_report(
 | 지표 구분 | 1st SELL (첫 신호 진입) | 2nd Consecutive SELL (2회 연속 확인 진입) | 차이 (2nd - 1st) |
 | :--- | :---: | :---: | :---: |
 | **총 발생 건수** | {first_count} 건 | {second_count} 건 | -{first_count - second_count} 건 |
-| **다음 45분 하락률 (< 0)** | {all_row['first_next_45m_neg_pct']:.2f}% | {all_row['second_next_45m_neg_pct']:.2f}% | {all_row['second_next_45m_neg_pct'] - all_row['first_next_45m_neg_pct']:+.2f}%p |
+| **다음 30분 하락률 (< 0)** | {all_row['first_next_30m_neg_pct']:.2f}% | {all_row['second_next_30m_neg_pct']:.2f}% | {all_row['second_next_30m_neg_pct'] - all_row['first_next_30m_neg_pct']:+.2f}%p |
 | **당일 종가 하락률 (< 0)** | {all_row['first_day_close_neg_pct']:.2f}% | {all_row['second_day_close_neg_pct']:.2f}% | {all_row['second_day_close_neg_pct'] - all_row['first_day_close_neg_pct']:+.2f}%p |
 | **익일 종가 하락률 (< 0)** | {all_row['first_next_close_neg_pct']:.2f}% | {all_row['second_next_close_neg_pct']:.2f}% | {all_row['second_next_close_neg_pct'] - all_row['first_next_close_neg_pct']:+.2f}%p |
 | **평균 MAE (최대 불리 이동)** | {all_row['first_avg_mae_1d_pct']:.2f}% | {all_row['second_avg_mae_1d_pct']:.2f}% | {all_row['second_avg_mae_1d_pct'] - all_row['first_avg_mae_1d_pct']:+.2f}%p |
@@ -473,7 +473,7 @@ def build_draft_report(
 
 ## 6. 산출물 파일 목록
 
-1. `artifacts/sell_warning_oos_events.csv`: 전 종목 45분봉 평가 전체 Event 데이터셋
+1. `artifacts/sell_warning_oos_events.csv`: 전 종목 30분봉 평가 전체 Event 데이터셋
 2. `artifacts/sell_warning_oos_episodes.csv`: 동일 상태 연속성 기반 Episode 데이터셋
 3. `artifacts/sell_warning_oos_summary.csv`: 17개 종목별 및 전체 1st vs 2nd SELL 비교 요약표
 4. `artifacts/sell_warning_oos_regime.csv`: 시장 국면(시장 구분, 20일선 추세, ADX 강도 등)별 비교표
@@ -511,7 +511,7 @@ def main():
         events = replay_stock(code, name, fetched.frame, fetched.source)
         if not events.empty:
             event_frames.append(events)
-            print(f"  Generated {len(events)} 45m events.")
+            print(f"  Generated {len(events)} 30m events.")
 
     if not event_frames:
         print("ERROR: No events generated.")

@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 DEFAULT_ARTIFACT_DIR = ROOT / "artifacts"
 KST = ZoneInfo("Asia/Seoul")
 OUTCOME_COLUMNS = (
-    "return_next_45m_pct",
+    "return_next_30m_pct",
     "return_next_90m_pct",
     "return_day_close_pct",
     "return_next_open_pct",
@@ -248,7 +248,7 @@ def summarize_entry_mode(rows: pd.DataFrame, prefix: str) -> Dict[str, Any]:
     scope = rows if prefix == "first" else rows.loc[rows["second_entry_exists"] == 1]
     result: Dict[str, Any] = {"entry_count": len(scope)}
     for key, column in (
-        ("next_45m_negative", "return_next_45m_pct"),
+        ("next_30m_negative", "return_next_30m_pct"),
         ("day_close_negative", "return_day_close_pct"),
         ("next_close_negative", "return_next_close_pct"),
     ):
@@ -332,7 +332,7 @@ def build_atr_comparison(rows: pd.DataFrame) -> pd.DataFrame:
 def paired_statistics(rows: pd.DataFrame) -> pd.DataFrame:
     paired = rows.loc[rows["second_entry_exists"] == 1].copy()
     specs = [
-        ("return_next_45m_pct", "continuous"),
+        ("return_next_30m_pct", "continuous"),
         ("return_next_90m_pct", "continuous"),
         ("return_day_close_pct", "continuous"),
         ("return_next_open_pct", "continuous"),
@@ -368,7 +368,7 @@ def paired_statistics(rows: pd.DataFrame) -> pd.DataFrame:
             ),
         })
     for metric, source_metric in (
-        ("next_45m_negative", "return_next_45m_pct"),
+        ("next_30m_negative", "return_next_30m_pct"),
         ("day_close_negative", "return_day_close_pct"),
         ("next_close_negative", "return_next_close_pct"),
     ):
@@ -492,7 +492,7 @@ def build_report(rows: pd.DataFrame, atr_table: pd.DataFrame, paired: pd.DataFra
 | 지표 | 1st SELL | 2nd consecutive SELL |
 |---|---:|---:|
 | 평가 episode 수 | {first['entry_count']} | {second['entry_count']} |
-| 다음 45분 하락률 | {_ratio(first['next_45m_negative_count'], first['next_45m_negative_denominator'], first['next_45m_negative_pct'])} | {_ratio(second['next_45m_negative_count'], second['next_45m_negative_denominator'], second['next_45m_negative_pct'])} |
+| 다음 30분 하락률 | {_ratio(first['next_30m_negative_count'], first['next_30m_negative_denominator'], first['next_30m_negative_pct'])} | {_ratio(second['next_30m_negative_count'], second['next_30m_negative_denominator'], second['next_30m_negative_pct'])} |
 | 당일 종가 하락률 | {_ratio(first['day_close_negative_count'], first['day_close_negative_denominator'], first['day_close_negative_pct'])} | {_ratio(second['day_close_negative_count'], second['day_close_negative_denominator'], second['day_close_negative_pct'])} |
 | 익일 종가 하락률 | {_ratio(first['next_close_negative_count'], first['next_close_negative_denominator'], first['next_close_negative_pct'])} | {_ratio(second['next_close_negative_count'], second['next_close_negative_denominator'], second['next_close_negative_pct'])} |
 | 평균 MAE | {_fmt(first['avg_mae_pct'])}% | {_fmt(second['avg_mae_pct'])}% |
@@ -566,10 +566,10 @@ ATR 기준은 F1/F2를 각각 위 안정성 판정대로 해석한다. 이 결�
 
 def run(artifact_dir: Path, daily_period: str = "2y") -> Tuple[pd.DataFrame, pd.DataFrame, Path]:
     events = pd.read_csv(
-        artifact_dir / "sell_warning_45m_replay_events.csv", dtype={"stock_code": str}
+        artifact_dir / "sell_warning_30m_replay_events.csv", dtype={"stock_code": str}
     )
     episodes = pd.read_csv(
-        artifact_dir / "sell_warning_45m_replay_episodes.csv", dtype={"stock_code": str}
+        artifact_dir / "sell_warning_30m_replay_episodes.csv", dtype={"stock_code": str}
     )
     events["stock_code"] = events["stock_code"].str.zfill(6)
     episodes["stock_code"] = episodes["stock_code"].str.zfill(6)

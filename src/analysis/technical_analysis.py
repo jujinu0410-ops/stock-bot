@@ -95,7 +95,7 @@ def adjust_krx_tick_size(price: float, direction: str = "down", is_etf: bool = F
 
 class TechnicalAnalysis:
     """
-    일봉 데이터를 기반으로 주요 보조지표를 산출하고 일봉/45분봉 복합 대응전략(1~5순위)을 평가합니다.
+    일봉 데이터를 기반으로 주요 보조지표를 산출하고 일봉/30분봉 복합 대응전략(1~5순위)을 평가합니다.
     """
     def __init__(self, daily_df: pd.DataFrame, is_etf: bool = False):
         self.df = daily_df.copy()

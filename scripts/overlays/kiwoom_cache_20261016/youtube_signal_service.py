@@ -2139,6 +2139,10 @@ def unified_scan_batch() -> Any:
                     "reasons", "live_price", "live_change_pct", "live_price_source",
                     "atr14", "session", "confidence_adjustment")
             wire = {key: result[key] for key in keys if key in result}
+            # Existing m45 wire shape stays unchanged. Paper consumers receive
+            # full validation evidence through a separate additive field.
+            if isinstance(result.get("paper_data"), dict):
+                wire["paper_data"] = result["paper_data"]
             if isinstance(result.get("m45"), dict):
                 wire["m45"] = {"completed_bar": result["m45"].get("completed_bar")}
             results.append({"ticker": ticker, "status": 200, "result": wire})
@@ -2149,6 +2153,35 @@ def unified_scan_batch() -> Any:
             app.logger.exception("unified batch ticker failed ticker=%s", ticker)
             results.append({"ticker": ticker, "status": 503, "error": type(exc).__name__})
     return jsonify({"ok": True, "engine_version": "three-lists-v2", "results": results}), 200
+
+
+@app.post("/paper-e45-close")
+def paper_e45_close() -> Any:
+    """Paper-only, read-only daily-close adapter. OFF unless explicitly enabled."""
+    if not _secret_ok():
+        return jsonify({"ok": False, "error": "UNAUTHORIZED"}), 401
+    if os.getenv("PAPER_E45_CLOSE_ENABLED", "OFF") != "ON":
+        return jsonify({"ok": False, "error": "PAPER_CLOSE_DISABLED"}), 403
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) - {"day", "tickers"}:
+        return jsonify({"ok": False, "error": "INVALID_REQUEST"}), 400
+    codes = body.get("tickers")
+    if not isinstance(codes, list) or not 1 <= len(codes) <= 2 or any(not isinstance(c, str) or c not in {"069500", "114800"} for c in codes) or len(set(codes)) != len(codes):
+        return jsonify({"ok": False, "error": "INVALID_TICKERS"}), 400
+    try:
+        day = str(body.get("day", ""))
+        if date.fromisoformat(day).isoformat() != day:
+            raise ValueError("day")
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "error": "INVALID_DAY"}), 400
+    from services.unified_scan import paper_close
+    results = []
+    for code in codes:
+        try:
+            results.append(paper_close(code, day))
+        except Exception:
+            results.append({"ticker": code, "day": day, "quality": "CLOSE_PENDING"})
+    return jsonify({"ok": True, "paper_only": True, "closes": results}), 200
 
 
 @app.post("/held-context")

@@ -55,34 +55,34 @@ class TestRuntimeScheduler(unittest.TestCase):
         # Normal Trading Day
         self.assertTrue(KRXCalendar.is_krx_trading_day("2026-08-18")) # Tuesday
 
-    def test_02_completed_45m_bar_resolution(self):
-        """2. 45분봉 정규 슬롯 완성봉 타임스탬프 매칭 검증"""
+    def test_02_completed_30m_bar_resolution(self):
+        """2. 30분봉 정규 슬롯 완성봉 타임스탬프 매칭 검증"""
         # Before 09:45 -> None
         t0 = datetime(2026, 8, 18, 9, 20, 0)
-        self.assertIsNone(KRXCalendar.get_completed_45m_bar(t0))
+        self.assertIsNone(KRXCalendar.get_completed_30m_bar(t0))
 
         # At 09:50 -> 09:00~09:45 bar
         t1 = datetime(2026, 8, 18, 9, 50, 0)
-        bar1 = KRXCalendar.get_completed_45m_bar(t1)
+        bar1 = KRXCalendar.get_completed_30m_bar(t1)
         self.assertIsNotNone(bar1)
-        self.assertEqual(bar1[0], "09:50")
+        self.assertEqual(bar1[0], "09:30")
         self.assertEqual(bar1[1], "09:00")
-        self.assertEqual(bar1[2], "09:45")
+        self.assertEqual(bar1[2], "09:30")
 
         # At 11:35 -> 10:30~11:15 bar
         t2 = datetime(2026, 8, 18, 11, 35, 0)
-        bar2 = KRXCalendar.get_completed_45m_bar(t2)
+        bar2 = KRXCalendar.get_completed_30m_bar(t2)
         self.assertIsNotNone(bar2)
-        self.assertEqual(bar2[0], "11:35")
-        self.assertEqual(bar2[1], "10:30")
-        self.assertEqual(bar2[2], "11:15")
+        self.assertEqual(bar2[0], "11:30")
+        self.assertEqual(bar2[1], "11:00")
+        self.assertEqual(bar2[2], "11:30")
 
         # At 15:05 -> 14:15~15:00 bar
         t3 = datetime(2026, 8, 18, 15, 5, 0)
-        bar3 = KRXCalendar.get_completed_45m_bar(t3)
+        bar3 = KRXCalendar.get_completed_30m_bar(t3)
         self.assertIsNotNone(bar3)
-        self.assertEqual(bar3[0], "15:05")
-        self.assertEqual(bar3[1], "14:15")
+        self.assertEqual(bar3[0], "15:00")
+        self.assertEqual(bar3[1], "14:30")
         self.assertEqual(bar3[2], "15:00")
 
     def test_03_reserved_windows_check(self):
@@ -153,7 +153,7 @@ class TestRuntimeScheduler(unittest.TestCase):
             self.assertEqual(res["status"], "SKIPPED_RESERVED_WINDOW")
 
     def test_08_intraday_shadow_scan_duplicate_bar_skip(self):
-        """8. 동일한 45분봉 타임스탬프의 중복 실행 시 SKIPPED_NO_NEW_45M_BAR 스킵 검증"""
+        """8. 동일한 30분봉 타임스탬프의 중복 실행 시 SKIPPED_NO_NEW_30M_BAR 스킵 검증"""
         today_str = datetime.now().strftime("%Y-%m-%d")
         completed_ts = f"{today_str} 09:45:00"
         self.db.insert_scheduler_run({
@@ -164,15 +164,15 @@ class TestRuntimeScheduler(unittest.TestCase):
             "trading_date": today_str,
             "task_type": "INTRADAY_SHADOW_SCAN",
             "status": "SUCCESS",
-            "last_completed_45m_bar": completed_ts
+            "last_completed_30m_bar": completed_ts
         })
 
-        with patch.object(KRXCalendar, "get_completed_45m_bar", return_value=("09:50", "09:00", "09:45")), \
+        with patch.object(KRXCalendar, "get_completed_30m_bar", return_value=("09:50", "09:00", "09:45")), \
              patch.object(KRXCalendar, "is_krx_trading_day", return_value=True), \
              patch.object(SchedulerLockManager, "check_reserved_window", return_value=(False, None)), \
              patch.object(SchedulerLockManager, "is_existing_job_active", return_value=False):
             res = self.scheduler.run_task("INTRADAY_SHADOW_SCAN", is_manual=False)
-            self.assertEqual(res["status"], "SKIPPED_NO_NEW_45M_BAR")
+            self.assertEqual(res["status"], "SKIPPED_NO_NEW_30M_BAR")
 
 
     def test_09_manual_runtime_verification_and_journal_append(self):

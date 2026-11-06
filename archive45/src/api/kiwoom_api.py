@@ -1,0 +1,369 @@
+import socket
+import time
+import requests
+import urllib3
+from typing import Dict, Any, List, Optional
+from config.settings import KIWOOM_APP_KEY, KIWOOM_APP_SECRET, KIWOOM_ACCOUNT_NO, KIWOOM_USE_MOCK
+from src.utils.logger import logger
+
+RETRYABLE_NETWORK_EXCEPTIONS = (
+    socket.gaierror,
+    socket.timeout,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    urllib3.exceptions.NameResolutionError,
+)
+
+def _classify_network_exception(e: Exception) -> str:
+    """네트워크 예외 분류 문자열 반환"""
+    e_str = str(e)
+    if isinstance(e, socket.gaierror) or "getaddrinfo failed" in e_str or "NameResolutionError" in e_str or "Failed to resolve" in e_str:
+        return "DNS_RESOLUTION_ERROR"
+    if isinstance(e, (requests.exceptions.Timeout, socket.timeout)) or "timed out" in e_str.lower() or "Timeout" in type(e).__name__:
+        return "TIMEOUT"
+    if isinstance(e, requests.exceptions.ConnectionError) or "Connection" in e_str or "Max retries exceeded" in e_str:
+        return "CONNECTION_ERROR"
+    return "NETWORK_ERROR"
+
+def parse_kiwoom_price(val: Any) -> int:
+    """
+    키움 API의 가격 문자열(쉼표, 공백, +, -, 원 등 포함)을 안전하게 파싱하여 양의 정수(절댓값)로 변환.
+    파싱 불가 시 0 반환.
+    예: "+8,100" -> 8100, "-8,100" -> 8100, " 8,100원 " -> 8100, 8100 -> 8100, None -> 0
+    """
+    if val is None:
+        return 0
+    if isinstance(val, (int, float)):
+        return abs(int(round(val)))
+    val_str = str(val).strip().replace(",", "").replace("원", "").replace(" ", "")
+    if not val_str:
+        return 0
+    try:
+        num = float(val_str)
+        return abs(int(round(num)))
+    except (ValueError, TypeError):
+        return 0
+
+class KiwoomAPIClient:
+    """
+    키움 REST API (Test/Real) 클라이언트입니다.
+    계좌 잔고/보유 종목 조회, 일봉 시세 및 수급(외국인/기관) 데이터 수집을 담당합니다.
+    """
+    BASE_URL = "https://api.kiwoom.com"  # 키움 REST API 정식 엔드포인트
+    RETRY_DELAYS = [0, 2, 5]  # 시도 1: 즉시, 시도 2: 2초 후, 시도 3: 5초 후 (최대 3회)
+
+    def __init__(self,
+                 app_key: str = KIWOOM_APP_KEY,
+                 app_secret: str = KIWOOM_APP_SECRET,
+                 account_no: str = KIWOOM_ACCOUNT_NO,
+                 use_mock: bool = KIWOOM_USE_MOCK):
+        self.app_key = str(app_key or "").strip().strip('"').strip("'")
+        self.app_secret = str(app_secret or "").strip().strip('"').strip("'")
+        self.account_no = str(account_no or "").strip().strip('"').strip("'")
+        self.use_mock = use_mock
+        self.access_token = None
+
+    def is_valid_key(self) -> bool:
+        return bool(self.app_key and self.app_key != "YOUR_KIWOOM_APP_KEY_HERE" and not self.use_mock)
+
+    def get_access_token(self) -> Optional[str]:
+        """키움 REST API OAuth 2.0 접근 토큰 발급 (네트워크 일시 오류 시 최대 3회 재시도)"""
+        if not self.is_valid_key():
+            return "MOCK_ACCESS_TOKEN"
+
+        url = f"{self.BASE_URL}/oauth2/token"
+        headers = {"content-type": "application/json"}
+        body = {
+            "grant_type": "client_credentials",
+            "appkey": self.app_key,
+            "secretkey": self.app_secret
+        }
+
+        delays = getattr(self, "RETRY_DELAYS", [0, 2, 5])
+        max_attempts = len(delays)
+
+        for attempt_idx in range(max_attempts):
+            attempt_num = attempt_idx + 1
+            delay = delays[attempt_idx]
+            if delay > 0:
+                time.sleep(delay)
+
+            try:
+                res = requests.post(url, headers=headers, json=body, timeout=10)
+            except RETRYABLE_NETWORK_EXCEPTIONS as e_net:
+                reason = _classify_network_exception(e_net)
+                if attempt_num < max_attempts:
+                    logger.warning(f"[KIWOOM_RETRY] attempt={attempt_num + 1}/{max_attempts} reason={reason}")
+                    continue
+                else:
+                    logger.critical(f"[Kiwoom API] 🛑 [KIWOOM_API_UNAVAILABLE] 실계좌 OAuth 접근 토큰 발급 최종 실패 (시도 {max_attempts}/{max_attempts} 초과, reason={reason}): {e_net}")
+                    self.access_token = None
+                    return None
+            except Exception as e_other:
+                logger.error(f"[Kiwoom API] 토큰 요청 중 비재시도 예외 발생: {e_other}", exc_info=True)
+                self.access_token = None
+                return None
+
+            if res.status_code == 200:
+                try:
+                    res_data = res.json() if isinstance(res.json(), dict) else {}
+                except Exception as e_json:
+                    logger.error(f"[Kiwoom API] 토큰 응답 JSON 파싱 실패 (재시도 불가): {e_json}")
+                    self.access_token = None
+                    return None
+
+                token = res_data.get("token") or res_data.get("access_token")
+                return_code = res_data.get("return_code")
+                return_msg = res_data.get("return_msg")
+
+                if token and (return_code == 0 or return_code is None or str(return_code) == "0"):
+                    self.access_token = str(token).strip()
+                    logger.info(f"[Kiwoom API] OAuth 2.0 실시간 접근 토큰 발급 성공 (만료일시: {res_data.get('expires_dt', 'N/A')})")
+                    return self.access_token
+                else:
+                    logger.critical(f"[Kiwoom API] 🛑 OAuth 토큰 비즈니스 응답 실패 (return_code={return_code}, return_msg={return_msg}, 재시도 불가): {res_data}")
+                    self.access_token = None
+                    return None
+            else:
+                logger.error(f"[Kiwoom API] 토큰 발급 실패 (상태코드 {res.status_code}, 재시도 불가): {res.text}")
+                self.access_token = None
+                return None
+
+        self.access_token = None
+        return None
+
+    def get_account_positions(self) -> List[Dict[str, Any]]:
+        """
+        사용자 실계좌 보유 종목 잔고 100% 실시간 조회 (TR: kt00018 계좌평가잔고내역요청)
+        cont-yn 및 next-key (헤더 및 본문 동시 탐지)를 활용한 전 페이지 연속조회 지원 및 운영 가드레일 적용
+        """
+        import os
+        is_ci = os.getenv("GITHUB_ACTIONS") == "true" or os.getenv("CI") == "true"
+        commit_sha = os.getenv("GITHUB_SHA", "UNKNOWN")[:8]
+        event_name = os.getenv("GITHUB_EVENT_NAME", "LOCAL")
+
+        if not self.is_valid_key():
+            if is_ci:
+                logger.critical(f"[Kiwoom API] 🛑 [운영 Fallback 금지] Commit: {commit_sha} | Event: {event_name} | 운영 환경(CI)에서 키움 API키가 유효하지 않습니다. 작업을 중단합니다.")
+                raise RuntimeError("운영 환경(CI)에서 키움 API키 미설정 또는 유효하지 않음 (Fallback 금지)")
+            logger.info(f"[Kiwoom API] [Data Source: MOCK] Commit: {commit_sha} | Event: {event_name} | 키움 API키 미설정으로 로컬 mock/JSON 잔고 사용")
+            return self._get_mock_account_positions()
+
+        token = self.access_token or self.get_access_token()
+        if not token or token == "MOCK_ACCESS_TOKEN":
+            if is_ci or self.is_valid_key():
+                logger.critical(f"[Kiwoom API] 🛑 [운영 Fallback 금지] Commit: {commit_sha} | Event: {event_name} | 실계좌 접근 토큰 발급에 실패했습니다. (KIWOOM_API_UNAVAILABLE)")
+                raise RuntimeError("키움 실계좌 OAuth 접근 토큰 발급 실패 (KIWOOM_API_UNAVAILABLE, 운영 Fallback 금지)")
+            logger.warning("[Kiwoom API] 토큰 수집 실패로 포트폴리오 구성 파일 잔고 사용")
+            return self._get_mock_account_positions()
+
+        url = f"{self.BASE_URL}/api/dostk/acnt"
+        clean_acnt = self.account_no.replace("-", "").strip()
+        masked_acnt = clean_acnt[:4] + "****" + clean_acnt[-2:] if len(clean_acnt) >= 6 else "****"
+
+        all_collected_positions = []
+        seen_next_keys = set()
+        next_key = ""
+        page = 1
+        MAX_PAGES = 20
+        reported_total_cnt = 0
+
+        while True:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "api-id": "kt00018",
+                "content-type": "application/json"
+            }
+            body = {
+                "acnt_no": clean_acnt,
+                "qry_tp": "0",
+                "dmst_stex_tp": "KRX"
+            }
+
+            if next_key:
+                headers["cont-yn"] = "Y"
+                headers["next-key"] = next_key
+
+            delays = getattr(self, "RETRY_DELAYS", [0, 2, 5])
+            max_attempts = len(delays)
+            res = None
+
+            for attempt_idx in range(max_attempts):
+                attempt_num = attempt_idx + 1
+                delay = delays[attempt_idx]
+                if delay > 0:
+                    time.sleep(delay)
+
+                try:
+                    res = requests.post(url, headers=headers, json=body, timeout=10)
+                    break
+                except RETRYABLE_NETWORK_EXCEPTIONS as e_net:
+                    reason = _classify_network_exception(e_net)
+                    if attempt_num < max_attempts:
+                        logger.warning(f"[KIWOOM_RETRY] attempt={attempt_num + 1}/{max_attempts} reason={reason}")
+                        continue
+                    else:
+                        logger.critical(f"[Kiwoom API] 🛑 [KIWOOM_API_UNAVAILABLE] 잔고 조회 최종 네트워크 실패 (페이지 {page}, 시도 {max_attempts}/{max_attempts} 초과, reason={reason}): {e_net}")
+                        raise RuntimeError(f"[Kiwoom API] 잔고 연속조회 중 네트워크 예외 발생 (KIWOOM_API_UNAVAILABLE, 페이지 {page}): {e_net}") from e_net
+                except Exception as e_other:
+                    logger.error(f"[Kiwoom API] [Data Source: KIWOOM_LIVE] Commit: {commit_sha} | Event: {event_name} | API: kt00018 | Page {page} | 비재시도 예외 발생: {e_other}")
+                    raise RuntimeError(f"[Kiwoom API] 잔고 연속조회 중 예외 발생 (페이지 {page}): {e_other}") from e_other
+
+            if res.status_code != 200:
+                logger.error(f"[Kiwoom API] [Data Source: KIWOOM_LIVE] Commit: {commit_sha} | Event: {event_name} | API: kt00018 | Page {page} | HTTP {res.status_code} 실패: {res.text}")
+                raise RuntimeError(f"[Kiwoom API] 잔고 연속조회 실패 (페이지 {page}, 상태코드 {res.status_code}): {res.text}")
+
+            try:
+                data = res.json()
+            except Exception as e_json:
+                logger.error(f"[Kiwoom API] [Data Source: KIWOOM_LIVE] Page {page} JSON 파싱 실패: {e_json}")
+                raise RuntimeError(f"[Kiwoom API] Page {page} JSON 파싱 실패: {e_json}")
+
+            top_keys = list(data.keys()) if isinstance(data, dict) else []
+            items = data.get("acnt_evlt_remn_indv_tot", []) if isinstance(data, dict) else []
+
+            # 응답 본문에 총종목 수 필드가 양의 정수로 제공되는 경우(선택적 필드)에만 보조 교차검증용으로 기록
+            if isinstance(data, dict):
+                for k in ["tot_item_cnt", "tot_cnt", "tot_stk_cnt", "item_cnt"]:
+                    if k in data and str(data[k]).strip().isdigit():
+                        cnt_val = int(str(data[k]).strip())
+                        if cnt_val > 0:
+                            reported_total_cnt = max(reported_total_cnt, cnt_val)
+                            break
+
+            page_positions = []
+            for item in items:
+                raw_code = item.get("stk_cd", "").replace("A", "").strip().zfill(6)
+                name = item.get("stk_nm", "").strip()
+                qty = parse_kiwoom_price(item.get("rmnd_qty", 0))
+                if qty <= 0:
+                    continue
+                avg_p = float(parse_kiwoom_price(item.get("pur_pric", 0.0)))
+                
+                # 3. 키움 가격 파서 공통 적용 및 원본 문자열 보존
+                raw_cur_prc_str = str(item.get("cur_prc", "")).strip()
+                raw_pred_close_str = str(item.get("pred_close_pric", "")).strip()
+                raw_cur_prc_val = parse_kiwoom_price(item.get("cur_prc"))
+                raw_pred_close_val = parse_kiwoom_price(item.get("pred_close_pric"))
+                
+                # raw_balance_price: 키움 cur_prc 원문 파싱 숫자 (0이면 0 그대로 보존)
+                raw_balance_price = raw_cur_prc_val
+
+                if raw_cur_prc_val > 0:
+                    cur_p = raw_cur_prc_val
+                    fallback_used = False
+                    cur_price_source = "KIWOOM_CUR_PRC"
+                elif raw_pred_close_val > 0:
+                    cur_p = raw_pred_close_val
+                    fallback_used = True
+                    cur_price_source = "KIWOOM_PRED_CLOSE"
+                else:
+                    cur_p = 0
+                    fallback_used = True
+                    cur_price_source = "UNAVAILABLE"
+
+                inv_amt = float(parse_kiwoom_price(item.get("pur_amt", 0.0)))
+                try:
+                    pnl_rt = float(str(item.get("prft_rt", "0.0")).replace(",", "").replace("%", "").strip())
+                except Exception:
+                    pnl_rt = 0.0
+
+                page_positions.append({
+                    "stock_code": raw_code,
+                    "stock_name": name,
+                    "quantity": qty,
+                    "avg_buy_price": avg_p,
+                    "current_price": cur_p,
+                    "raw_balance_price": raw_balance_price,
+                    "raw_cur_prc_str": raw_cur_prc_str,
+                    "raw_pred_close_str": raw_pred_close_str,
+                    "fallback_used": fallback_used,
+                    "current_price_source": cur_price_source,
+                    "total_invested": inv_amt,
+                    "eval_pnl_pct": pnl_rt
+                })
+
+            all_collected_positions.extend(page_positions)
+            page_codes = [p["stock_code"] for p in page_positions]
+            cum_codes = [p["stock_code"] for p in all_collected_positions]
+
+            # 키움 REST API 공식 규격 헤더 기반 연속조회 상태 파싱
+            cont_yn = res.headers.get("cont-yn", "N").strip().upper()
+            res_next_key = res.headers.get("next-key", "").strip()
+
+            logger.info(
+                f"[Kiwoom API Raw Audit] Commit: {commit_sha} | Event: {event_name} | Source: KIWOOM_LIVE | "
+                f"API: kt00018 | Page: {page} | HTTP: {res.status_code} | Acnt: {masked_acnt} | "
+                f"TopKeys: {top_keys} | PageItems: {len(page_positions)}개 {page_codes} | "
+                f"ContYN: '{cont_yn}' | NextKeyLen: {len(res_next_key)} | "
+                f"CumulativeItems: {len(all_collected_positions)}개 {cum_codes}"
+            )
+
+            # 10개 경계 응답 로깅 (공식 연속조회 헤더 우선)
+            if len(page_positions) == 10 and cont_yn != "Y":
+                logger.info(
+                    f"[Kiwoom API] ℹ️ 수신된 종목수가 10개이며 연속조회 헤더(cont-yn='{cont_yn}')가 종료되었습니다. "
+                    f"(공식 연속조회 헤더 기준으로 마지막 페이지로 처리합니다)."
+                )
+
+            if cont_yn == "Y":
+                if not res_next_key:
+                    logger.error(f"[Kiwoom API] 연속조회 오류: cont-yn='Y'이나 next-key가 누락되었습니다. (페이지 {page})")
+                    raise RuntimeError(f"[Kiwoom API] 연속조회 오류: cont-yn='Y'이나 next-key가 누락되었습니다. (페이지 {page})")
+
+                if res_next_key in seen_next_keys:
+                    logger.error(f"[Kiwoom API] 연속조회 오류: 동일한 next-key('{res_next_key}')가 반복되어 무한루프가 감지되었습니다. (페이지 {page})")
+                    raise RuntimeError(f"[Kiwoom API] 연속조회 오류: 동일한 next-key('{res_next_key}')가 반복되어 무한루프가 감지되었습니다. (페이지 {page})")
+
+                seen_next_keys.add(res_next_key)
+                page += 1
+
+                if page > MAX_PAGES:
+                    logger.error(f"[Kiwoom API] 연속조회 오류: 최대 허용 페이지 수({MAX_PAGES})를 초과했습니다.")
+                    raise RuntimeError(f"[Kiwoom API] 연속조회 오류: 최대 허용 페이지 수({MAX_PAGES})를 초과했습니다.")
+
+                next_key = res_next_key
+            else:
+                break
+
+        # 종목코드 중복 제거 (순서 보존)
+        unique_positions = {}
+        for p in all_collected_positions:
+            code = p["stock_code"]
+            unique_positions[code] = p
+        positions = list(unique_positions.values())
+
+        # 총종목 수 교차검증 (신뢰 가능한 총종목 수 필드가 제공된 경우)
+        if reported_total_cnt > 0 and reported_total_cnt > len(positions):
+            logger.critical(
+                f"[Kiwoom API] 🛑 [절단 감지] 키움 응답 총 종목수({reported_total_cnt}개) 대비 "
+                f"수집된 고유 종목수({len(positions)}개)가 부족합니다."
+            )
+            raise RuntimeError(
+                f"키움 계좌 총 종목 수({reported_total_cnt}개) 대비 수집 종목 수({len(positions)}개) 부족 - 비정상 절단 감지"
+            )
+
+        if (is_ci or self.is_valid_key()) and len(positions) == 0:
+            logger.critical(f"[Kiwoom API] 🛑 [운영 Fallback 금지] 실계좌에서 수집된 종목이 0개입니다. (Acnt: {masked_acnt})")
+            raise RuntimeError("키움 실계좌 잔고가 비정상적으로 0개 수집됨 (운영 Fallback 금지)")
+
+        logger.info(f"[Kiwoom API] 키움 REST API kt00018 실시간 계좌 잔고 전 페이지 수집 완료! (총 {page}페이지 수집, 중복제거 후 {len(positions)}개 종목: {[p['stock_code'] for p in positions]})")
+        return positions
+
+    def _get_mock_account_positions(self) -> List[Dict[str, Any]]:
+        """
+        키움 REST API 연동 전/로컬 테스트 구동 시 config/portfolio_holdings.json 파일에서 
+        사용자의 최신 실제 보유 종목(대동 000490 신규 매수 포함)을 읽어와 반환합니다.
+        """
+        import json
+        from pathlib import Path
+        cfg_path = Path(__file__).resolve().parent.parent.parent / "config" / "portfolio_holdings.json"
+        if cfg_path.exists():
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    holdings = json.load(f)
+                    logger.info(f"[Kiwoom API] [Data Source: LOCAL_JSON_FALLBACK] config/portfolio_holdings.json 기반 로컬 잔고 {len(holdings)}개 로드 성공")
+                    return holdings
+            except Exception as e:
+                logger.error(f"[Kiwoom API] portfolio_holdings.json 읽기 오류: {e}")
+        return []

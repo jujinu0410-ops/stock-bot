@@ -32,9 +32,11 @@ class ScanResultDTO:
     buy_rebound_delta: int = 0
     sell_drop_delta: int = 0
 
-    # 4. 5단계 대응전략 및 전술 지표 (Tactical / 45m Indicators & Technical Gate)
+    # 4. 5단계 대응전략 및 전술 지표 (Tactical / 30m Indicators & Technical Gate)
     obv_dead_date: str = "N/A"
-    obv_45m_trend: str = "N/A"
+    bar_interval_minutes: int = 30
+    timeframe_contract: str = "KRX_M30_V1"
+    obv_30m_trend: str = "N/A"
     daily_cho_recent2: Optional[List[int]] = field(default_factory=lambda: [0, 0])
     intraday_cho_recent2: Optional[List[int]] = None
     daily_adx_di_dominance: str = "-"
@@ -44,6 +46,7 @@ class ScanResultDTO:
     intraday_source: str = "NONE"
     intraday_row_count: int = 0
     intraday_last_timestamp: str = "N/A"
+    completed_30m_timestamp: Optional[str] = None
     intraday_error_code: str = "NO_INTRADAY_DATA"
     technical_state: str = "UNKNOWN"
     technical_action: str = "BUY_BLOCKED"

@@ -16,9 +16,9 @@ def render_gems_markdown(dto: ScanResultDTO) -> str:
     elif dto.technical_action == "BUY_ALLOWED_CONDITIONAL":
         order_exec_status = "🟡 1차 진입 조건부 승인 (Technical Gate: BUY_ALLOWED_CONDITIONAL)"
     elif dto.technical_action == "BUY_WAIT":
-        order_exec_status = "⏸️ 1차 진입 보류/대기 (Technical Gate: BUY_WAIT - 45m 수급 약세)"
+        order_exec_status = "⏸️ 1차 진입 보류/대기 (Technical Gate: BUY_WAIT - 30m 수급 약세)"
     elif dto.technical_action == "BUY_WAIT_DATA":
-        order_exec_status = "🔴 NONE (45분봉 데이터 확인 필요 / 현재 주문 금지 - BUY_WAIT_DATA)"
+        order_exec_status = "🔴 NONE (30분봉 데이터 확인 필요 / 현재 주문 금지 - BUY_WAIT_DATA)"
     elif dto.technical_action == "BUY_BLOCKED":
         order_exec_status = "🔴 NONE (현재 매수 금지 / 주문 입력 불가 - BUY_BLOCKED)"
     else:
@@ -112,12 +112,12 @@ def render_gems_markdown(dto: ScanResultDTO) -> str:
    • 일봉 OBV (데드발생일자): {dto.obv_dead_date}
    • 일봉 Chaikin(13,26) 최근 2봉: {daily_cho_str}
    • 일봉 ADX +DI/-DI 우세방향: {daily_adx_str}
-   • 45분봉 OBV 추세: {dto.obv_45m_trend}
-   • 45m Chaikin(13,26) 최근 2봉: {intraday_cho_str}
-   • 45m ADX +DI/-DI: {dto.intraday_adx_di_dominance}
-   • 45분봉 데이터 품질: {dto.intraday_data_quality}{provenance_info}
-   • 45분봉 Technical State: {dto.technical_state}{tech_summary_str}
-   • 45분봉 Technical Gate: {dto.technical_action}
+   • 30분봉 OBV 추세: {dto.obv_30m_trend}
+   • 30m Chaikin(13,26) 최근 2봉: {intraday_cho_str}
+   • 30m ADX +DI/-DI: {dto.intraday_adx_di_dominance}
+   • 30분봉 데이터 품질: {dto.intraday_data_quality}{provenance_info}
+   • 30분봉 Technical State: {dto.technical_state}{tech_summary_str}
+   • 30분봉 Technical Gate: {dto.technical_action}
 
 {section_3}
 

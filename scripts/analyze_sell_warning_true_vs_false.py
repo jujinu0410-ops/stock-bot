@@ -215,7 +215,7 @@ def build_episode_features(events: pd.DataFrame, episodes: pd.DataFrame) -> pd.D
             "episode_end": episode["end_timestamp"],
             "sell_duration_bars": int(episode["duration_bars"]),
             "sell_persistent_2plus": int(int(episode["duration_bars"]) >= 2),
-            "return_next_45m_pct": episode.get("return_next_45m_pct"),
+            "return_next_30m_pct": episode.get("return_next_30m_pct"),
             "return_next_90m_pct": episode.get("return_next_90m_pct"),
             "return_day_close_pct": episode.get("return_day_close_pct"),
             "return_next_open_pct": episode.get("return_next_open_pct"),
@@ -554,7 +554,7 @@ FALSE_ONLY는 SELL 지속이 짧고 VWAP 역배열이 상대적으로 얕았다.
 ## 방법과 한계
 
 - 입력은 기존 실제 replay `events`와 `episodes` CSV뿐이며 synthetic 행을 추가하지 않았다.
-- 각 episode 최초 SELL 시점과 직전 3개 completed 45m event만 feature에 사용했다. 결측/UNKNOWN은 보간하지 않았다.
+- 각 episode 최초 SELL 시점과 직전 3개 completed 30m event만 feature에 사용했다. 결측/UNKNOWN은 보간하지 않았다.
 - 원 단위 VWAP/OBV/Chaikin feature도 출력하지만 종목 간 가격·거래량 규모가 달라 cross-stock TOP 순위에서는 제외했다. 비율, DMI/ADX, count형 feature를 우선했다.
 - Mann-Whitney U의 양측 p-value는 tie correction을 포함한 정규근사다. 다중 비교에는 Benjamini-Hochberg FDR을 표시했다.
 - 3종목, 52개 평가 가능 episode이며 라벨이 가격 경로로 정의돼 인과관계를 의미하지 않는다. 효과크기 선택 자체가 이 표본에 과적합될 수 있다.
@@ -564,8 +564,8 @@ FALSE_ONLY는 SELL 지속이 짧고 VWAP 역배열이 상대적으로 얕았다.
 
 
 def run(artifact_dir: Path) -> Tuple[pd.DataFrame, pd.DataFrame, Path]:
-    events_path = artifact_dir / "sell_warning_45m_replay_events.csv"
-    episodes_path = artifact_dir / "sell_warning_45m_replay_episodes.csv"
+    events_path = artifact_dir / "sell_warning_30m_replay_events.csv"
+    episodes_path = artifact_dir / "sell_warning_30m_replay_episodes.csv"
     events = pd.read_csv(events_path, dtype={"stock_code": str})
     episodes = pd.read_csv(episodes_path, dtype={"stock_code": str})
     events["stock_code"] = events["stock_code"].str.zfill(6)

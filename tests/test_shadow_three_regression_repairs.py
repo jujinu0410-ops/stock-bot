@@ -5,7 +5,7 @@ import pandas as pd
 
 from cloud_runner import CloudRunner
 from src.analysis.industry_radar_engine import IndustryRadarEngine
-from src.analysis.sell_warning_45m_engine import SellWarning45mEngine
+from src.analysis.sell_warning_30m_engine import SellWarning30mEngine
 
 
 class ShadowThreeRegressionRepairsTest(unittest.TestCase):
@@ -54,16 +54,16 @@ class ShadowThreeRegressionRepairsTest(unittest.TestCase):
         self.assertEqual(shadow["primary_blocker"], "NONE")
         self.assertEqual(shadow["shadow_integrated_state"], "INDUSTRY_UNRATED")
 
-    def test_sell_warning_requests_sparse_completed_45m(self):
+    def test_sell_warning_requests_sparse_completed_30m(self):
         analyzer = MagicMock()
         analyzer.fetch_canonical_15m_data.return_value = (
             pd.DataFrame({"Open": [1.0], "High": [1.0], "Low": [1.0], "Close": [1.0], "Volume": [1.0]}),
             "TEST",
             "NONE",
         )
-        engine = SellWarning45mEngine(intraday_analyzer=analyzer)
+        engine = SellWarning30mEngine(intraday_analyzer=analyzer)
         with patch(
-            "src.analysis.sell_warning_45m_engine.prepare_completed_45m_data",
+            "src.analysis.sell_warning_30m_engine.prepare_completed_30m_data",
             return_value=(None, "MALFORMED_INTERVAL"),
         ) as prepare:
             result = engine.evaluate_stock_warning(

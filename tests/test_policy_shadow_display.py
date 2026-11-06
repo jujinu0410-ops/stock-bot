@@ -31,8 +31,8 @@ class TestPolicyShadowDisplay(unittest.TestCase):
             "asof_timestamp": ts, "source_identifier": f"display-{self.source}", "stock_code": code,
             "market_price": price, "quantity": qty, "weighted_avg_price": avg, "loss_pct": loss,
             "atr14": 10.0, "f_score": f, "t_score": t, "daily_state": "NEUTRAL",
-            "is_45m_bearish_2plus": 0, "is_45m_breakdown": 0, "is_45m_bearish_gate": 0,
-            "completed_45m_timestamp": "2026-08-24 09:45:00", "concentration_state": "CLEAR",
+            "is_30m_bearish_2plus": 0, "is_30m_breakdown": 0, "is_30m_bearish_gate": 0,
+            "completed_30m_timestamp": "2026-08-24 09:45:00", "concentration_state": "CLEAR",
             "data_validity": 1, "suspension_state": "ACTIVE", "v4_effective_stop": 90.0,
             "is_etf": is_etf,
         }
@@ -79,7 +79,7 @@ class TestPolicyShadowDisplay(unittest.TestCase):
     def test_17_renderer_distinguishes_actual_hard_stop(self):
         h=copy.deepcopy(SAMPLE_HELD_PORTFOLIO); html=generate_mobile_html_report_v2("2026-08-24 15:35",0,[],[],h,[],{"status":"OK","rows":[{"stock_code":"004960","stock_name":"한신공영","display_allowed":True,"position_kind":"LEGACY_POSITION","shadow_action":"HARD_STOP_EXIT","loss_defense_trigger":"OFF","defense_state":"OFF"}]}); self.assertIn("HARD_STOP_EXIT SHADOW", html)
     def test_18_renderer_shows_loss_defense_compact(self):
-        h=copy.deepcopy(SAMPLE_HELD_PORTFOLIO); html=generate_mobile_html_report_v2("2026-08-24 15:35",0,[],[],h,[],{"status":"OK","rows":[{"stock_code":"004960","stock_name":"한신공영","display_allowed":True,"loss_defense_trigger":"ON","defense_state":"WAIT_REBOUND","loss_pct":-20,"t_change_3d":None,"is_45m_bearish_gate":1}]}); self.assertIn("Policy: LD WAIT_REBOUND | T 3D: DATA_GAP", html)
+        h=copy.deepcopy(SAMPLE_HELD_PORTFOLIO); html=generate_mobile_html_report_v2("2026-08-24 15:35",0,[],[],h,[],{"status":"OK","rows":[{"stock_code":"004960","stock_name":"한신공영","display_allowed":True,"loss_defense_trigger":"ON","defense_state":"WAIT_REBOUND","loss_pct":-20,"t_change_3d":None,"is_30m_bearish_gate":1}]}); self.assertIn("Policy: LD WAIT_REBOUND | T 3D: DATA_GAP", html)
     def test_19_renderer_keeps_suspension_non_orderable(self):
         h=copy.deepcopy(SAMPLE_HELD_PORTFOLIO); html=generate_mobile_html_report_v2("2026-08-24 15:35",0,[],[],h,[],{"status":"OK","rows":[{"stock_code":"234920","stock_name":"자이글","display_allowed":True,"is_suspended":True}]}); self.assertIn("거래정지 HOLD / 주문 금지", html)
     def test_20_excel_adds_policy_shadow_without_removing_existing_sheets(self):
@@ -359,11 +359,11 @@ class TestPolicyShadowDisplay(unittest.TestCase):
         self.assertIn("Policy: 거래정지 / V4 HOLD", html)
 
     def test_45_section_headers_are_single_pass_layout(self):
-        """한 줄 요약→보유종목 1회→45M→DART 순서만 유지되고 중복 섹션은 제거됨"""
+        """한 줄 요약→보유종목 1회→30M→DART 순서만 유지되고 중복 섹션은 제거됨"""
         html = generate_mobile_html_report_v2("2026-08-26 15:35", 1, [], [], SAMPLE_HELD_PORTFOLIO, None, {"status": "OK", "rows": []})
         self.assertIn("📌 오늘의 핵심 조치", html)
         self.assertIn("📊 전체 보유종목 현황", html)
-        self.assertIn("📈 45M ADD ADVISORY", html)
+        self.assertIn("📈 30M ADD ADVISORY", html)
         self.assertIn("📢 DART 주요 공시 & 브리핑", html)
         self.assertNotIn("⚠️ 오늘 변화·조치 종목 상세", html)
         self.assertNotIn("🧪 Policy Shadow 특이사항", html)

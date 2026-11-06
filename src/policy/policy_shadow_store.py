@@ -71,8 +71,8 @@ class PolicyShadowStore:
     def _init_schema(self) -> None:
         with self._connection() as conn:
             conn.executescript("""
-            CREATE TABLE IF NOT EXISTS policy_shadow_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS policy_shadow_cycles (
+            CREATE TABLE IF NOT EXISTS policy_shadow_meta_m30 (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS policy_shadow_cycles_m30 (
                 cycle_row_id INTEGER PRIMARY KEY AUTOINCREMENT, policy_version TEXT NOT NULL, stock_code TEXT NOT NULL,
                 position_cycle_id TEXT NOT NULL UNIQUE, position_kind TEXT NOT NULL, cycle_status TEXT NOT NULL,
                 shadow_started_at TEXT NOT NULL, shadow_start_price REAL, initial_quantity INTEGER,
@@ -80,16 +80,16 @@ class PolicyShadowStore:
                 f0 REAL, t0 REAL, stage INTEGER, stage1_date TEXT, stage1_price REAL, stage1_low REAL, stage1_atr REAL,
                 t2 REAL, stage2_date TEXT, stage2_price REAL, stage3_date TEXT, stage3_price REAL,
                 add_locked INTEGER NOT NULL DEFAULT 0, last_stage_date TEXT, last_stage_quantity INTEGER,
-                last_completed_45m_at_stage TEXT, defense_state TEXT NOT NULL DEFAULT 'OFF', defense_started_at TEXT,
+                last_completed_30m_at_stage TEXT, defense_state TEXT NOT NULL DEFAULT 'OFF', defense_started_at TEXT,
                 defense_atr REAL, defense_low REAL, rebound_reached_at TEXT, defense_peak REAL, defense_trail REAL,
                 hard_stop REAL, last_reason TEXT, updated_at TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS policy_shadow_snapshots (
+            CREATE TABLE IF NOT EXISTS policy_shadow_snapshots_m30 (
                 snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT, policy_version TEXT NOT NULL, asof_timestamp TEXT NOT NULL,
                 source_identifier TEXT NOT NULL, stock_code TEXT NOT NULL, position_cycle_id TEXT, position_kind TEXT,
                 market_price REAL, quantity INTEGER, weighted_avg_price REAL, loss_pct REAL, atr14 REAL, f_score REAL,
-                t_score REAL, t_change_3d REAL, daily_state TEXT, is_45m_bearish_2plus INTEGER,
-                is_45m_breakdown INTEGER, is_45m_bearish_gate INTEGER, completed_45m_timestamp TEXT,
+                t_score REAL, t_change_3d REAL, daily_state TEXT, is_30m_bearish_2plus INTEGER,
+                is_30m_breakdown INTEGER, is_30m_bearish_gate INTEGER, completed_30m_timestamp TEXT,
                 concentration_state TEXT, data_validity INTEGER, suspension_state TEXT, v4_effective_stop REAL,
                 stage INTEGER, stage2_gate TEXT, stage3_gate TEXT, add_locked INTEGER, loss_defense_trigger TEXT,
                 defense_state TEXT, defense_atr REAL, defense_low REAL, rebound_trigger REAL, rebound_reached INTEGER,
@@ -97,8 +97,8 @@ class PolicyShadowStore:
                 shadow_effective_exit REAL, shadow_action TEXT, shadow_reason TEXT, actual_order_impact INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(source_identifier, stock_code)
             );
-            CREATE INDEX IF NOT EXISTS idx_policy_shadow_snapshot_stock_time ON policy_shadow_snapshots(stock_code, asof_timestamp);
-            CREATE INDEX IF NOT EXISTS idx_policy_shadow_snapshot_cycle_time ON policy_shadow_snapshots(position_cycle_id, asof_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_policy_shadow_snapshot_stock_time ON policy_shadow_snapshots_m30(stock_code, asof_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_policy_shadow_snapshot_cycle_time ON policy_shadow_snapshots_m30(position_cycle_id, asof_timestamp);
             """)
             # Policy Shadow owns this DB.  These additive fields intentionally
             # never touch operational tables or V4 persistence.
@@ -125,7 +125,7 @@ class PolicyShadowStore:
                 "f_baseline_status": "TEXT",
                 "t_baseline_status": "TEXT",
             }
-            for table, columns in (("policy_shadow_cycles", cycle_columns), ("policy_shadow_snapshots", snapshot_columns)):
+            for table, columns in (("policy_shadow_cycles_m30", cycle_columns), ("policy_shadow_snapshots_m30", snapshot_columns)):
                 existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
                 for name, sql_type in columns.items():
                     if name not in existing:
@@ -133,16 +133,16 @@ class PolicyShadowStore:
 
     def meta_json(self, key: str) -> Any:
         with self._connection() as conn:
-            row = conn.execute("SELECT value FROM policy_shadow_meta WHERE key=?", (key,)).fetchone()
+            row = conn.execute("SELECT value FROM policy_shadow_meta_m30 WHERE key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else None
 
     def set_meta_json(self, key: str, value: Any) -> None:
         with self._connection() as conn:
-            conn.execute("INSERT INTO policy_shadow_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps(value)))
+            conn.execute("INSERT INTO policy_shadow_meta_m30(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps(value)))
 
     def latest_cycle(self, stock_code: str) -> Optional[dict[str, Any]]:
         with self._connection() as conn:
-            row = conn.execute("SELECT * FROM policy_shadow_cycles WHERE stock_code=? ORDER BY cycle_row_id DESC LIMIT 1", (stock_code,)).fetchone()
+            row = conn.execute("SELECT * FROM policy_shadow_cycles_m30 WHERE stock_code=? ORDER BY cycle_row_id DESC LIMIT 1", (stock_code,)).fetchone()
         return dict(row) if row else None
 
     def upsert_cycle(self, cycle: dict[str, Any]) -> None:
@@ -150,17 +150,17 @@ class PolicyShadowStore:
         values = [cycle[f] for f in fields]
         assignments = ",".join(f"{f}=excluded.{f}" for f in fields if f != "position_cycle_id")
         with self._connection() as conn:
-            conn.execute(f"INSERT INTO policy_shadow_cycles ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)}) ON CONFLICT(position_cycle_id) DO UPDATE SET {assignments}", values)
+            conn.execute(f"INSERT INTO policy_shadow_cycles_m30 ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)}) ON CONFLICT(position_cycle_id) DO UPDATE SET {assignments}", values)
 
     def append_snapshot(self, snapshot: dict[str, Any]) -> bool:
         fields = list(snapshot)
         with self._connection() as conn:
-            cur = conn.execute(f"INSERT OR IGNORE INTO policy_shadow_snapshots ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})", [snapshot[f] for f in fields])
+            cur = conn.execute(f"INSERT OR IGNORE INTO policy_shadow_snapshots_m30 ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})", [snapshot[f] for f in fields])
         return cur.rowcount == 1
 
     def recent_t_by_day(self, stock_code: str, current: dict[str, Any]) -> list[tuple[str, float]]:
         with self._connection() as conn:
-            rows = conn.execute("SELECT asof_timestamp,t_score FROM policy_shadow_snapshots WHERE stock_code=? AND t_score IS NOT NULL ORDER BY asof_timestamp DESC", (stock_code,)).fetchall()
+            rows = conn.execute("SELECT asof_timestamp,t_score FROM policy_shadow_snapshots_m30 WHERE stock_code=? AND t_score IS NOT NULL ORDER BY asof_timestamp DESC", (stock_code,)).fetchall()
         rows = [(current["asof_timestamp"], current.get("t_score"))] + [(r["asof_timestamp"], r["t_score"]) for r in rows]
         by_day: dict[str, float] = {}
         for timestamp, score in rows:
@@ -170,7 +170,7 @@ class PolicyShadowStore:
 
     def counts(self) -> tuple[int, int]:
         with self._connection() as conn:
-            return tuple(conn.execute("SELECT (SELECT count(*) FROM policy_shadow_cycles),(SELECT count(*) FROM policy_shadow_snapshots)").fetchone())
+            return tuple(conn.execute("SELECT (SELECT count(*) FROM policy_shadow_cycles_m30),(SELECT count(*) FROM policy_shadow_snapshots_m30)").fetchone())
 
     def repair_new_cycle_baseline(
         self,
@@ -254,10 +254,10 @@ class PolicyShadowReader:
                            c.stage_size_status, c.target_qty_status,
                            c.f_baseline_status, c.t_baseline_status,
                            c.baseline_repair_source
-                    FROM policy_shadow_snapshots s
-                    LEFT JOIN policy_shadow_cycles c ON c.position_cycle_id = s.position_cycle_id
+                    FROM policy_shadow_snapshots_m30 s
+                    LEFT JOIN policy_shadow_cycles_m30 c ON c.position_cycle_id = s.position_cycle_id
                     WHERE s.snapshot_id IN (
-                        SELECT MAX(snapshot_id) FROM policy_shadow_snapshots
+                        SELECT MAX(snapshot_id) FROM policy_shadow_snapshots_m30
                         WHERE asof_timestamp <= ? GROUP BY stock_code
                     )
                     """,
@@ -348,6 +348,9 @@ class PolicyShadowService:
 
     def observe(self, raw: dict[str, Any], bootstrap_codes: list[str]) -> dict[str, Any]:
         code, now = str(raw["stock_code"]).zfill(6), raw["asof_timestamp"]
+        from src.runtime.m30_contract import completed_timestamp, normalize_validity
+        raw = dict(raw, data_validity=normalize_validity(raw.get("data_validity")),
+                   completed_30m_timestamp=completed_timestamp(raw.get("completed_30m_timestamp"), now))
         is_etf = bool(raw.get("is_etf", False)) or code in ['371460', '484730', '490590', '161510', '088500']
         if is_etf:
             raw = dict(raw, stock_code=code, is_etf=1, f_score=None)
@@ -386,7 +389,7 @@ class PolicyShadowService:
                 "stage1_low": price if kind == "NEW_433_CYCLE" else None, "stage1_atr": atr if kind == "NEW_433_CYCLE" else None,
                 "t2": None, "stage2_date": None, "stage2_price": None, "stage3_date": None, "stage3_price": None,
                 "add_locked": 0, "last_stage_date": now[:10] if kind == "NEW_433_CYCLE" else None,
-                "last_stage_quantity": qty, "last_completed_45m_at_stage": raw.get("completed_45m_timestamp"),
+                "last_stage_quantity": qty, "last_completed_30m_at_stage": raw.get("completed_30m_timestamp"),
                 "defense_state": "OFF", "defense_started_at": None, "defense_atr": None, "defense_low": None,
                 "rebound_reached_at": None, "defense_peak": None, "defense_trail": None,
                 "hard_stop": hard.hard_stop if hard else None,
@@ -406,8 +409,8 @@ class PolicyShadowService:
 
         t_days = self.store.recent_t_by_day(code, raw)
         t_change = float(raw["t_score"]) - t_days[0][1] if len(t_days) >= 3 and raw.get("t_score") is not None else None
-        bearish = bool(raw.get("is_45m_bearish_2plus") or raw.get("is_45m_breakdown"))
-        loss_defense = evaluate_loss_defense(loss_pct=raw.get("loss_pct"), t_change_3d=t_change, is_45m_bearish=bearish if t_change is not None else None)
+        bearish = bool(raw.get("is_30m_bearish_2plus") or raw.get("is_30m_breakdown"))
+        loss_defense = evaluate_loss_defense(loss_pct=raw.get("loss_pct"), t_change_3d=t_change, is_30m_bearish=bearish if t_change is not None else None)
         price, atr = raw.get("market_price"), raw.get("atr14")
         if cycle["defense_state"] == "OFF" and loss_defense == LOSS_DEFENSE_ON and atr and price is not None:
             cycle.update(add_locked=1, defense_state="WAIT_REBOUND", defense_started_at=now, defense_atr=atr, defense_low=price, last_reason="LOSS_DEFENSE_ON")
@@ -424,8 +427,7 @@ class PolicyShadowService:
         safety = raw.get("data_validity") == 1 and raw.get("suspension_state") != "SUSPENDED" and raw.get("concentration_state") != "BLOCKED"
         stage2 = stage3 = "NOT_APPLICABLE"
         if cycle["position_kind"] == "NEW_433_CYCLE":
-            same_day = cycle.get("last_stage_date") == now[:10]
-            new_bar = bool(raw.get("completed_45m_timestamp")) and raw["completed_45m_timestamp"] != cycle.get("last_completed_45m_at_stage")
+            same_day = cycle.get("last_stage_date") == now[:10]; new_bar = raw.get("completed_30m_timestamp") is not None and raw.get("completed_30m_timestamp") != cycle.get("last_completed_30m_at_stage")
             if cycle.get("stage") == 1:
                 cycle["stage_size_status"] = stage_size_status(qty, cycle.get("stage1_target_qty"), 1)
                 if cycle.get("f0") is None or cycle.get("t0") is None:
@@ -445,8 +447,8 @@ class PolicyShadowService:
                     ready = safety and not same_day and new_bar and cycle["add_locked"] == 0 and loss_defense != LOSS_DEFENSE_ON and raw.get("f_score") is not None and raw["f_score"] >= cycle["f0"] and raw.get("t_score") is not None and raw["t_score"] >= cycle["t2"] + 5 and neutral and price is not None and raw.get("weighted_avg_price") is not None and price >= raw["weighted_avg_price"]
                     stage3 = "STAGE3_READY" if ready else "NOT_READY"
             if qty > int(cycle.get("last_stage_quantity") or qty):
-                if cycle.get("stage") == 1 and stage2 == "STAGE2_READY": cycle.update(stage=2, t2=raw.get("t_score"), stage2_date=now[:10], stage2_price=price, last_stage_date=now[:10], last_stage_quantity=qty, last_completed_45m_at_stage=raw.get("completed_45m_timestamp"), last_reason="STAGE2_OBSERVED")
-                elif cycle.get("stage") == 2 and stage3 == "STAGE3_READY": cycle.update(stage=3, stage3_date=now[:10], stage3_price=price, last_stage_date=now[:10], last_stage_quantity=qty, last_completed_45m_at_stage=raw.get("completed_45m_timestamp"), last_reason="STAGE3_OBSERVED")
+                if cycle.get("stage") == 1 and stage2 == "STAGE2_READY": cycle.update(stage=2, t2=raw.get("t_score"), stage2_date=now[:10], stage2_price=price, last_stage_date=now[:10], last_stage_quantity=qty, last_completed_30m_at_stage=raw.get("completed_30m_timestamp"), last_reason="STAGE2_OBSERVED")
+                elif cycle.get("stage") == 2 and stage3 == "STAGE3_READY": cycle.update(stage=3, stage3_date=now[:10], stage3_price=price, last_stage_date=now[:10], last_stage_quantity=qty, last_completed_30m_at_stage=raw.get("completed_30m_timestamp"), last_reason="STAGE3_OBSERVED")
                 else: cycle["last_reason"] = "OUT_OF_POLICY_ADD_OBSERVED"
         action = cycle.get("last_reason", "OBSERVE")
         if cycle.get("hard_stop") and price is not None and price <= cycle["hard_stop"] and not cycle["hard_stop_already_breached_at_shadow_start"]: action = "HARD_STOP_EXIT"

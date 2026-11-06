@@ -507,19 +507,19 @@ def _ensure_report_add_advisories(
     report_asof: datetime,
     advisory_engine: Any = None,
 ) -> int:
-    """Persist missing report-time 45m sidecars without invoking RuntimeScheduler."""
-    from src.analysis.add_advisory_engine import AddAdvisory45mEngine
+    """Persist missing report-time 30m sidecars without invoking RuntimeScheduler."""
+    from src.analysis.add_advisory_engine import AddAdvisory30mEngine
     from src.runtime.krx_calendar import KRXCalendar
 
-    completed_bar = KRXCalendar.get_completed_45m_bar(report_asof)
+    completed_bar = KRXCalendar.get_completed_30m_bar(report_asof)
     if completed_bar is None:
-        logger.info("[Report45m] No completed 45m bar at report as-of; preserving waiting state.")
+        logger.info("[Report30m] No completed 30m bar at report as-of; preserving waiting state.")
         return 0
 
     _, _, bar_end = completed_bar
     trading_date = report_asof.strftime("%Y-%m-%d")
     bar_timestamp = f"{trading_date} {bar_end}:00"
-    engine = advisory_engine or AddAdvisory45mEngine()
+    engine = advisory_engine or AddAdvisory30mEngine()
     inserted = 0
 
     for holding in held_status or []:
@@ -532,6 +532,7 @@ def _ensure_report_add_advisories(
             max_bar_timestamp=bar_timestamp,
         )
         if current and current.get("bar_timestamp") == bar_timestamp and str(current.get("data_quality", "")).startswith("VALID"):
+            # A bar snapshot stays immutable; render-time risk uses current holding.
             continue
         entry = engine.evaluate_stock_advisory(
             stock_code=code,
@@ -539,11 +540,33 @@ def _ensure_report_add_advisories(
             bar_timestamp=bar_timestamp,
             technical_state_reference=holding.get("technical_state", "UNKNOWN"),
             latest_previous_advisory=current,
+            holding_context=holding,
         )
-        if db.insert_add_advisory_45m(entry):
+        if db.insert_add_advisory_30m(entry):
             inserted += 1
-    logger.info(f"[Report45m] Completed bar={bar_timestamp}; inserted={inserted}")
+    logger.info(f"[Report30m] Completed bar={bar_timestamp}; inserted={inserted}")
     return inserted
+
+
+def _ensure_report_sell_warnings(db, held_status, report_asof, warning_engine=None):
+    from src.runtime.krx_calendar import KRXCalendar
+    from src.runtime.runtime_scheduler import RuntimeScheduler
+    slot=KRXCalendar.get_completed_30m_bar(report_asof)
+    if slot is None: return 0
+    bar_ts=f"{report_asof:%Y-%m-%d} {slot[2]}:00"
+    sidecar=object.__new__(RuntimeScheduler)
+    sidecar.db=db
+    if warning_engine is not None: sidecar._sell_warning_engine=warning_engine
+    evaluated=0
+    for item in held_status or []:
+        code=str(item.get("stock_code") or "").strip().zfill(6)
+        if code=="000000": continue
+        existing=db.get_latest_sell_warning_for_stock(code,trading_date=f"{report_asof:%Y-%m-%d}",max_bar_timestamp=bar_ts)
+        if existing and existing.get("bar_timestamp")==bar_ts: continue
+        sidecar._evaluate_sell_warning_sidecar(code,item,f"{report_asof:%Y-%m-%d}",bar_ts)
+        evaluated+=1
+    logger.info(f"[Report30mSell] Completed bar={bar_ts}; evaluated={evaluated}")
+    return evaluated
 
 
 def run_post_market_analysis(
@@ -637,8 +660,9 @@ def run_post_market_analysis(
         raise
 
     # Cloud reports do not run RuntimeScheduler.  Ensure the report's completed
-    # 45m sidecar exists before Policy observation and renderer lookup.
+    # 30m sidecar exists before Policy observation and renderer lookup.
     _ensure_report_add_advisories(db, held_status, now)
+    _ensure_report_sell_warnings(db, held_status, now)
 
     # 5. 관심 종목 스캔 및 신규 매매 신호 추출
     current_step = "WATCHLIST_SCAN"
@@ -757,13 +781,13 @@ def run_post_market_analysis(
             'data-render-version="V2"',
             'data-held-stock-codes=',
             '전체 보유종목 현황',
-            '45M ADD ADVISORY',
+            '30M ADD ADVISORY',
             'DART 주요 공시'
         ]
 
         FORBIDDEN_HTML_STRINGS = [
             '5단계 매매 대응전략 매트릭스',
-            '일봉/45분봉 수급 원자값 연동 표',
+            '일봉/30분봉 수급 원자값 연동 표',
             '내 계좌 보유 종목 정밀 평가',
             '관심 종목 리포트',
             '신규 매수 신호',

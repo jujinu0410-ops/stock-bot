@@ -15,9 +15,10 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from src.analysis.intraday_analysis import Intraday45mAnalyzer
+from src.analysis.intraday_analysis import Intraday30mAnalyzer
 from src.analysis.technical_analysis import adjust_krx_tick_size
 from src.utils.logger import logger
+from src.runtime.krx_calendar import KRXCalendar
 
 
 OVERLAY_VERSION = "BB_ATR_V1"
@@ -28,7 +29,7 @@ ATR_MULTIPLIER = 0.8
 KST = ZoneInfo("Asia/Seoul")
 
 SESSION_CUTOFFS = {
-    "1120": (11, 15),
+    "1120": (11, 0),
     "1335": (13, 30),
     "1535": (15, 0),
 }
@@ -36,6 +37,7 @@ SESSION_CUTOFFS = {
 # Both production APIs label rows by bar start. Naver's endpoint currently
 # returns one-minute rows despite its range=15m URL parameter.
 SOURCE_BAR_START_MINUTES = {
+    "KIWOOM_15M_BAR_START": 15,
     "YFINANCE_15M": 15,
     "NAVER_MINUTE_API": 1,
     "TEST_15M_BAR_START": 15,
@@ -83,7 +85,7 @@ def _base_result(item: Dict[str, Any], asof_dt: datetime, session_code: str) -> 
         "reason_codes": [],
         "report_session": str(session_code),
         "report_asof_kst": _report_asof_text(asof_dt),
-        "completed_45m_timestamp": None,
+        "completed_30m_timestamp": None,
         "completed_close": None,
         "bb_window": BB_WINDOW,
         "bb_sigma": BB_SIGMA,
@@ -276,12 +278,19 @@ def _source_interval_minutes(source: str) -> Optional[int]:
     return None
 
 
-def prepare_completed_45m_data(raw_df: pd.DataFrame, source: str, cutoff_dt: datetime, *, allow_sparse_completed: bool = False) -> Tuple[Optional[pd.DataFrame], str]:
-    """Aggregate validated start-labelled rows into end-labelled 45m bars."""
+def prepare_completed_30m_data(raw_df: pd.DataFrame, source: str, cutoff_dt: datetime, *, allow_sparse_completed: bool = False) -> Tuple[Optional[pd.DataFrame], str]:
+    """Aggregate validated start-labelled rows into end-labelled 30m bars."""
     if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
         return None, "REQUIRED_SOURCE_DATA_MISSING"
+    if str(source).upper().startswith("YFINANCE"):
+        watermark=raw_df.attrs.get("source_watermark")
+        if not watermark:return None,"SOURCE_WATERMARK_UNAVAILABLE"
+        if _as_kst_naive(watermark)<_as_kst_naive(cutoff_dt):return None,"SOURCE_NOT_COMPLETE"
+    if str(source).startswith("KIWOOM_15M_BAR_START"):
+        watermark=raw_df.attrs.get("source_watermark")
+        if not watermark or _as_kst_naive(watermark)<_as_kst_naive(cutoff_dt):return None,"SOURCE_NOT_COMPLETE"
     interval_minutes = _source_interval_minutes(source)
-    if interval_minutes is None or 45 % interval_minutes != 0:
+    if interval_minutes is None or 30 % interval_minutes != 0:
         return None, "UNSUPPORTED_TIMESTAMP_SEMANTICS"
     required = ["Open", "High", "Low", "Close", "Volume"]
     if any(column not in raw_df.columns for column in required):
@@ -318,30 +327,34 @@ def prepare_completed_45m_data(raw_df: pd.DataFrame, source: str, cutoff_dt: dat
     duration = pd.Timedelta(minutes=interval_minutes)
     day = frame.index.normalize()
     day_open = day + pd.Timedelta(hours=9)
-    day_last_completed = day + pd.Timedelta(hours=15)
+    day_last_completed = day + pd.Timedelta(hours=15, minutes=30)
     per_row_cutoff = pd.DatetimeIndex([min(pd.Timestamp(limit), cutoff) for limit in day_last_completed])
     eligible = frame.loc[(frame.index >= day_open) & (frame.index + duration <= per_row_cutoff)].copy()
     if eligible.empty:
         return None, "CUTOFF_MISMATCH"
 
-    rows_per_candle = 45 // interval_minutes
+    rows_per_candle = 30 // interval_minutes
     completed_rows = []
     for trading_day, daily in eligible.groupby(eligible.index.normalize(), sort=True):
+        if not KRXCalendar.is_krx_trading_day(trading_day.date()):
+            continue
         expected_open = pd.Timestamp(trading_day) + pd.Timedelta(hours=9)
         offsets = (daily.index - expected_open).total_seconds() / 60.0
-        if any(offset < 0 or offset >= 360 or offset % interval_minutes != 0 for offset in offsets):
+        if any(offset < 0 or offset >= 390 or offset % interval_minutes != 0 for offset in offsets):
             return None, "MALFORMED_INTERVAL"
         if len(daily) > 1 and not (daily.index.to_series().diff().dropna() == duration).all():
             if not allow_sparse_completed:
                 return None, "MALFORMED_INTERVAL"
-            # Individual complete 45m bins remain valid when a different bin
+            # Individual complete 30m bins remain valid when a different bin
             # has a missing 15m interval. Never invent bars to fill the gap.
         daily = daily.copy()
-        daily["__slot"] = (offsets // 45).astype(int)
+        daily["__slot"] = (offsets // 30).astype(int)
         for slot, group in daily.groupby("__slot", sort=True):
-            bin_start = expected_open + pd.Timedelta(minutes=int(slot) * 45)
-            bin_end = bin_start + pd.Timedelta(minutes=45)
-            allowed_end = min(pd.Timestamp(trading_day) + pd.Timedelta(hours=15), cutoff)
+            bin_start = expected_open + pd.Timedelta(minutes=int(slot) * 30)
+            bin_end = bin_start + pd.Timedelta(minutes=30)
+            allowed_end = min(pd.Timestamp(trading_day) + pd.Timedelta(hours=15, minutes=30), cutoff)
+            if bin_end.time().isoformat() == "15:30:00":
+                continue  # FINAL_AUCTION_OHLCV_UNVERIFIED; exposed separately as PARTIAL.
             if bin_end > allowed_end:
                 continue
             expected_index = pd.date_range(bin_start, periods=rows_per_candle, freq=f"{interval_minutes}min")
@@ -356,22 +369,22 @@ def prepare_completed_45m_data(raw_df: pd.DataFrame, source: str, cutoff_dt: dat
             ))
 
     if not completed_rows:
-        return None, "INSUFFICIENT_COMPLETED_45M_BARS"
+        return None, "INSUFFICIENT_COMPLETED_30M_BARS"
     completed = pd.DataFrame(
         completed_rows,
-        columns=["completed_45m_timestamp", "Open", "High", "Low", "Close", "Volume"],
-    ).set_index("completed_45m_timestamp")
+        columns=["completed_30m_timestamp", "Open", "High", "Low", "Close", "Volume"],
+    ).set_index("completed_30m_timestamp")
     if completed.index.has_duplicates or not completed.index.is_monotonic_increasing:
-        return None, "INVALID_COMPLETED_45M_INDEX"
+        return None, "INVALID_COMPLETED_30M_INDEX"
     if completed.index[-1] != cutoff:
         return None, "CUTOFF_MISMATCH"
     if len(completed) < BB_WINDOW:
-        return None, "INSUFFICIENT_COMPLETED_45M_BARS"
+        return None, "INSUFFICIENT_COMPLETED_30M_BARS"
     return completed, "VALID"
 
 
-def get_strictly_sliced_45m_df(stock_code: str, cutoff_dt: datetime, *, allow_sparse_completed: bool = False) -> Tuple[Optional[pd.DataFrame], str, str]:
-    analyzer = Intraday45mAnalyzer()
+def get_strictly_sliced_30m_df(stock_code: str, cutoff_dt: datetime, *, allow_sparse_completed: bool = False) -> Tuple[Optional[pd.DataFrame], str, str]:
+    analyzer = Intraday30mAnalyzer()
     if not hasattr(analyzer, "fetch_canonical_15m_data"):
         return None, "NONE", "REQUIRED_SOURCE_DATA_MISSING"
     try:
@@ -381,7 +394,7 @@ def get_strictly_sliced_45m_df(stock_code: str, cutoff_dt: datetime, *, allow_sp
         return None, "NONE", "INTRADAY_FETCH_FAILED"
     if fetch_error != "NONE" or raw_df is None:
         return None, str(source or "NONE"), str(fetch_error or "REQUIRED_SOURCE_DATA_MISSING")
-    completed, quality = prepare_completed_45m_data(
+    completed, quality = prepare_completed_30m_data(
         raw_df, str(source), cutoff_dt, allow_sparse_completed=allow_sparse_completed
     )
     return completed, str(source), quality
@@ -428,7 +441,7 @@ def generate_bb_atr_advisory(
     if _as_kst_naive(asof_dt) < _as_kst_naive(cutoff):
         return make_no_advisory(item, asof_dt, session_code, "REPORT_BEFORE_COMPLETED_CUTOFF")
 
-    completed, source, quality = get_strictly_sliced_45m_df(
+    completed, source, quality = get_strictly_sliced_30m_df(
         str(item.get("stock_code") or "").zfill(6),
         cutoff,
         allow_sparse_completed=True,
@@ -436,7 +449,7 @@ def generate_bb_atr_advisory(
     if completed is None:
         return make_no_advisory(item, asof_dt, session_code, quality)
     if len(completed) < BB_WINDOW:
-        return make_no_advisory(item, asof_dt, session_code, "INSUFFICIENT_COMPLETED_45M_BARS")
+        return make_no_advisory(item, asof_dt, session_code, "INSUFFICIENT_COMPLETED_30M_BARS")
     completed_close = _finite_float(completed["Close"].iloc[-1])
     if completed_close is None or completed_close <= 0:
         return make_no_advisory(item, asof_dt, session_code, "INVALID_COMPLETED_CLOSE")
@@ -488,7 +501,7 @@ def generate_bb_atr_advisory(
     result = _base_result(item, asof_dt, session_code)
     result.update(
         overlay_status="ACTIVE", data_quality="VALID", reason_codes=[signal_code],
-        completed_45m_timestamp=completed.index[-1].strftime("%Y-%m-%d %H:%M:%S"),
+        completed_30m_timestamp=completed.index[-1].strftime("%Y-%m-%d %H:%M:%S"),
         completed_close=round(completed_close, 4),
         bb_middle=round(bb_middle, 4), bb_upper=round(bb_upper, 4), bb_lower=round(bb_lower, 4),
         upper_confirmation_threshold=upper_threshold,

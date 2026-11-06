@@ -540,20 +540,20 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
             "is_etf": False, "f_score_confirmed": True
         }
 
-        with patch(
-            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
-            return_value=_normal_intraday_response(12000.0),
-        ), patch(
-            "src.analysis.intraday_analysis.Intraday45mAnalyzer.observed_completed_45m_end",
-            return_value="2026-08-19 09:45:00",
-        ):
+        # Price/weight consumer unit test: the producer contract is tested
+        # separately with raw source candles and watermark in the audit tests.
+        with patch("src.analysis.intraday_analysis.Intraday30mAnalyzer.analyze_30m_indicators",
+                   return_value={"has_30m_data": True,
+                                 "completed_30m_timestamp": "2026-08-19 09:30:00",
+                                 "intraday_last_timestamp": "2026-08-19 09:30:00",
+                                 "intraday_quality": "VALID"}):
             held_status = self.pm.get_held_portfolio_status(engine=mock_engine, live_positions=live_meta_11)
         self.assertEqual(len(held_status), 11)
 
         # 모든 종목이 1순위 엔진 가격(12,000원)으로 평가되었는지 확인
         for pos in held_status:
             self.assertEqual(pos["current_price"], 12000.0)
-            self.assertEqual(pos["completed_45m_timestamp"], "2026-08-19 09:45:00")
+            self.assertEqual(pos["completed_30m_timestamp"], "2026-08-19 09:30:00")
 
         # 계좌 비중의 합이 반올림 오차 범위(99.9% ~ 100.1%) 내에 정확히 안착하는지 단언
         total_weight = sum(p["eval_weight_pct"] for p in held_status)
@@ -588,7 +588,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         }]
 
         with patch(
-            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            "src.analysis.intraday_analysis.Intraday30mAnalyzer.fetch_canonical_15m_data",
             return_value=_normal_intraday_response(8050.0),
         ):
             eval_list = self.pm.get_held_portfolio_status(engine=None, live_positions=live_meta)
@@ -641,7 +641,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
 
         # 제외 대상 섹션 부재 검증
         self.assertNotIn("5단계 매매 대응전략 매트릭스", html)
-        self.assertNotIn("일봉/45분봉 수급 원자값 연동 표", html)
+        self.assertNotIn("일봉/30분봉 수급 원자값 연동 표", html)
         self.assertNotIn("내 계좌 보유 종목 정밀 평가", html)
         self.assertNotIn("관심종목 전체 분석", html)
         self.assertNotIn("신규 매수 신호 포착", html)
@@ -705,7 +705,7 @@ class TestKiwoomOperationalAudit(unittest.TestCase):
         } for idx, c in enumerate(self.all_11_codes, 1)]
 
         with patch(
-            "src.analysis.intraday_analysis.Intraday45mAnalyzer.fetch_canonical_15m_data",
+            "src.analysis.intraday_analysis.Intraday30mAnalyzer.fetch_canonical_15m_data",
             return_value=_normal_intraday_response(8000.0),
         ):
             held_list = self.pm.get_held_portfolio_status(engine=None, live_positions=live_meta)

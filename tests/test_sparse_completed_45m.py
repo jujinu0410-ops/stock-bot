@@ -26,40 +26,37 @@ def raw_bars():
     closes = np.linspace(9000, 9120, length)
     return pd.DataFrame({"Open":closes,"High":closes+5,"Low":closes-5,"Close":closes,"Volume":np.full(length,1000.)}, index=pd.DatetimeIndex(stamps))
 
-class Sparse45mSafety(unittest.TestCase):
+class Sparse30mSafety(unittest.TestCase):
     def test_complete_identical(self):
         frame=raw_bars()
-        a,q=mod.prepare_completed_45m_data(frame,SOURCE,CUTOFF)
-        b,r=mod.prepare_completed_45m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
+        a,q=mod.prepare_completed_30m_data(frame,SOURCE,CUTOFF)
+        b,r=mod.prepare_completed_30m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
         self.assertEqual((q,r),("VALID","VALID"))
         pd.testing.assert_frame_equal(a,b)
-        self.assertEqual(len(a),38) # four past full days plus six completed today
+        self.assertEqual(len(a),57) # four past full days plus six completed today
     def test_single_missing_interval(self):
         frame=raw_bars().drop(pd.Timestamp("2026-10-15 12:45"))
-        _,strict=mod.prepare_completed_45m_data(frame,SOURCE,CUTOFF)
-        cleaned,q=mod.prepare_completed_45m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
+        _,strict=mod.prepare_completed_30m_data(frame,SOURCE,CUTOFF)
+        cleaned,q=mod.prepare_completed_30m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
         self.assertEqual(strict,"MALFORMED_INTERVAL")
         self.assertEqual(q,"VALID")
-        self.assertEqual(len(cleaned),37)
-        self.assertNotIn(pd.Timestamp("2026-10-15 13:30"),cleaned.index)
+        self.assertEqual(len(cleaned),56)
+        self.assertNotIn(pd.Timestamp("2026-10-15 13:00"),cleaned.index)
         self.assertEqual(cleaned.index[-1],pd.Timestamp("2026-10-16 13:30"))
     def test_latest_candle_incomplete_fail_closed(self):
         frame=raw_bars().drop(pd.Timestamp("2026-10-16 13:15"))
-        output,q=mod.prepare_completed_45m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
+        output,q=mod.prepare_completed_30m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
         self.assertIsNone(output)
         self.assertEqual(q,"CUTOFF_MISMATCH")
     def test_not_enough_complete_bars_fail_closed(self):
-        frame=raw_bars()
-        for day in ("2026-10-12", "2026-10-13"):
-            for stamp in pd.date_range(day+" 09:00",periods=8,freq="45min"):
-                frame=frame.drop(stamp) if stamp in frame.index else frame
-        output,q=mod.prepare_completed_45m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
+        frame=raw_bars().loc["2026-10-16"]
+        output,q=mod.prepare_completed_30m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
         self.assertIsNone(output)
-        self.assertEqual(q,"INSUFFICIENT_COMPLETED_45M_BARS")
+        self.assertEqual(q,"INSUFFICIENT_COMPLETED_30M_BARS")
     def test_bad_ohlcv_not_accepted(self):
         frame=raw_bars()
         frame.loc[pd.Timestamp("2026-10-15 13:15"),"Volume"]=-1
-        output,q=mod.prepare_completed_45m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
+        output,q=mod.prepare_completed_30m_data(frame,SOURCE,CUTOFF,allow_sparse_completed=True)
         self.assertIsNone(output)
         self.assertEqual(q,"MALFORMED_OHLCV")
     def test_wrapper_fetch_once_and_strict_unchanged(self):
@@ -69,28 +66,28 @@ class Sparse45mSafety(unittest.TestCase):
             def fetch_canonical_15m_data(self,code):
                 called.append(code)
                 return frame,SOURCE,"NONE"
-        original=mod.Intraday45mAnalyzer
+        original=mod.Intraday30mAnalyzer
         try:
-            mod.Intraday45mAnalyzer=FakeAnalyzer
-            strict,s1,q1=mod.get_strictly_sliced_45m_df("003230",CUTOFF)
-            sparse,s2,q2=mod.get_strictly_sliced_45m_df("003230",CUTOFF,allow_sparse_completed=True)
+            mod.Intraday30mAnalyzer=FakeAnalyzer
+            strict,s1,q1=mod.get_strictly_sliced_30m_df("003230",CUTOFF)
+            sparse,s2,q2=mod.get_strictly_sliced_30m_df("003230",CUTOFF,allow_sparse_completed=True)
             self.assertIsNone(strict)
             self.assertEqual(q1,"MALFORMED_INTERVAL")
             self.assertEqual(q2,"VALID")
             self.assertEqual((s1,s2),(SOURCE,SOURCE))
             self.assertEqual(called,["003230","003230"])
-            self.assertEqual(len(sparse),37)
+            self.assertEqual(len(sparse),56)
         finally:
-            mod.Intraday45mAnalyzer=original
+            mod.Intraday30mAnalyzer=original
 
     def test_generate_bb_atr_advisory_passes_allow_sparse_completed(self):
         frame = raw_bars().drop(pd.Timestamp("2026-10-15 12:45"))
         class FakeAnalyzer:
             def fetch_canonical_15m_data(self, code):
                 return frame, SOURCE, "NONE"
-        original = mod.Intraday45mAnalyzer
+        original = mod.Intraday30mAnalyzer
         try:
-            mod.Intraday45mAnalyzer = FakeAnalyzer
+            mod.Intraday30mAnalyzer = FakeAnalyzer
             item = {
                 "stock_code": "003230",
                 "stock_name": "삼양식품",
@@ -108,15 +105,15 @@ class Sparse45mSafety(unittest.TestCase):
             asof = datetime(2026, 10, 16, 13, 35, tzinfo=ZoneInfo("Asia/Seoul"))
             res = mod.generate_bb_atr_advisory(item, asof, "1335")
             self.assertEqual(res["data_quality"], "VALID")
-            self.assertEqual(res["completed_45m_timestamp"], "2026-10-16 13:30:00")
+            self.assertEqual(res["completed_30m_timestamp"], "2026-10-16 13:30:00")
         finally:
-            mod.Intraday45mAnalyzer = original
+            mod.Intraday30mAnalyzer = original
 
     def test_intraday_analyzer_yfinance_10d_and_naver_volume_diff(self):
         from unittest.mock import MagicMock, patch
-        from src.analysis.intraday_analysis import Intraday45mAnalyzer, _compute_naver_bar_volumes
+        from src.analysis.intraday_analysis import Intraday30mAnalyzer, _compute_naver_bar_volumes
 
-        analyzer = Intraday45mAnalyzer()
+        analyzer = Intraday30mAnalyzer()
         history_calls = []
         class FakeTicker:
             def __init__(self, sym):

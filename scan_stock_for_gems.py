@@ -174,7 +174,7 @@ def _scan_stock_dto_core(stock_code_or_name: str, db: DatabaseManager) -> ScanRe
     cand_ref_atr = float(res.get("candidate_reference_atr", atr_v))
     rebound_delta = int(res.get("buy_rebound_delta") or 0)
     drop_delta = int(res.get("sell_drop_delta") or 0)
-    # 일봉 및 45분봉 원자값 추출
+    # 일봉 및 30분봉 원자값 추출
     daily_cho = res.get("daily_cho_recent2", [0, 0])
     daily_adx_dom = str(res.get("daily_adx_di_dominance", "-"))
     obv_dead_d = str(res.get("obv_dead_date", "N/A"))
@@ -186,8 +186,8 @@ def _scan_stock_dto_core(stock_code_or_name: str, db: DatabaseManager) -> ScanRe
     intraday_err_cd = str(res.get("intraday_error_code", "NO_INTRADAY_DATA"))
 
     intraday_cho = res.get("intraday_cho_recent2")
-    intra_adx_dom = str(res.get("adx_di_dominance_45m", "-"))
-    obv_trend = str(res.get("obv_45m_trend", "N/A"))
+    intra_adx_dom = str(res.get("adx_di_dominance_30m", "-"))
+    obv_trend = str(res.get("obv_30m_trend", "N/A"))
 
     # 공용 TradingEngine 분석 결과로부터 매매 신호 및 사유 수신 (독자 판정/문구 제거)
     signal_type = str(res.get("signal_type", "관망"))
@@ -199,17 +199,17 @@ def _scan_stock_dto_core(stock_code_or_name: str, db: DatabaseManager) -> ScanRe
     else:
         buy_approval = "🔴 OFF (매수 금지/관망)"
 
-    # Phase 3: 45분봉 Technical State 및 Gate 판정
+    # Phase 3: 30분봉 Technical State 및 Gate 판정
     from src.analysis.technical_gate import TechnicalGate
     is_ft_approved = ("🔵 ON" in buy_approval)
 
-    adx_val = float(res.get("adx_14_45m", 0.0) or 0.0) if res.get("adx_14_45m") is not None else 0.0
-    plus_di = float(res.get("plus_di_45m", 0.0) or 0.0) if res.get("plus_di_45m") is not None else 0.0
-    minus_di = float(res.get("minus_di_45m", 0.0) or 0.0) if res.get("minus_di_45m") is not None else 0.0
+    adx_val = float(res.get("adx_14_30m", 0.0) or 0.0) if res.get("adx_14_30m") is not None else 0.0
+    plus_di = float(res.get("plus_di_30m", 0.0) or 0.0) if res.get("plus_di_30m") is not None else 0.0
+    minus_di = float(res.get("minus_di_30m", 0.0) or 0.0) if res.get("minus_di_30m") is not None else 0.0
     is_obv_dead = bool(res.get("is_obv_dead", False))
-    chaikin_val = float(res.get("chaikin_osc_45m", 0.0) or 0.0) if res.get("chaikin_osc_45m") is not None else 0.0
+    chaikin_val = float(res.get("chaikin_osc_30m", 0.0) or 0.0) if res.get("chaikin_osc_30m") is not None else 0.0
     is_cho_outflow = bool(res.get("is_cho_outflow", False))
-    is_cloud_breakdown = bool(res.get("is_45m_breakdown", False))
+    is_cloud_breakdown = bool(res.get("is_30m_breakdown", False))
 
     tech_state_res = TechnicalGate.evaluate_technical_state(
         data_quality=intraday_quality,
@@ -403,7 +403,7 @@ def _scan_stock_dto_core(stock_code_or_name: str, db: DatabaseManager) -> ScanRe
         buy_rebound_delta=rebound_delta,
         sell_drop_delta=drop_delta,
         obv_dead_date=obv_dead_d,
-        obv_45m_trend=obv_trend,
+        obv_30m_trend=obv_trend,
         daily_cho_recent2=daily_cho,
         intraday_cho_recent2=intraday_cho,
         daily_adx_di_dominance=daily_adx_dom,

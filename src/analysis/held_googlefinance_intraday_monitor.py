@@ -9,7 +9,7 @@
 - 등락률: GOOGLEFINANCE(..., "changepct")/100 서식 반영 (100배 중복 왜곡 방지)
 - DataQuality: 거래정지(SUSPENDED), 결측(DATA_REVIEW), 정상(VALID) 3단계 분기
 - 거래량비: 현재 거래량 / 평균 일거래량 (평균거래량 결측/0 시 NA() 처리)
-- Shadow V1.0, ATR V4, 45M ADD ADVISORY 코어 100% 무영향 독립 사이드카
+- Shadow V1.0, ATR V4, 30M ADD ADVISORY 코어 100% 무영향 독립 사이드카
 """
 
 from pathlib import Path

@@ -1,5 +1,5 @@
 """
-Unit Tests for Phase 1: 45m ADD ADVISORY Sidecar Engine & Storage (WMA9 OBV Signal)
+Unit Tests for Phase 1: 30m ADD ADVISORY Sidecar Engine & Storage (WMA9 OBV Signal)
 Validates all specification points:
 1. VWAP GOLD CROSS detection
 2. VWAP DEAD CROSS detection
@@ -37,13 +37,16 @@ sys.path.insert(0, str(BASE_DIR))
 # Ensure test mode flag
 os.environ["STOCKBOT_TEST_MODE"] = "1"
 
-from src.analysis.add_advisory_engine import AddAdvisory45mEngine
+from src.analysis.add_advisory_engine import AddAdvisory30mEngine
 from src.database.db_manager import DatabaseManager
 
 
 def generate_test_15m_df(num_bars=90, mode="strong"):
     """Generates synthetic 15m OHLCV data for test scenarios"""
-    dates = pd.date_range("2026-08-27 09:00", periods=num_bars, freq="15min")
+    num_bars = (num_bars // 3) * 2
+    full = [t for day in pd.bdate_range("2026-08-20", "2026-08-27")
+            for t in pd.date_range(day+pd.Timedelta(hours=9),periods=24,freq="15min")]
+    dates = pd.DatetimeIndex(full[-num_bars:])
     close_prices = []
     high_prices = []
     low_prices = []
@@ -64,18 +67,16 @@ def generate_test_15m_df(num_bars=90, mode="strong"):
             c = p - 15.0  # Close near low -> negative MFM -> Chaikin falling
             v = 1000.0 + (i * 10.0)
         elif mode == "watch":
-            # VWAP9 > VWAP26 and Chaikin RISING, but OBV < OBV9
-            if i < num_bars - 25:
-                p = base_p - (i * 30.0)
-                v = 5000.0
-            else:
-                p = base_p + ((i - (num_bars - 25)) * 150.0)
-                v = 1000.0  # low volume on rebound so OBV stays below OBV9
-            h = p + 30.0
-            l = p - 10.0
-            c = p + 25.0  # close near high -> Chaikin rising
+            # Uptrend VWAP with a final small down candle: OBV gap contracts
+            # while positive close-location keeps Chaikin rising. This proves
+            # WATCH rather than weakening the STRONG conditions.
+            p = base_p + i*40.0 if i < num_bars-2 else base_p+(num_bars-3)*40.0-10.0
+            h = p+20.0
+            l = p-10.0
+            c = p+15.0
+            v = 1000.0+i*20.0
         elif mode == "gold_cross_0":
-            if i < num_bars - 3:
+            if i < num_bars - 2:
                 p = base_p - 1000.0
             else:
                 p = base_p + 2000.0
@@ -84,7 +85,7 @@ def generate_test_15m_df(num_bars=90, mode="strong"):
             c = p + 40.0
             v = 5000.0
         elif mode == "dead_cross_0":
-            if i < num_bars - 3:
+            if i < num_bars - 2:
                 p = base_p + 1000.0
             else:
                 p = base_p - 2000.0
@@ -113,13 +114,13 @@ def generate_test_15m_df(num_bars=90, mode="strong"):
     }, index=dates)
 
 
-class TestAddAdvisory45m(unittest.TestCase):
+class TestAddAdvisory30m(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.temp_dir.name, "test_stock.db")
         self.db = DatabaseManager(db_path=self.db_path)
         self.mock_analyzer = MagicMock()
-        self.engine = AddAdvisory45mEngine(intraday_analyzer=self.mock_analyzer)
+        self.engine = AddAdvisory30mEngine(intraday_analyzer=self.mock_analyzer)
 
     def tearDown(self):
         try:
@@ -130,7 +131,7 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_01_vwap_gold_cross_detection(self):
         """1. VWAP GOLD CROSS (age 0) 검출"""
         df_15m = generate_test_15m_df(num_bars=90, mode="gold_cross_0")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertEqual(res["data_quality"], "VALID (30 bars)")
@@ -141,7 +142,7 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_02_vwap_dead_cross_detection(self):
         """2. VWAP DEAD CROSS (age 0) 검출"""
         df_15m = generate_test_15m_df(num_bars=90, mode="dead_cross_0")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertEqual(res["vwap_state"], "VWAP_DEAD")
@@ -151,7 +152,7 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_03_cross_age_tracking(self):
         """3. cross_age 1 및 2+ 추적"""
         df_15m = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertEqual(res["vwap_state"], "VWAP_GOLD")
@@ -160,7 +161,7 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_04_obv_gold_state(self):
         """4. OBV GOLD 상태 확인"""
         df_15m = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertIn(res["obv_state"], ["OBV_GOLD", "OBV_GOLD_CROSS"])
@@ -169,7 +170,7 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_05_obv_gap_expanding(self):
         """5. OBV gap EXPANDING 검출"""
         df_15m = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertEqual(res["obv_gap_state"], "EXPANDING")
@@ -178,7 +179,7 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_06_obv_gap_contracting(self):
         """6. OBV gap CONTRACTING 검출"""
         df_15m = generate_test_15m_df(num_bars=90, mode="dead_blocked")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertEqual(res["obv_gap_state"], "CONTRACTING")
@@ -187,19 +188,19 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_07_chaikin_rising_falling(self):
         """7. Chaikin RISING / FALLING 검출"""
         df_strong = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_strong, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_strong, "TEST_15M_BAR_START", "NONE")
         res_strong = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertEqual(res_strong["chaikin_state"], "CHAIKIN_RISING")
 
         df_dead = generate_test_15m_df(num_bars=90, mode="dead_blocked")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_dead, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_dead, "TEST_15M_BAR_START", "NONE")
         res_dead = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertEqual(res_dead["chaikin_state"], "CHAIKIN_FALLING")
 
     def test_08_add_strong_evaluation(self):
         """8. ADD_STRONG 조건 검증"""
         df_15m = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00", technical_state_reference="STRONG")
         self.assertEqual(res["add_advisory_state"], "ADD_STRONG")
@@ -208,7 +209,7 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_09_add_watch_evaluation(self):
         """9. ADD_WATCH 조건 검증"""
         df_15m = generate_test_15m_df(num_bars=90, mode="watch")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00", technical_state_reference="NEUTRAL")
         self.assertEqual(res["add_advisory_state"], "ADD_WATCH")
@@ -216,7 +217,7 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_10_add_blocked_evaluation(self):
         """10. ADD_BLOCKED 조건 검증 (VWAP_DEAD 또는 DAMAGED)"""
         df_15m = generate_test_15m_df(num_bars=90, mode="dead_blocked")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00", technical_state_reference="DAMAGED")
         self.assertEqual(res["add_advisory_state"], "ADD_BLOCKED")
@@ -231,16 +232,16 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_12_duplicate_insert_prevention(self):
         """12. DB 중복 적재 방지 (UNIQUE(stock_code, bar_timestamp))"""
         df_15m = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
 
         # First insert -> True
-        inserted1 = self.db.insert_add_advisory_45m(res)
+        inserted1 = self.db.insert_add_advisory_30m(res)
         self.assertTrue(inserted1)
 
         # Second insert with identical stock_code & bar_timestamp -> False (Ignored)
-        inserted2 = self.db.insert_add_advisory_45m(res)
+        inserted2 = self.db.insert_add_advisory_30m(res)
         self.assertFalse(inserted2)
 
         rows = self.db.get_add_advisories_by_date("2026-08-27")
@@ -249,7 +250,7 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_13_existing_technical_state_immutability(self):
         """13. 기존 technical_state 불변성 보증"""
         df_15m = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00", technical_state_reference="NEUTRAL")
         self.assertEqual(res["technical_state_reference"], "NEUTRAL")
@@ -257,10 +258,10 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_14_existing_scan_journal_immutability(self):
         """14. 기존 scan_journal 불변성 보증"""
         df_15m = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m, "TEST_15M_BAR_START", "NONE")
 
         res = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
-        self.db.insert_add_advisory_45m(res)
+        self.db.insert_add_advisory_30m(res)
 
         journals = self.db.get_latest_scan_journal_for_stock("005930")
         self.assertIsNone(journals)
@@ -300,24 +301,24 @@ class TestAddAdvisory45m(unittest.TestCase):
     def test_18_wma9_obv_gold_and_dead_cross(self):
         """18. WMA9 기준 OBV_GOLD_CROSS 및 OBV_DEAD_CROSS 연산 검증"""
         df_15m_strong = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m_strong, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m_strong, "TEST_15M_BAR_START", "NONE")
         res_strong = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertIn(res_strong["obv_state"], ["OBV_GOLD", "OBV_GOLD_CROSS"])
 
         df_15m_dead = generate_test_15m_df(num_bars=90, mode="dead_blocked")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m_dead, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m_dead, "TEST_15M_BAR_START", "NONE")
         res_dead = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertIn(res_dead["obv_state"], ["OBV_DEAD", "OBV_DEAD_CROSS"])
 
     def test_19_wma9_gap_expanding_and_contracting(self):
         """19. WMA9 기준 OBV gap EXPANDING / CONTRACTING 연산 검증"""
         df_15m_strong = generate_test_15m_df(num_bars=90, mode="strong")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m_strong, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m_strong, "TEST_15M_BAR_START", "NONE")
         res_strong = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertEqual(res_strong["obv_gap_state"], "EXPANDING")
 
         df_15m_dead = generate_test_15m_df(num_bars=90, mode="dead_blocked")
-        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m_dead, "MOCK_SOURCE", "NONE")
+        self.mock_analyzer.fetch_canonical_15m_data.return_value = (df_15m_dead, "TEST_15M_BAR_START", "NONE")
         res_dead = self.engine.evaluate_stock_advisory("005930", "2026-08-27", "2026-08-27 15:00:00")
         self.assertEqual(res_dead["obv_gap_state"], "CONTRACTING")
 

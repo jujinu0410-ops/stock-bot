@@ -318,10 +318,10 @@ class TestPhase2RiskEngine(unittest.TestCase):
         self.assertIn("[분할매수 감시 가이드 (참고용)]", md)
         # 3) 3차 상승확인 추매 명칭
         self.assertIn("3차 상승확인 추매", md)
-        # 4) 45분봉 Technical Gate & State
-        self.assertIn("• 45분봉 Technical State: UNKNOWN", md)
-        self.assertIn("• 45분봉 Technical Gate: BUY_BLOCKED", md)
-        self.assertIn("• 45분봉 데이터 품질: 🟡 PARTIAL (일부 지표 계산용 분봉 데이터 부족)", md)
+        # 4) 30분봉 Technical Gate & State
+        self.assertIn("• 30분봉 Technical State: UNKNOWN", md)
+        self.assertIn("• 30분봉 Technical Gate: BUY_BLOCKED", md)
+        self.assertIn("• 30분봉 데이터 품질: 🟡 PARTIAL (일부 지표 계산용 분봉 데이터 부족)", md)
         # 5) Gemini 사용 질문 자동 변경 (매수 차단 사유 및 재평가 조건 분석)
         self.assertIn("이 종목이 매수 차단(BUY_BLOCKED)된 구체적 사유와 향후 매수 승인 전환을 위한 재평가 조건을 분석해 줘", md)
         self.assertNotIn("키움 트레일링 매수/매도 설정가와 수량 비중 가이드를 요약해 줘", md)
@@ -349,7 +349,7 @@ class TestPhase2RiskEngine(unittest.TestCase):
             candidate_stop_price=72750,
             buy_rebound_delta=750,
             sell_drop_delta=1200,
-            intraday_data_quality="🟢 VALID (45분봉 전 지표 정상 산출)",
+            intraday_data_quality="🟢 VALID (30분봉 전 지표 정상 산출)",
             technical_state="STRONG",
             technical_action="BUY_ALLOWED",
             technical_gate_summary="+DI 우위 / OBV 매집 / CHO 유입",
@@ -362,9 +362,9 @@ class TestPhase2RiskEngine(unittest.TestCase):
         self.assertIn("[분할매수 감시 가이드]:", md)
         # 2) 3차 상승확인 추매 명칭
         self.assertIn("3차 상승확인 추매", md)
-        # 3) 45분봉 Technical Gate & State
-        self.assertIn("• 45분봉 Technical State: STRONG (+DI 우위 / OBV 매집 / CHO 유입)", md)
-        self.assertIn("• 45분봉 Technical Gate: BUY_ALLOWED", md)
+        # 3) 30분봉 Technical Gate & State
+        self.assertIn("• 30분봉 Technical State: STRONG (+DI 우위 / OBV 매집 / CHO 유입)", md)
+        self.assertIn("• 30분봉 Technical Gate: BUY_ALLOWED", md)
         # 4) Gemini 사용 질문 (키움 트레일링 매수/매도 설정가 요약)
         self.assertIn("이 종목의 키움 트레일링 매수/매도 설정가와 수량 비중 가이드를 요약해 줘", md)
         self.assertNotIn("매수 비승인(OFF)된 구체적 사유", md)

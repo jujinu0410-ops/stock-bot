@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 import pandas as pd
 import numpy as np
-from src.analysis.intraday_analysis import Intraday45mAnalyzer
+from src.analysis.intraday_analysis import Intraday30mAnalyzer
 from src.analysis.technical_gate import TechnicalGate
 from src.core.dto import ScanResultDTO
 from src.formatters.gems_formatter import render_gems_markdown
@@ -13,7 +13,7 @@ class TestPhase31DataLineage(unittest.TestCase):
     """
 
     def setUp(self):
-        self.analyzer = Intraday45mAnalyzer()
+        self.analyzer = Intraday30mAnalyzer()
 
     def test_01_intraday_missing_data_explicit_error_code(self):
         """1. 결측값 정책: 데이터 부재 시 0이나 [0,0]으로 위장하지 않고 None 및 명시적 에러 코드 반환"""
@@ -22,11 +22,11 @@ class TestPhase31DataLineage(unittest.TestCase):
             "fetch_canonical_15m_data",
             return_value=(None, "NONE", "NO_INTRADAY_DATA"),
         ):
-            res = self.analyzer.analyze_45m_indicators("999999")
-        self.assertFalse(res["has_45m_data"])
+            res = self.analyzer.analyze_30m_indicators("999999")
+        self.assertFalse(res["has_30m_data"])
         self.assertIn("INVALID", res["intraday_quality"])
         self.assertEqual(res["intraday_error_code"], "NO_INTRADAY_DATA")
-        self.assertIsNone(res["adx_14_45m"])
+        self.assertIsNone(res["adx_14_30m"])
         self.assertIsNone(res["intraday_cho_recent2"])
 
     def test_02_prompt_branching_buy_allowed(self):
@@ -81,7 +81,7 @@ class TestPhase31DataLineage(unittest.TestCase):
             technical_state="UNKNOWN"
         )
         md_data = render_gems_markdown(dto_data)
-        self.assertIn("• 현재 실행 가능 주문: 🔴 NONE (45분봉 데이터 확인 필요 / 현재 주문 금지 - BUY_WAIT_DATA)", md_data)
+        self.assertIn("• 현재 실행 가능 주문: 🔴 NONE (30분봉 데이터 확인 필요 / 현재 주문 금지 - BUY_WAIT_DATA)", md_data)
         self.assertIn("이 종목의 1차 진입 대기(BUY_WAIT) 사유와 향후 진입 승인 전환을 위한 분봉/수급 재확인 조건을 분석해 줘", md_data)
 
     def test_05_prompt_branching_buy_blocked(self):
@@ -118,9 +118,9 @@ class TestPhase31DataLineage(unittest.TestCase):
         md = render_gems_markdown(dto)
         self.assertIn("• 일봉 Chaikin(13,26) 최근 2봉: [-1000, -2000]", md)
         self.assertIn("• 일봉 ADX +DI/-DI 우세방향: +DI: 30.0 / -DI: 15.0 (+DI우세)", md)
-        self.assertIn("• 45m Chaikin(13,26) 최근 2봉: [5000, 8000]", md)
-        self.assertIn("• 45m ADX +DI/-DI: +DI: 35.0 / -DI: 10.0 (ADX 45.0, +DI우세)", md)
-        self.assertIn("• 45분봉 데이터 품질: 🟢 VALID (40봉 정상 산출) [출처: YFINANCE_15M (005930.KS) | 40봉]", md)
+        self.assertIn("• 30m Chaikin(13,26) 최근 2봉: [5000, 8000]", md)
+        self.assertIn("• 30m ADX +DI/-DI: +DI: 35.0 / -DI: 10.0 (ADX 45.0, +DI우세)", md)
+        self.assertIn("• 30분봉 데이터 품질: 🟢 VALID (40봉 정상 산출) [출처: YFINANCE_15M (005930.KS) | 40봉]", md)
 
 if __name__ == '__main__':
     unittest.main()

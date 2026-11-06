@@ -163,3 +163,27 @@ class KRXCalendar:
             if s_name == slot_name:
                 return (s_name, b_start, b_end)
         return None
+
+
+# The 45m table above is archived compatibility only. Active M30 consumers use
+# this exact 12-slot schedule; this module does not install any scheduler.
+COMPLETED_30M_BAR_SCHEDULE = [
+    (f"{(570+i*30)//60:02d}:{(570+i*30)%60:02d}",
+     time((570+i*30)//60, (570+i*30)%60),
+     f"{(540+i*30)//60:02d}:{(540+i*30)%60:02d}",
+     f"{(570+i*30)//60:02d}:{(570+i*30)%60:02d}") for i in range(12)
+]
+def _completed_30m(cls, dt_input):
+    if dt_input.tzinfo is not None:
+        from zoneinfo import ZoneInfo
+        dt_input = dt_input.astimezone(ZoneInfo("Asia/Seoul"))
+    if not cls.is_krx_trading_day(dt_input.date()): return None
+    for slot, end, start_text, end_text in reversed(COMPLETED_30M_BAR_SCHEDULE):
+        if dt_input.time() >= end: return (slot, start_text, end_text)
+    return None
+KRXCalendar.get_completed_30m_bar = classmethod(_completed_30m)
+def _expected_30m(cls, slot_name):
+    for slot, _, start, end in COMPLETED_30M_BAR_SCHEDULE:
+        if slot == slot_name:return (slot,start,end)
+    return None
+KRXCalendar.get_expected_30m_bar_for_slot = classmethod(_expected_30m)

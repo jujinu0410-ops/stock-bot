@@ -1,11 +1,11 @@
-"""Tests for the research-only SellWarning 45m historical replay harness."""
+"""Tests for the research-only SellWarning 30m historical replay harness."""
 
 import unittest
 
 import numpy as np
 import pandas as pd
 
-from scripts.replay_sell_warning_45m import (
+from scripts.replay_sell_warning_30m import (
     attach_forward_outcomes,
     build_episodes,
     completed_cutoffs,
@@ -29,12 +29,12 @@ def market_frame(days=5):
     }, index=index)
 
 
-class TestSellWarning45mReplay(unittest.TestCase):
+class TestSellWarning30mReplay(unittest.TestCase):
     SOURCE = "TEST_15M_BAR_START"
 
     def test_01_future_data_does_not_change_point_in_time_signal(self):
         baseline_raw = market_frame()
-        cutoff = pd.Timestamp("2026-09-10 11:15:00")
+        cutoff = pd.Timestamp("2026-09-10 11:00:00")
         changed_raw = baseline_raw.copy()
         future_mask = changed_raw.index >= cutoff
         changed_raw.loc[future_mask, "Close"] *= 2.0
@@ -61,14 +61,14 @@ class TestSellWarning45mReplay(unittest.TestCase):
         frame = market_frame(days=1)
         frame = frame.drop(pd.Timestamp("2026-09-07 14:30:00"))
         cutoffs = completed_cutoffs(frame, self.SOURCE)
-        self.assertIn(pd.Timestamp("2026-09-07 14:15:00"), cutoffs)
+        self.assertIn(pd.Timestamp("2026-09-07 14:30:00"), cutoffs)
         self.assertNotIn(pd.Timestamp("2026-09-07 15:00:00"), cutoffs)
 
     def test_03_consecutive_states_collapse_to_one_episode(self):
         events = pd.DataFrame({
             "stock_code": ["004960"] * 5,
             "stock_name": ["한신공영"] * 5,
-            "bar_timestamp": pd.date_range("2026-09-07 09:45", periods=5, freq="45min").astype(str),
+            "bar_timestamp": pd.date_range("2026-09-07 09:45", periods=5, freq="30min").astype(str),
             "state": ["NORMAL", "NORMAL", "CAUTION", "CAUTION", "SELL_WARNING"],
             "close": [100.0, 101.0, 99.0, 98.0, 95.0],
         })
@@ -81,8 +81,8 @@ class TestSellWarning45mReplay(unittest.TestCase):
         day1 = pd.date_range("2026-09-07 09:00", periods=24, freq="15min")
         day2 = pd.date_range("2026-09-08 09:00", periods=24, freq="15min")
         day1_close = [100.0] * 24
-        day1_close[5] = 102.0
-        day1_close[8] = 104.0
+        day1_close[3] = 102.0
+        day1_close[7] = 104.0
         raw = pd.DataFrame({
             "Open": [100.0] * 24 + [105.0] * 24,
             "High": [value + 1.0 for value in day1_close] + [112.0] * 24,
@@ -92,13 +92,13 @@ class TestSellWarning45mReplay(unittest.TestCase):
         }, index=day1.append(day2))
         events = pd.DataFrame({
             "bar_timestamp": [
-                "2026-09-07 09:45:00", "2026-09-07 10:30:00", "2026-09-07 11:15:00"
+                "2026-09-07 09:30:00", "2026-09-07 10:00:00", "2026-09-07 10:30:00"
             ],
             "close": [100.0, 102.0, 104.0],
         })
         measured = attach_forward_outcomes(events, raw)
         first = measured.iloc[0]
-        self.assertAlmostEqual(first["return_next_45m_pct"], 2.0)
+        self.assertAlmostEqual(first["return_next_30m_pct"], 2.0)
         self.assertAlmostEqual(first["return_next_90m_pct"], 4.0)
         self.assertAlmostEqual(first["return_day_close_pct"], 0.0)
         self.assertAlmostEqual(first["return_next_open_pct"], 5.0)
@@ -110,7 +110,7 @@ class TestSellWarning45mReplay(unittest.TestCase):
         events = replay_stock("004960", "한신공영", market_frame(days=1), self.SOURCE)
         self.assertFalse(events.empty)
         self.assertEqual(set(events["state"]), {"UNKNOWN"})
-        self.assertTrue(events["reason_codes"].str.contains("INSUFFICIENT_COMPLETED_45M_BARS").all())
+        self.assertTrue(events["reason_codes"].str.contains("INSUFFICIENT_COMPLETED_30M_BARS").all())
 
 
 if __name__ == "__main__":

@@ -700,20 +700,20 @@ class PortfolioManager:
                 display_exit_tick = kiwoom_exit_tick
                 auto_order_enabled = True
 
-            # 11. 45분봉 수급 지표 수집
+            # 11. 30분봉 수급 지표 수집
             try:
-                from src.analysis.intraday_analysis import Intraday45mAnalyzer
-                intra_analyzer = Intraday45mAnalyzer()
-                intra_res = intra_analyzer.analyze_45m_indicators(code)
+                from src.analysis.intraday_analysis import Intraday30mAnalyzer
+                intra_analyzer = Intraday30mAnalyzer()
+                intra_res = intra_analyzer.analyze_30m_indicators(code)
             except Exception as e_intra:
-                logger.error(f"45분봉 지표 수집 실패 ({code}): {e_intra}")
+                logger.error(f"30분봉 지표 수집 실패 ({code}): {e_intra}")
                 intra_res = {
-                    "adx_14_45m": 0.0, "plus_di_45m": 0.0, "minus_di_45m": 0.0,
-                    "obv_45m": 0, "obv_45m_trend": "미수집", "chaikin_osc_45m": 0,
-                    "chaikin_flow_45m": "미수집", "signal_45m_text": "대기",
+                    "adx_14_30m": 0.0, "plus_di_30m": 0.0, "minus_di_30m": 0.0,
+                    "obv_30m": 0, "obv_30m_trend": "미수집", "chaikin_osc_30m": 0,
+                    "chaikin_flow_30m": "미수집", "signal_30m_text": "대기",
                     "intraday_cho_recent2": [0, 0], "intraday_cho_is_subzero_2bars": False,
-                    "intraday_cho_note": "", "is_45m_breakdown": False,
-                    "is_obv_dead": False, "is_cho_outflow": False, "is_45m_bearish_2plus": False
+                    "intraday_cho_note": "", "is_30m_breakdown": False,
+                    "is_obv_dead": False, "is_cho_outflow": False, "is_30m_bearish_2plus": False
                 }
 
             # 12. DB 업데이트 (V4 30개 필드 영속 저장)
@@ -857,7 +857,11 @@ class PortfolioManager:
                 "is_etf": is_etf,
                 "f_score_confirmed": f_confirmed,
 
-                # 45분봉 상세
+                # Verified completed-bar provenance; never use execution time.
+                "completed_30m_timestamp": intra_res.get("completed_30m_timestamp"),
+                "intraday_last_timestamp": intra_res.get("intraday_last_timestamp", "N/A"),
+                "intraday_data_quality": intra_res.get("intraday_quality", "UNKNOWN"),
+                # 30분봉 상세
                 "obv_dead_date": tech_eval.get("obv_dead_date", "N/A"),
                 "obv_dead_elapsed_days": tech_eval.get("obv_dead_elapsed_days", 0),
                 "daily_cho_recent2": tech_eval.get("daily_cho_recent2", [0, 0]),
@@ -867,22 +871,21 @@ class PortfolioManager:
                 "is_tier3_sell_a": tech_eval.get("is_tier3_sell_a", False),
                 "is_tier3_sell_b": tech_eval.get("is_tier3_sell_b", False),
                 "is_tier3_sell": tech_eval.get("is_tier3_sell", False),
-                "adx_14_45m": intra_res.get("adx_14_45m", 0.0),
-                "plus_di_45m": intra_res.get("plus_di_45m", 0.0),
-                "minus_di_45m": intra_res.get("minus_di_45m", 0.0),
-                "obv_45m": intra_res.get("obv_45m", 0),
-                "obv_45m_trend": intra_res.get("obv_45m_trend", "미수집"),
-                "chaikin_osc_45m": intra_res.get("chaikin_osc_45m", 0),
-                "chaikin_flow_45m": intra_res.get("chaikin_flow_45m", "미수집"),
+                "adx_14_30m": intra_res.get("adx_14_30m", 0.0),
+                "plus_di_30m": intra_res.get("plus_di_30m", 0.0),
+                "minus_di_30m": intra_res.get("minus_di_30m", 0.0),
+                "obv_30m": intra_res.get("obv_30m", 0),
+                "obv_30m_trend": intra_res.get("obv_30m_trend", "미수집"),
+                "chaikin_osc_30m": intra_res.get("chaikin_osc_30m", 0),
+                "chaikin_flow_30m": intra_res.get("chaikin_flow_30m", "미수집"),
                 "intraday_cho_recent2": intra_res.get("intraday_cho_recent2", [0, 0]),
                 "intraday_cho_is_subzero_2bars": intra_res.get("intraday_cho_is_subzero_2bars", False),
                 "intraday_cho_note": intra_res.get("intraday_cho_note", ""),
-                "is_45m_breakdown": intra_res.get("is_45m_breakdown", False),
+                "is_30m_breakdown": intra_res.get("is_30m_breakdown", False),
                 "is_obv_dead": intra_res.get("is_obv_dead", False),
                 "is_cho_outflow": intra_res.get("is_cho_outflow", False),
-                "is_45m_bearish_2plus": intra_res.get("is_45m_bearish_2plus", False),
-                "completed_45m_timestamp": intra_res.get("completed_45m_timestamp"),
-                "signal_45m_text": intra_res.get("signal_45m_text", "대기"),
+                "is_30m_bearish_2plus": intra_res.get("is_30m_bearish_2plus", False),
+                "signal_30m_text": intra_res.get("signal_30m_text", "대기"),
                 "action_status": "안정 보유 (홀딩)",
                 "reason": analysis.get("reason", "분석 데이터 정상") if analysis else "데이터 부족"
             })
@@ -942,8 +945,8 @@ class PortfolioManager:
             is_minus_di_dominant = item.get("is_minus_di_dominant", False)
             adx_note = " (ADX -DI우세 확인)" if is_minus_di_dominant else " (ADX 방향 불일치, 참고)"
             intraday_cho_note = item.get("intraday_cho_note", "")
-            is_45m_bearish_2plus = item.get("is_45m_bearish_2plus", False)
-            is_45m_breakdown = item.get("is_45m_breakdown", False)
+            is_30m_bearish_2plus = item.get("is_30m_bearish_2plus", False)
+            is_30m_breakdown = item.get("is_30m_breakdown", False)
             is_cho_outflow = item.get("is_cho_outflow", False)
             is_stop_breached_item = item.get("is_stop_breached", False)
 
@@ -967,10 +970,10 @@ class PortfolioManager:
             elif weight_pct > self.config["max_position_weight_pct"]:
                 if is_tier3_sell:
                     item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + 🚨 매도조건 충족 (추매금지/보유)"
-                elif is_45m_breakdown:
-                    item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + 🚨 45m 이중수급이탈 (추매금지/보유)"
+                elif is_30m_breakdown:
+                    item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + 🚨 30m 이중수급이탈 (추매금지/보유)"
                 elif is_cho_outflow:
-                    item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + ⚠️ 45m CHO유출 (추매금지/보유)"
+                    item["action_status"] = f"⚠️ 비중과다({weight_pct}%) + ⚠️ 30m CHO유출 (추매금지/보유)"
                 else:
                     item["action_status"] = f"⚠️ 비중과다({weight_pct}%) 집중위험 (추매금지/보유)"
             elif is_tier3_sell:
@@ -981,10 +984,10 @@ class PortfolioManager:
                 and item.get("data_validity_flag", 1) == 1
                 and item.get("auto_order_enabled", True)
                 and trade_mode == "NORMAL"
-                and is_45m_bearish_2plus
+                and is_30m_bearish_2plus
                 and item["t_score"] >= 50.0
             ):
-                item["action_status"] = "🎯 45m 눌림목 분할매수"
+                item["action_status"] = "🎯 30m 눌림목 분할매수"
             else:
                 item["action_status"] = "🟢 계속 보유/홀딩"
 
