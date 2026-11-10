@@ -166,6 +166,14 @@ function umDirectionContext_M30(result,now) {
     m30_vwap9_dir:verified?String(m.vwap9_dir||''):'',completed_bar:verified?bar:'',
     source:verified?m.source:'',observed_at:now.toISOString(),relation:relation,caption:caption};
 }
+function umDailyVwap9Gate_M30(result,now) {
+  const r=result||{},tech=r.technical||{},ctx=umDirectionContext_M30(r,now);
+  const price=Number(r.live_price),vwap9=Number(tech.vwap9);
+  const quoteValid=r.ok===true&&r.session==='KRX_SESSION'&&
+    r.live_price_source==='KIWOOM_KA10001'&&isFinite(price)&&price>0;
+  const valid=ctx.daily_basis==='COMPLETED_DAILY'&&quoteValid&&isFinite(vwap9)&&vwap9>0;
+  return {valid:valid,qualified:valid&&price>vwap9,price:price,vwap9:vwap9,as_of:ctx.daily_as_of||''};
+}
 function umLiveDirection_M30(result,now) {
   const r=result||{},ctx=umDirectionContext_M30(r,now);
   const official=ctx.daily_basis==='COMPLETED_DAILY';
@@ -256,6 +264,8 @@ function umPlan_M30(item,result,old,now) {
     basis:provisional.basis||'',as_of:provisional.as_of||'',
     regime:provisional.regime||'',stage:provisional.stage||'',volume_scaled:false};
   state.lastResult.directionContext=umDirectionContext_M30(result,now);
+  const dailyVwap9Gate=umDailyVwap9Gate_M30(result,now);
+  state.lastResult.dailyVwap9Gate=dailyVwap9Gate;
   if(item.stop_price&&result.live_price>item.stop_price) {
     if(state.lastStopAt||(state.sent&&state.sent.STOP_BREACH)||state.stopBreachSeq) {
       state.stopRecovered=true;
@@ -263,6 +273,10 @@ function umPlan_M30(item,result,old,now) {
   }
   const candidates=[];
   if(result.send_allowed===true)(result.events||[]).forEach(function(e){
+    // Every bullish event requires the latest completed daily VWAP9 gate.
+    // Missing/stale/provisional daily evidence is fail-closed; risk/down events
+    // deliberately bypass this bullish-only filter.
+    if((e.key==='BUY_SETUP'||e.key==='BUY_CONFIRMED')&&!dailyVwap9Gate.qualified)return;
     // One shared calculation, source-aware notifications only:
     // HELD -> both directions / stop / OBV risk; market ETFs -> both directions;
     // all other watchlists keep their BUY-only policy.
@@ -358,10 +372,15 @@ function umPlan_M30(item,result,old,now) {
     price===state.vwap30Price||(state.vwap30Vwap9!=null&&price<=state.vwap30Vwap9)
   );
   const freshCross=previouslySeen&&comparable&&!wasStacked&&stacked&&!isDataCorrectionCross;
+  // If M30 alignment formed below daily VWAP9, emit only when price later
+  // crosses above daily VWAP9 while the same verified M30 stack remains valid.
+  const dailyGateCross=previouslySeen&&comparable&&wasStacked&&stacked&&
+    state.vwap30DailyGateInitialized===true&&state.vwap30DailyQualified===false&&dailyVwap9Gate.qualified;
+  const freshBullishStack=(freshCross&&dailyVwap9Gate.qualified)||dailyGateCross;
   const isBuyStage=stage==='BUY_SETUP'||stage==='BUY_CONFIRMED';
-  const buyGateOK=!isBuyStage||(result.send_allowed===true&&jev.status==='OK'&&jev.decision==='SEND');
+  const buyGateOK=!isBuyStage||(result.send_allowed===true&&jev.status==='OK'&&jev.decision==='SEND'&&dailyVwap9Gate.qualified);
   const firstStrong=stage==='BUY_CONFIRMED'&&result.send_allowed===true&&state.count===1&&
-    jev.status==='OK'&&jev.decision==='SEND'&&stacked;
+    jev.status==='OK'&&jev.decision==='SEND'&&stacked&&dailyVwap9Gate.qualified;
   const unsafe=stage==='RISK'||(item.stop_price&&price<=item.stop_price)||
     (result.reasons||[]).some(x=>/ABOVE_OVERHEAT_LIMIT|RECENT_1M_WEAKENING|LIVE_MINUTES_UNAVAILABLE_OR_STALE/.test(String(x)));
 
@@ -375,16 +394,20 @@ function umPlan_M30(item,result,old,now) {
     state.vwap30Vwap9=v9;
     state.vwap30Vwap26=v26;
     state.vwap30Watermark=currentWatermark;
+    state.vwap30DailyGateInitialized=true;
+    state.vwap30DailyGateValid=dailyVwap9Gate.valid;
+    state.vwap30DailyQualified=dailyVwap9Gate.qualified;
     state.vwap30LastChecked=now.toISOString();
   }
 
-  // Evaluate new ▲ Uptrend Confirmation condition (Simulation only, never email/order)
+  // Diagnostic confirmation uses only the two user-required factors:
+  // verified M30 alignment + live price above the latest completed daily VWAP9.
   const tech=result.technical||{};
   const dailyVwap9=Number(tech.vwap9);
   const prevHigh=Number(tech.prev_high);
-  const priceGtDailyVwap9=isFinite(dailyVwap9)&&dailyVwap9>0&&price>dailyVwap9;
+  const priceGtDailyVwap9=dailyVwap9Gate.qualified;
   const priceGtPrevHigh=isFinite(prevHigh)&&prevHigh>0&&price>prevHigh;
-  const bullConfirmedSim=stacked&&priceGtDailyVwap9&&priceGtPrevHigh;
+  const bullConfirmedSim=stacked&&priceGtDailyVwap9;
 
   const obsTime=now.toISOString();
   const dailyAsOf=tech.as_of||obsTime;
@@ -398,6 +421,7 @@ function umPlan_M30(item,result,old,now) {
       price_as_of: obsTime,
       daily_vwap9: dailyVwap9,
       daily_vwap9_as_of: dailyAsOf,
+      price_gt_prev_high: priceGtPrevHigh,
       prev_high: prevHigh,
       prev_high_as_of: prevHighAsOf,
       m30_vwap9: v9,
@@ -408,7 +432,7 @@ function umPlan_M30(item,result,old,now) {
     };
     result.sim_bull_confirmed = Object.assign({qualified: true}, state.simBullConfirmed);
     if(Array.isArray(result.reasons) && !result.reasons.some(r=>String(r).startsWith('SIM_BULL_CONFIRMED:'))) {
-      result.reasons.push('SIM_BULL_CONFIRMED:P='+price+'@'+obsTime+'>DV9='+dailyVwap9+'@'+dailyAsOf+'>PHIGH='+prevHigh+'@'+(prevHighAsOf||'COMPLETED')+';SLOPE='+Number(m30.vwap9_slope||0)+'('+String(m30.vwap9_dir||'')+')');
+      result.reasons.push('SIM_BULL_CONFIRMED:P='+price+'@'+obsTime+'>DV9='+dailyVwap9+'@'+dailyAsOf+';SLOPE='+Number(m30.vwap9_slope||0)+'('+String(m30.vwap9_dir||'')+')');
     }
   } else {
     result.sim_bull_confirmed = {
@@ -419,9 +443,9 @@ function umPlan_M30(item,result,old,now) {
       price_as_of: obsTime,
       stacked_m30: stacked,
       price_gt_daily_vwap9: priceGtDailyVwap9,
-      price_gt_prev_high: priceGtPrevHigh,
       daily_vwap9: dailyVwap9,
       daily_vwap9_as_of: dailyAsOf,
+      price_gt_prev_high: priceGtPrevHigh,
       prev_high: prevHigh,
       prev_high_as_of: prevHighAsOf,
       m30_vwap9: v9,
@@ -431,11 +455,11 @@ function umPlan_M30(item,result,old,now) {
       completed_bar: currentBar
     };
   }
-  if((freshCross||firstStrong)&&buyGateOK&&!unsafe&&
+  if((freshBullishStack||firstStrong)&&buyGateOK&&!unsafe&&
     candidates.length===0&&
     !state.sent[earlyKey]&&!state.sent.BUY_SETUP&&!state.sent.BUY_CONFIRMED) {
     candidates.push({key:earlyKey,stage:'WATCH',level:1,
-      reason:'30분봉 정배열 신규 포착 · 현재가 > VWAP9 > VWAP26 · MTS 확인용',
+      reason:'30분봉 정배열 + 현재가의 일봉 VWAP9 상회 확인 · MTS 확인용',
       stateKey:earlyKey});
   }
   return {item:item,result:result,state:state,events:candidates};

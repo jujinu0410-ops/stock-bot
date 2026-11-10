@@ -2141,7 +2141,7 @@ def unified_scan_batch() -> Any:
             wire = {key: result[key] for key in keys if key in result}
             if isinstance(result.get("technical"), dict):
                 wire["technical"] = {key: result["technical"][key] for key in
-                    ("basis", "as_of", "regime", "stage", "provisional") if key in result["technical"]}
+                    ("basis", "as_of", "vwap9", "regime", "stage", "provisional") if key in result["technical"]}
             # Existing m30 wire shape stays unchanged. Paper consumers receive
             # full validation evidence through a separate additive field.
             if isinstance(result.get("paper_data"), dict):

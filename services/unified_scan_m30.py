@@ -130,6 +130,38 @@ def number(value):
 
 
 
+def daily_vwap9_gate(price, daily, now):
+    """Require live price above the latest completed daily 9-session VWAP.
+
+    The official daily indicator is based only on completed sessions. The
+    incomplete current-day daily bar and provisional indicators are never used.
+    """
+    vwap9 = number((daily or {}).get("vwap9"))
+    if not number(price) or not vwap9 or (daily or {}).get("basis") != "COMPLETED_DAILY":
+        return False
+    as_of = str((daily or {}).get("as_of") or "")
+    try:
+        stamp = datetime.strptime(as_of, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return False
+    return stamp.strftime("%H:%M:%S") == "15:30:00" and stamp.date() < now.date() and float(price) > vwap9
+
+
+def apply_daily_vwap9_gate(stage, price, daily, now):
+    """Fail closed for all bullish stages; preserve WATCH and downside/risk stages."""
+    passed = daily_vwap9_gate(price, daily, now)
+    if stage in BUY_STAGES and not passed:
+        return "WATCH", False
+    return stage, passed
+
+
+def m30_bullish_qualification(price, m30, daily, now):
+    p, v9, v26 = number(price), number((m30 or {}).get("vwap9")), number((m30 or {}).get("vwap26"))
+    stacked = bool((m30 or {}).get("available") is True and (m30 or {}).get("gold") is True
+                   and p and v9 and v26 and p > v9 > v26)
+    return stacked, bool(stacked and daily_vwap9_gate(p, daily, now))
+
+
 def previous_day(now):
 
     day = now.date() - timedelta(days=1)
@@ -855,6 +887,14 @@ def scan(payload, service, now=None):
 
             stage = "BUY_SETUP"
 
+    # Final source-side bullish filter, after the inverse early-observation
+    # exception: no BUY_SETUP/BUY_CONFIRMED may pass below or without the
+    # latest completed daily VWAP9. Downside and risk events are untouched.
+    pre_gate_stage = stage
+    stage, daily_vwap9_passed = apply_daily_vwap9_gate(stage, price, daily, now)
+    if pre_gate_stage in BUY_STAGES and not daily_vwap9_passed:
+        reasons.append("DAILY_VWAP9_GATE_CLOSED")
+
     if stage != "WATCH" and price:
 
         event_reason = ("인버스 시장상승조짐(실시간 기초지수 하락 확인·매수확인 아님·추격주의)"
@@ -935,17 +975,17 @@ def scan(payload, service, now=None):
 
                 reasons.append("JEV_BUY_HOLD:" + str(gate.get("reason")))
 
-    stacked_m30 = bool(m30.get("available") and m30.get("gold") and price and m30.get("vwap9") and m30.get("vwap26") and price > m30["vwap9"] > m30["vwap26"])
+    stacked_m30, gt_daily_v9 = m30_bullish_qualification(price, m30, daily, now)
 
     daily_v9 = daily.get("vwap9")
 
     prev_high_val = daily.get("prev_high")
 
-    gt_daily_v9 = bool(price and daily_v9 and price > daily_v9)
-
     gt_prev_high = bool(price and prev_high_val and price > prev_high_val)
 
-    bull_confirmed_sim = bool(stacked_m30 and gt_daily_v9 and gt_prev_high)
+    # Previous-day high is retained as context only; the user's required
+    # bullish confirmation is M30 alignment + current price > daily VWAP9.
+    bull_confirmed_sim = bool(stacked_m30 and gt_daily_v9)
 
     sim_data = {
 
@@ -954,6 +994,9 @@ def scan(payload, service, now=None):
         "stacked_m30": stacked_m30,
 
         "price_gt_daily_vwap9": gt_daily_v9,
+
+        "daily_vwap9_gate": {"qualified": gt_daily_v9, "basis": daily.get("basis"),
+                             "as_of": daily.get("as_of")},
 
         "price_gt_prev_high": gt_prev_high,
 
@@ -981,9 +1024,9 @@ def scan(payload, service, now=None):
 
     if bull_confirmed_sim:
 
-        reasons.append("SIM_BULL_CONFIRMED:P=%s>DV9=%s>PHIGH=%s;SLOPE=%s(%s)" % (
+        reasons.append("SIM_BULL_CONFIRMED:P=%s>DV9=%s;SLOPE=%s(%s)" % (
 
-            price, daily_v9, prev_high_val, m30.get("vwap9_slope", 0.0), m30.get("vwap9_dir", "FLAT")
+            price, daily_v9, m30.get("vwap9_slope", 0.0), m30.get("vwap9_dir", "FLAT")
 
         ))
 
