@@ -252,6 +252,30 @@ function reclaimExpiredRowsV8_(sheet, todayKey) {
   const last = sheet.getLastRow();
   if (last < YC.DATA_START_ROW) return 'LIFECYCLE_EMPTY';
   const rows = sheet.getRange(YC.DATA_START_ROW,1,last-YC.DATA_START_ROW+1,7).getValues();
+  // Do not remove the only active/observation row until the final outcome
+  // has been written to MENTION_HISTORY, even when market data arrives late.
+  const dueKeys = new Set();
+  rows.forEach(function(r) {
+    const code = normalizeCandidateCode_(r[3]);
+    const mention = ymdFromAnyV8_(r[5]);
+    if (code && mention && ycv11LifecycleStateFromAge_(ycv11AgeFromSessions_(mention,sessions)) === 'EXPIRED') {
+      dueKeys.add(ycv11EventKey_(code,mention));
+    }
+  });
+  const complete = new Set();
+  if (dueKeys.size) {
+    const history = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(YCV11.HISTORY_SHEET);
+    if (history && history.getLastRow() >= 2) {
+      const len = history.getLastRow() - 1;
+      const keys = history.getRange(2,1,len,1).getDisplayValues();
+      const statuses = history.getRange(2,19,len,1).getDisplayValues();
+      keys.forEach(function(v,i) {
+        if (dueKeys.has(String(v[0] || '')) && /^COMPLETED/.test(String(statuses[i][0] || ''))) {
+          complete.add(String(v[0]));
+        }
+      });
+    }
+  }
   let observed = 0, cleared = 0;
   rows.forEach(function(r,i) {
     const code = normalizeCandidateCode_(r[3]);
@@ -266,10 +290,10 @@ function reclaimExpiredRowsV8_(sheet, todayKey) {
     const age = ycv11AgeFromSessions_(mentionDate,sessions);
     const state = String(r[0] || '').trim().toUpperCase();
     const lifecycle = ycv11LifecycleStateFromAge_(age);
-    if (lifecycle === 'EXPIRED') {
+    if (lifecycle === 'EXPIRED' && complete.has(ycv11EventKey_(code,mentionDate))) {
       clearCandidatePayloadV8_(sheet,rowNumber);
       cleared++;
-    } else if (lifecycle === 'OBSERVATION' && state === 'Y') {
+    } else if ((lifecycle === 'OBSERVATION' || lifecycle === 'EXPIRED') && state === 'Y') {
       sheet.getRange(rowNumber,1).setValue('E');
       observed++;
     }
@@ -413,8 +437,11 @@ function ycv11ProcessDueEvaluationsV11_(history, sessions) {
     const legacyD20 = String(r[17] || '') === 'LEGACY_NOT_CAPTURED';
     const missingD10 = String(r[12] || '') === 'PRICE_MISSING';
     const missingD20 = String(r[17] || '') === 'PRICE_MISSING';
-    const need10 = age >= 10 && !r[9] && !legacyD10 && !missingD10;
-    const need20 = age >= 20 && !r[14] && !legacyD20 && !missingD20;
+    // Wait until the following day: today's completed KRX session may not
+    // yet be available in the external daily-bar feed at 15:35.
+    const safeDate = ycv11NowParts_().date;
+    const need10 = age >= 10 && !!d10 && d10 < safeDate && !r[9] && !legacyD10 && !missingD10;
+    const need20 = age >= 20 && !!d20 && d20 < safeDate && !r[14] && !legacyD20 && !missingD20;
     if (!need10 && !need20) {
       if (age >= 20) {
         r[18] = String(r[5] || '') === '' ? 'COMPLETED_BASELINE_MISSING' : 'COMPLETED';
@@ -530,14 +557,18 @@ function ycv11RunLifecycleV11_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const candidate = ss.getSheetByName(YC.CANDIDATE_SHEET);
   const history = ycv11EnsureHistorySheet_(ss);
-  const poolStatus = reclaimExpiredRowsV8_(candidate,todayKeyV8_());
+  // Complete eligible D+10/D+20 results first, then reclaim only events
+  // whose final evaluation is durably marked COMPLETED in the history sheet.
   const evalStatus = ycv11ProcessDueEvaluationsV11_(history,sessions);
+  const poolStatus = reclaimExpiredRowsV8_(candidate,todayKeyV8_());
   ycv11TrimHistory_(history);
   const pending = history.getLastRow() >= 2 ? history.getRange(2,1,history.getLastRow()-1,YCV11.HEADERS.length).getValues().some(function(r) {
     const age = ycv11AgeFromSessions_(String(r[3]||''),sessions);
     if (age == null || age < 10 || /^COMPLETED/.test(String(r[18]||''))) return false;
-    const d10Pending = !r[9] && String(r[12]||'') !== 'LEGACY_NOT_CAPTURED' && String(r[12]||'') !== 'PRICE_MISSING' && Number(r[20]||0) < YCV11.MAX_RETRIES;
-    const d20Pending = age >= 20 && !r[14] && String(r[17]||'') !== 'LEGACY_NOT_CAPTURED' && String(r[17]||'') !== 'PRICE_MISSING' && Number(r[22]||0) < YCV11.MAX_RETRIES;
+    const d10Target = ycv11TargetSession_(String(r[3]||''),10,sessions);
+    const d20Target = ycv11TargetSession_(String(r[3]||''),20,sessions);
+    const d10Pending = !!d10Target && d10Target < parts.date && !r[9] && String(r[12]||'') !== 'LEGACY_NOT_CAPTURED' && String(r[12]||'') !== 'PRICE_MISSING' && Number(r[20]||0) < YCV11.MAX_RETRIES;
+    const d20Pending = age >= 20 && !!d20Target && d20Target < parts.date && !r[14] && String(r[17]||'') !== 'LEGACY_NOT_CAPTURED' && String(r[17]||'') !== 'PRICE_MISSING' && Number(r[22]||0) < YCV11.MAX_RETRIES;
     return d10Pending || d20Pending;
   }) : false;
   if (!pending) props.setProperty(YCV11.LAST_RUN_DATE_KEY,parts.date);

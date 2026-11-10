@@ -143,6 +143,7 @@ const perfContext = {
 };
 vm.runInNewContext(runtime,perfContext);
 perfContext.ycv11ParseFchart_=()=>perfBars;
+perfContext.ycv11NowParts_=()=>({date:'2026-11-10'});
 const perfHistory = {
   getLastRow:()=>2,
   getRange:()=>({
@@ -162,4 +163,56 @@ assert.equal(perfRow[20],1,'D+10 attempts are tracked separately');
 assert.equal(perfRow[22],1,'D+20 attempts are tracked separately');
 assert.match(perfResult,/EVALUATED=2/);
 
-console.log('PASS: 10/20 trading-day boundaries, KRX-session counting, separate re-mention events, 24-column ledger, D+10/D+20 MA20 evaluation, V8 wrapper preservation, and E-state exclusion.');
+// A 20-session-old candidate must not be deleted until D+20 is durable.
+let lifecycleFlag='Y', clearCount=0, finalStatus='OBSERVATION';
+const expiredDate=perfSessions[0];
+const candidateSheet={
+  getLastRow:()=>2,
+  getRange:(row,col)=>({
+    getValues:()=>[[lifecycleFlag,'보존시험','KOSPI','000660','KRX:000660',expiredDate,'2026-08-01']],
+    setValue:v=>{if(row===2&&col===1)lifecycleFlag=v;}
+  })
+};
+const ledger={
+  getLastRow:()=>2,
+  getRange:(row,col)=>({getDisplayValues:()=>col===1?[['000660|'+expiredDate]]:[[finalStatus]]})
+};
+const ctx2={
+  refreshYouTubeCandidatePoolV2:()=> 'BASE',
+  normalizeCandidateCode_:normalize,
+  ymdFromAnyV8_:v=>String(v||'').slice(0,10),
+  todayKeyV8_:()=> '2026-11-10',
+  YC:{CANDIDATE_SHEET:'CANDIDATES',DATA_START_ROW:2},
+  SpreadsheetApp:{getActiveSpreadsheet:()=>({getSheetByName:n=>n==='MENTION_HISTORY'?ledger:candidateSheet}),flush:()=>{}},
+  Logger:{log:()=>{}}
+};
+vm.runInNewContext(runtime,ctx2);
+ctx2.ycv11GetSessions_=()=>perfSessions;
+ctx2.ycv11CompletedSessions_=v=>v;
+ctx2.clearCandidatePayloadV8_=()=>{clearCount++;};
+assert.match(ctx2.reclaimExpiredRowsV8_(candidateSheet,'2026-11-10'),/CLEARED=0/);
+assert.equal(lifecycleFlag,'E','overdue event remains in observation when the final evaluation is pending');
+assert.equal(clearCount,0,'do not delete unevaluated candidate');
+finalStatus='COMPLETED';
+assert.match(ctx2.reclaimExpiredRowsV8_(candidateSheet,'2026-11-10'),/CLEARED=1/);
+assert.equal(clearCount,1,'clear only after a completed evaluation ledger entry');
+
+// The 20th-session bar is evaluated only after the next day, avoiding an
+// incomplete same-day NAVER daily bar being misused as closing evidence.
+const deferred = perfRow.slice();
+deferred[9]='';deferred[14]='';deferred[18]='ACTIVE';
+let quoteCalls=0;
+const todayCtx={
+  refreshYouTubeCandidatePoolV2:()=> 'BASE',
+  normalizeCandidateCode_:normalize
+};
+vm.runInNewContext(runtime,todayCtx);
+todayCtx.ycv11NowParts_=()=>({date:perfSessions[mentionIndex+19]});
+todayCtx.ycv11ParseFchart_=()=>{quoteCalls++;return perfBars;};
+const dueResult=todayCtx.ycv11ProcessDueEvaluationsV11_({
+  getLastRow:()=>2,getRange:()=>({getValues:()=>[deferred],setValues:()=>{}})
+},perfSessions);
+assert.equal(quoteCalls,0,'same-day unfinalized daily bars must not trigger evaluation');
+assert.equal(dueResult,'NO_DUE_EVALUATIONS');
+
+console.log('PASS: 10/20 trading-day boundaries, D+10/D+20 MA20, re-mention history, safe after-close evaluation, final-outcome-before-delete, E-state exclusion.');
