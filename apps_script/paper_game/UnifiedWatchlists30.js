@@ -166,14 +166,61 @@ function umDirectionContext_M30(result,now) {
     m30_vwap9_dir:verified?String(m.vwap9_dir||''):'',completed_bar:verified?bar:'',
     source:verified?m.source:'',observed_at:now.toISOString(),relation:relation,caption:caption};
 }
+function umLiveDirection_M30(result,now) {
+  const r=result||{},ctx=umDirectionContext_M30(r,now);
+  const official=ctx.daily_basis==='COMPLETED_DAILY';
+  const dailyDate=official&&ctx.daily_as_of?String(ctx.daily_as_of).slice(0,10):'';
+  const dailyBearish=official&&(ctx.daily_direction==='DOWN'||ctx.daily_regime==='EARLY_WEAKENING');
+  const dailyBullish=official&&(ctx.daily_direction==='UP'||ctx.daily_regime==='EARLY_IMPROVEMENT');
+  const hasPct=typeof r.live_change_pct==='number'&&isFinite(r.live_change_pct);
+  const verifiedQuote=r.ok===true&&r.session==='KRX_SESSION'&&r.live_price_source==='KIWOOM_KA10001'&&hasPct;
+  const liveDirection=!hasPct?'UNKNOWN':r.live_change_pct>0?'UP':r.live_change_pct<0?'DOWN':'FLAT';
+  const m30Direction=ctx.m30_direction;
+  let summary='',reboundStage='';
+  if(dailyBearish&&liveDirection==='UP') {
+    if(m30Direction==='UP') {
+      summary='일봉 약세 속 30분봉 반등 확인';
+      reboundStage='REBOUND_M30_CONFIRMED';
+    } else if(m30Direction==='DOWN') {
+      summary='일봉 하락 추세 속 반등 진행 · 30분봉 단기 약세';
+      reboundStage='REBOUND_IN_DOWNTREND';
+    } else {
+      summary='일봉 하락 추세 속 반등 진행';
+      reboundStage='REBOUND_IN_DOWNTREND';
+    }
+  } else if(dailyBearish&&liveDirection==='DOWN') {
+    summary=m30Direction==='DOWN'?'하락 추세 지속 · 단기 약세':
+      m30Direction==='UP'?'일봉 약세 속 30분봉 반등 포착':'일봉 하락 추세 지속 · 당일 약세';
+  } else if(dailyBearish&&liveDirection==='FLAT') {
+    summary=m30Direction==='DOWN'?'하락 추세 지속 · 단기 약세':
+      m30Direction==='UP'?'일봉 약세 속 30분봉 반등 포착 · 당일 보합':'일봉 하락 추세 유지 · 당일 보합';
+  } else if(dailyBullish&&liveDirection==='UP'&&m30Direction==='UP') {
+    summary='일봉 상승 추세 유지 · 30분봉 단기 강세';
+  } else if(dailyBullish&&liveDirection==='DOWN') {
+    summary=m30Direction==='DOWN'?'일봉 상승 추세 속 30분봉 단기 약화':'일봉 상승 추세 속 당일 조정';
+  }
+  return {ctx:ctx,official:official,daily_date:dailyDate,daily_bearish:dailyBearish,
+    daily_bullish:dailyBullish,verified_quote:verifiedQuote,live_direction:liveDirection,
+    m30_direction:m30Direction,summary:summary,rebound_stage:reboundStage};
+}
 function umDirectionNote_M30(p,now) {
-  const r=p.result||{},item=p.item||{},ctx=umDirectionContext_M30(r,now);
+  const r=p.result||{},item=p.item||{},live=umLiveDirection_M30(r,now),ctx=live.ctx;
   const keys=(p.events||[]).map(e=>e.key),early=keys.indexOf('VWAP30_BULL_STACK_EARLY')>=0;
   const risk=r.stage==='RISK'||keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:'))||
     (Number(item.stop_price)>0&&Number(r.live_price)>0&&Number(r.live_price)<=Number(item.stop_price));
-  if(risk)return ctx.m30_direction==='UP'?'30분봉 반등과 별개로 위험경고 유지':'';
+  if(risk) {
+    if(ctx.m30_direction==='UP')return '30분봉 반등과 별개로 위험경고 유지';
+    if(live.verified_quote&&live.live_direction==='UP')return '당일 반등과 별개로 위험경고 유지';
+    return '';
+  }
   if(early&&ctx.m30_direction==='DOWN')return '정배열은 위치 관계 · 30분봉 VWAP9 방향은 하락';
-  if(ctx.relation==='DOWN_UP'||ctx.relation==='UP_DOWN')return ctx.caption;
+  if(ctx.relation==='DOWN_UP') {
+    return live.live_direction==='UP'?'일봉 약세 속 30분봉 반등 확인':ctx.caption;
+  }
+  if(ctx.relation==='UP_DOWN')return ctx.caption;
+  if(live.daily_bearish&&live.live_direction==='UP')return live.summary;
+  if(live.daily_bearish&&live.live_direction==='DOWN'&&ctx.m30_direction==='DOWN'&&
+     (r.stage==='DOWN_CONFIRMED'||r.stage==='DOWN_EARLY'))return '하락 추세 지속 · 단기 약세';
   if(ctx.daily_direction==='UNCONFIRMED'&&(early||r.stage==='BUY_SETUP'||r.stage==='BUY_CONFIRMED'))
     return '기술적 매수 관심 — 상위 추세 확인 필요';
   if(ctx.daily_direction==='UNCONFIRMED'&&ctx.m30_direction!=='UNKNOWN'&&ctx.m30_direction!=='FLAT')return ctx.caption;
@@ -231,14 +278,23 @@ function umPlan_M30(item,result,old,now) {
     ))return;
     // A completed previous-day bearish daily bar is still historical evidence,
     // not a new decline confirmation during an independently verified live rebound.
-    // Hold only the stale daily DOWN notifications; STOP, MARKET_CRASH, ATR and
-    // completed intraday OBV/exit risk continue through their existing guards.
+    // Hold unverified/early daily DOWN notifications while price is rising, but allow
+    // a 30m-confirmed rebound (DOWN_CONFIRMED + live UP + m30 UP, non-RISK) to pass
+    // once per day through existing deduplication so useful rebound context is kept.
     if((e.key==='DOWN_CONFIRMED'||e.key==='DOWN_EARLY')&&
        result.ok===true&&result.session==='KRX_SESSION'&&
        result.live_price_source==='KIWOOM_KA10001'&&
        typeof result.live_change_pct==='number'&&
-       isFinite(result.live_change_pct)&&result.live_change_pct>0&&
-       umDirectionContext_M30(result,now).daily_basis==='COMPLETED_DAILY')return;
+       isFinite(result.live_change_pct)&&result.live_change_pct>0) {
+      const liveCtx=umLiveDirection_M30(result,now);
+      if(liveCtx.official) {
+        const hasRisk=result.stage==='RISK'||
+          (Number(item.stop_price)>0&&Number(result.live_price)>0&&Number(result.live_price)<=Number(item.stop_price))||
+          Boolean(state.sent&&(state.sent.STOP_BREACH||state.sent.OBV15_WARNING||state.sent.SELL_PREP_WARNING||state.sent.VWAP30_BULL_STACK_EARLY));
+        const confirmedRebound=e.key==='DOWN_CONFIRMED'&&liveCtx.daily_bearish&&liveCtx.m30_direction==='UP'&&!hasRisk;
+        if(!confirmedRebound)return;
+      }
+    }
     let key=e.key+(e.key==='MARKET_CRASH'?':'+e.level:'');
     let breachSeq=1;
     if(e.key==='STOP_BREACH') {
@@ -580,13 +636,28 @@ function umDisplayStage_M30(p) {
   return p.events&&p.events.length===1&&p.events[0].key==='VWAP30_BULL_STACK_EARLY'?
     'BUY_SETUP':p.result.stage;
 }
+function umIsReboundDisplay_M30(p,now) {
+  const r=(p&&p.result)||{},item=(p&&p.item)||{},keys=((p&&p.events)||[]).map(e=>e.key);
+  const displayStage=umDisplayStage_M30(p);
+  if(displayStage!=='DOWN_CONFIRMED'&&displayStage!=='DOWN_EARLY')return false;
+  if(keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:')||k==='MARKET_CRASH'||
+    k.startsWith('MARKET_CRASH:')||k==='MARKET_WEAK_EARLY'||k==='OBV15_WARNING'||
+    k==='SELL_PREP_WARNING'||k==='ATR_DOWN_1_0'))return false;
+  if(Number(item.stop_price)>0&&Number(r.live_price)>0&&Number(r.live_price)<=Number(item.stop_price))return false;
+  const live=umLiveDirection_M30(r,now);
+  return live.daily_bearish&&live.live_direction==='UP';
+}
 function umSignalBrief_M30(p,now) {
   const r=p.result,item=p.item,keys=(p.events||[]).map(e=>e.key);
   const stop=Number(item.stop_price||0);
   const atr=Number(r.atr14||0);
   const price=Number(r.live_price||0);
   const inverseInfo=r.jev_gate&&r.jev_gate.status==='EARLY_MARKET_INFO';
-  const officialDaily=umDirectionContext_M30(r,now).daily_basis==='COMPLETED_DAILY';
+  const live=umLiveDirection_M30(r,now),ctx=live.ctx,officialDaily=live.official;
+  const dailyPrefix=live.daily_date?'전일('+live.daily_date+') 완성 일봉':'완성 일봉';
+  const hasPct=typeof r.live_change_pct==='number'&&isFinite(r.live_change_pct);
+  const pctVal=Number(r.live_change_pct||0)*100;
+  const pctStr=hasPct?'당일 '+(pctVal>0?'+':'')+pctVal.toFixed(2)+'%':'';
   let basis='';
   if(keys.indexOf('VWAP30_BULL_STACK_EARLY')>=0&&r.stage!=='RISK'&&!(stop>0&&price>0&&price<=stop))
     basis='30분봉 정배열 새로 포착 · 현재가 > VWAP9 > VWAP26 · MTS 관심종목';
@@ -610,15 +681,30 @@ function umSignalBrief_M30(p,now) {
   else if(inverseInfo)
     basis='인버스 상승 조짐 · 기초지수 하락 확인 (매수확정 아님)';
   else if(r.stage==='BUY_CONFIRMED')
-    basis=officialDaily?'완성 일봉 매수확인 · 단기 조건 별도 검증':'기술적 매수확인 · 판단 기준 미확인';
+    basis=officialDaily?dailyPrefix+' 매수확인 · 단기 조건 별도 검증':'기술적 매수확인 · 판단 기준 미확인';
   else if(r.stage==='BUY_SETUP')
-    basis=officialDaily?'완성 일봉 매수조짐 · 기술적 관심':'기술적 관심';
+    basis=officialDaily?dailyPrefix+' 매수조짐 · 기술적 관심':'기술적 관심';
   else if(r.stage==='RISK')
     basis='위험경고 · 기존 위험조건 확인';
+  else if(umIsReboundDisplay_M30(p,now)) {
+    const m30Time=ctx.completed_bar?String(ctx.completed_bar).slice(11,16):'';
+    if(ctx.m30_direction==='UP')
+      basis='일봉 약세 속 30분봉 반등 확인 · '+dailyPrefix+' 하락 추세 · '+(pctStr?pctStr+' 반등 · ':'')+
+        '30분봉 '+(m30Time?m30Time+' ':'')+'상승 확인 (매수확인 아님)';
+    else if(ctx.m30_direction==='DOWN')
+      basis='일봉 하락 추세 속 반등 진행 · '+dailyPrefix+' 하락 추세 · '+(pctStr?pctStr+' · ':'')+
+        '30분봉 '+(m30Time?m30Time+' ':'')+'단기 약세 (추세 전환 미확정 · 매수확인 아님)';
+    else if(ctx.m30_direction==='FLAT')
+      basis='일봉 하락 추세 속 반등 진행 · '+dailyPrefix+' 하락 추세 · '+(pctStr?pctStr+' · ':'')+
+        '30분봉 '+(m30Time?m30Time+' ':'')+'중립 (추세 전환 단정 유보 · 매수확인 아님)';
+    else
+      basis='일봉 하락 추세 속 반등 진행 · '+dailyPrefix+' 하락 추세 · '+(pctStr?pctStr+' 반등 · ':'')+
+        '30분봉 방향 미확인 (추세 전환 단정 유보 · 매수확인 아님)';
+  }
   else if(r.stage==='DOWN_CONFIRMED')
-    basis=officialDaily?'하락 확인 · 완성 일봉 기술지표':'하락 확인 · 상위 추세 미확정';
+    basis=officialDaily?'하락 확인 · '+dailyPrefix+' 기술지표':'하락 확인 · 상위 추세 미확정';
   else if(r.stage==='DOWN_EARLY')
-    basis=officialDaily?'하락 조짐 · 완성 일봉 기술지표':'하락 조짐 · 상위 추세 미확정';
+    basis=officialDaily?'하락 조짐 · '+dailyPrefix+' 기술지표':'하락 조짐 · 상위 추세 미확정';
   else
     basis='기술 신호';
   // Older completed bars are never presented as today's confirmation.
@@ -626,7 +712,7 @@ function umSignalBrief_M30(p,now) {
   if(!keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:')) && bar.slice(0,10)===umDay_M30(now) &&
       !/30분봉/.test(basis))basis+=' · 30분봉 '+bar.slice(11,16)+' 참조';
   const note=umDirectionNote_M30(p,now);
-  if(note)basis+=' · '+note;
+  if(note&&basis.indexOf(note)<0)basis+=' · '+note;
   return basis;
 }
 function umSignalNews_M30(p) {
@@ -693,22 +779,26 @@ function umMarketSituation_M30(p,round,now) {
   } catch(e) { return ''; }
 }
 function umMarketSubject_M30(p,now,round) {
-  const item=p.item,stage=umDisplayStage_M30(p);
+  const item=p.item,stage=umDisplayStage_M30(p),rebound=umIsReboundDisplay_M30(p,now);
+  const live=umLiveDirection_M30(p.result,now);
   const titleStage=(p.events||[]).some(e=>e.key==='VWAP30_BULL_STACK_EARLY')?
-    '30분봉 정배열 관심':({BUY_SETUP:'상승조짐',BUY_CONFIRMED:'상승확인',
+    '30분봉 정배열 관심':rebound?
+    (live.m30_direction==='UP'?'일봉 약세 속 30분봉 반등 확인':'일봉 하락 추세 속 반등 진행'):
+    ({BUY_SETUP:'상승조짐',BUY_CONFIRMED:'상승확인',
       DOWN_EARLY:'하락조짐',DOWN_CONFIRMED:'하락확인',RISK:'위험경고'}[stage]||'기술신호');
+  const mark=rebound?'↗':umSignalGlyph_M30(stage).mark;
   const context=umMarketSituation_M30(p,round,now);
-  return '[주식 통합신호] '+umSignalGlyph_M30(stage).mark+' '+
+  return '[주식 통합신호] '+mark+' '+
     UM30_MARKET_MAIL_NAMES[item.ticker]+' '+titleStage+
     (context?' | '+context:'')+' · '+Utilities.formatDate(now,UM30.TZ,'MM-dd HH:mm');
 }
 function umMessage_M30(plans,now,round) {
   const human=[],html=[],metadata=[],marks=[];
   plans.forEach(function(p){
-    const r=p.result,item=p.item,displayStage=umDisplayStage_M30(p);
+    const r=p.result,item=p.item,displayStage=umDisplayStage_M30(p),rebound=umIsReboundDisplay_M30(p,now);
     const label=(p.events||[]).some(e=>e.key==='VWAP30_BULL_STACK_EARLY')?
       '30분봉 정배열 관심':(UM30.LABELS[displayStage]||UM30.LABELS.WATCH);
-    const visual=umSignalGlyph_M30(displayStage),id=umEventId_M30(p,now);
+    const visual=rebound?{mark:'↗',color:'#ef6c00'}:umSignalGlyph_M30(displayStage),id=umEventId_M30(p,now);
     const price=Number(r.live_price||0).toLocaleString('ko-KR')+'원';
     const change=Number(r.live_change_pct||0)*100;
     const pct=(change>0?'+':'')+change.toFixed(2)+'%';
@@ -735,7 +825,12 @@ function umMessage_M30(plans,now,round) {
   // Plain MIME part retains machine ids/JSON for existing parsers and retry safety.
   // The visible HTML MIME part intentionally contains only the investor's signals.
   const body=human.join('\n')+'\nUNIFIED_EVENTS_JSON='+JSON.stringify(metadata);
-  const subjectHint=plans.length===1?marks[0]+' '+plans[0].item.name+' · ':Array.from(new Set(marks)).join('')+' ';
+  const singleRebound=plans.length===1&&umIsReboundDisplay_M30(plans[0],now);
+  const singleReboundTitle=singleRebound?
+    (umLiveDirection_M30(plans[0].result,now).m30_direction==='UP'?'일봉 약세 속 30분봉 반등 확인':'일봉 하락 추세 속 반등 진행'):'';
+  const subjectHint=plans.length===1?
+    (marks[0]+' '+plans[0].item.name+(singleReboundTitle?' '+singleReboundTitle:'')+' · '):
+    Array.from(new Set(marks)).join('')+' ';
   const subject=plans.length===1&&umIsMarketMail_M30(plans[0].item)?
     umMarketSubject_M30(plans[0],now,round):
     '[주식 통합신호] '+subjectHint+plans.length+'종목 · '+Utilities.formatDate(now,UM30.TZ,'MM-dd HH:mm');
