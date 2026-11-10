@@ -229,6 +229,16 @@ function umPlan_M30(item,result,old,now) {
       (isMarketMail && (e.key==='DOWN_EARLY'||e.key==='DOWN_CONFIRMED'||
         e.key==='OBV15_WARNING'||e.key==='SELL_PREP_WARNING'))
     ))return;
+    // A completed previous-day bearish daily bar is still historical evidence,
+    // not a new decline confirmation during an independently verified live rebound.
+    // Hold only the stale daily DOWN notifications; STOP, MARKET_CRASH, ATR and
+    // completed intraday OBV/exit risk continue through their existing guards.
+    if((e.key==='DOWN_CONFIRMED'||e.key==='DOWN_EARLY')&&
+       result.ok===true&&result.session==='KRX_SESSION'&&
+       result.live_price_source==='KIWOOM_KA10001'&&
+       typeof result.live_change_pct==='number'&&
+       isFinite(result.live_change_pct)&&result.live_change_pct>0&&
+       umDirectionContext_M30(result,now).daily_basis==='COMPLETED_DAILY')return;
     let key=e.key+(e.key==='MARKET_CRASH'?':'+e.level:'');
     let breachSeq=1;
     if(e.key==='STOP_BREACH') {
