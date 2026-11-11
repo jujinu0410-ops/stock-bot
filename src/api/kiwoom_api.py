@@ -1,5 +1,6 @@
 import socket
 import time
+import threading
 import requests
 import urllib3
 from typing import Dict, Any, List, Optional
@@ -43,6 +44,22 @@ def parse_kiwoom_price(val: Any) -> int:
         return abs(int(round(num)))
     except (ValueError, TypeError):
         return 0
+
+
+# Shared within a worker process; only domestic account TR requests use this gate.
+_KIWOOM_ACCOUNT_TR_INTERVAL = 1.2
+_KIWOOM_ACCOUNT_TR_LOCK = threading.Lock()
+_KIWOOM_ACCOUNT_TR_NEXT_AT = 0.0
+
+
+def _wait_for_kiwoom_account_tr():
+    global _KIWOOM_ACCOUNT_TR_NEXT_AT
+    with _KIWOOM_ACCOUNT_TR_LOCK:
+        wait = _KIWOOM_ACCOUNT_TR_NEXT_AT - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _KIWOOM_ACCOUNT_TR_NEXT_AT = time.monotonic() + _KIWOOM_ACCOUNT_TR_INTERVAL
+
 
 class KiwoomAPIClient:
     """
@@ -195,7 +212,11 @@ class KiwoomAPIClient:
                     time.sleep(delay)
 
                 try:
+                    _wait_for_kiwoom_account_tr()
                     res = requests.post(url, headers=headers, json=body, timeout=10)
+                    if res.status_code == 429 and attempt_num < max_attempts:
+                        logger.warning("[KIWOOM_ACCOUNT_TR_RATE_LIMIT] HTTP 429; bounded retry")
+                        continue
                     break
                 except RETRYABLE_NETWORK_EXCEPTIONS as e_net:
                     reason = _classify_network_exception(e_net)
