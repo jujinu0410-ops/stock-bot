@@ -200,11 +200,12 @@ function ycv12MaybeCollect_() {
       refreshYouTubeCandidatePoolV2();
       const after = String(props.getProperty('LAST_CANDIDATE_REFRESH_AT') || '');
       if (!after || after === before) throw new Error('TWO_MAIL_V12_REFRESH_NOT_CONFIRMED');
-      ycv12ConfirmFresh_(fresh, parts.dateKey);
-      // An acknowledged source mail must have a durable evaluation event.
-      // If history persistence fails, retry this same mail on the next tick;
-      // do not advance PROCESSED_IDS and silently lose D+10/D+20 evaluation.
+      // Persist valid candidate events before whole-mail confirmation.
+      // One quarantined name/code pair must not discard the other stocks'
+      // D+10/D+20 histories. Confirmation still fails and retries the mail
+      // until every candidate is verified; processed IDs are not advanced.
       ycv11RegisterFreshMentionsV11_(fresh);
+      ycv12ConfirmFresh_(fresh, parts.dateKey);
     } else {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
       const sheet = ss.getSheetByName(YC.CANDIDATE_SHEET);
