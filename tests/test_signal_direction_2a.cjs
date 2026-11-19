@@ -174,6 +174,26 @@ test('market crash escalation and recovered stop rebreach retain existing keys a
   assert.deepStrictEqual(breach(5,recovered.state).keys,[]);
   assert.deepStrictEqual(breach(6,recovered.state).keys,['STOP_BREACH:2']);
 });
+test('inverse market guidance follows the batch flag and yields to a stop warning',()=>{
+  const item={ticker:'114800',name:'KODEX 인버스',sources:['ETF'],stop_price:0};
+  const setup={key:'BUY_SETUP',stage:'BUY_SETUP',level:1,stateKey:'BUY_SETUP'};
+  const base=result('BULL_CONFIRMED','RISING',{stage:'BUY_SETUP',send_allowed:true,events:[setup],
+    jev_gate:{status:'JEV_GATE_DISABLED',decision:'NOT_EVALUATED'}});
+  const guidance='인버스 상승 조짐 · 기초지수 하락 확인 (매수확정 아님)';
+  function brief(r){return updated.umSignalBrief_M30({item,result:r,events:r.events},now);}
+  const inverse={...base,inverse_market_info:true};
+  assert(brief(inverse).startsWith(guidance));
+  const mail=updated.umMessage_M30([{item,result:inverse,events:inverse.events}],now);
+  assert(mail.body.includes(guidance));
+  assert(mail.htmlBody.includes(guidance));
+  for(const ordinary of [base,{...base,inverse_market_info:false}]){
+    assert(!brief(ordinary).includes(guidance));
+    assert(brief(ordinary).includes('매수조짐'));
+  }
+  const risk={...inverse,stage:'RISK',events:[{key:'STOP_BREACH',stage:'RISK',reason:'손절선 재침범'}]};
+  assert(brief(risk).startsWith('손절선 재침범'));
+  assert(!brief(risk).includes(guidance));
+});
 const summary={tests,failures,errors:0,skipped:0,machine_parity_cases:trials,outbound_network:0,orders:0,outcomes};
 fs.mkdirSync(path.join(B,'evidence'),{recursive:true});fs.writeFileSync(path.join(B,'evidence/direction-tests.json'),JSON.stringify(summary,null,2));
 console.log(JSON.stringify({...summary,outcomes:undefined}));process.exitCode=failures?1:0;
