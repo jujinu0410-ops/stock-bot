@@ -78,6 +78,38 @@ class UnifiedJevDisabledTests(unittest.TestCase):
             self.assertEqual(result["stage"], "WATCH")
         self.post.assert_not_called()
 
+    def test_one_atr_06_threshold_preserves_two_bullish_stages(self):
+        # Completed five-day low 103, ATR10 => threshold 109.
+        for stage in ("BUY_SETUP", "BUY_CONFIRMED"):
+            self.official["stage"] = stage
+            for price in (108.8, 108.99, 109.0, 109.5, 112.0):
+                with self.subTest(daily_stage=stage, price=price):
+                    self.service._fetch_kiwoom_quote.return_value["current_price"] = price
+                    result = self.scan()
+                    expected = "WATCH" if price < 109 else stage
+                    self.assertEqual(result["stage"], expected)
+                    self.assertEqual([e["key"] for e in result["events"]], [] if expected == "WATCH" else [stage])
+                    if price < 109:
+                        self.assertIn("BELOW_0_6ATR_SETUP", result["reasons"])
+                    else:
+                        self.assertTrue(result["atr_directional"]["bullish_ready"])
+                    self.post.assert_not_called()
+
+    def test_atr_06_bearish_support_never_suppresses_downside(self):
+        # Previous close 108, ATR10 => negative directional evidence at 102.
+        for stage in ("DOWN_EARLY", "DOWN_CONFIRMED"):
+            self.official["stage"] = stage
+            for price in (102.0, 103.0, 107.0):
+                with self.subTest(daily_stage=stage, price=price):
+                    self.service._fetch_kiwoom_quote.return_value["current_price"] = price
+                    result = self.scan()
+                    self.assertEqual(result["stage"], stage)
+                    self.assertEqual([e["key"] for e in result["events"]], [stage])
+                    self.assertEqual(result["atr_directional"]["bearish_pressure"], price <= 102)
+                    self.assertIn("ATR_DOWN_0_6_SUPPORT" if price <= 102 else
+                                  "ATR_DOWN_0_6_NOT_YET_CONFIRMED", result["reasons"])
+                    self.post.assert_not_called()
+
     def test_stop_preempts_buy(self):
         self.payload["stop_price"] = 112
         result = self.scan()

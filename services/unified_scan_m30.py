@@ -43,6 +43,7 @@ from src.runtime.krx_calendar import KRXCalendar
 
 
 VERSION = "three-lists-v3-m30"
+ATR_SIGNAL_FRACTION = .6  # One technical ATR reference for E30 direction.
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -409,7 +410,7 @@ def entry_guard(price, atr, anchor, daily, m30, minute, quote):
 
     if not atr or not anchor: reasons.append("ATR_OR_ANCHOR_UNAVAILABLE")
 
-    elif price < anchor + .5*atr: reasons.append("BELOW_0_5ATR_SETUP")
+    elif price < anchor + ATR_SIGNAL_FRACTION*atr: reasons.append("BELOW_0_6ATR_SETUP")
 
     if quote.get("change_pct") is not None and quote["change_pct"] <= -.05:
 
@@ -880,9 +881,23 @@ def scan(payload, service, now=None):
 
                 stage = "WATCH"
 
-        elif stage == "BUY_CONFIRMED" and price < anchor + .6*atr:
+        # Preserve BUY_SETUP vs BUY_CONFIRMED from VWAP/OBV trend; both use
+        # the same 0.6 ATR entry gate rather than two adjacent ATR levels.
 
-            stage = "BUY_SETUP"
+    # A -0.6 ATR move below yesterday's close is bearish corroborating
+    # context, not a veto of VWAP/OBV downside signals or the stop/risk path.
+    atr_directional = {"threshold": ATR_SIGNAL_FRACTION, "bullish_ready": False,
+                       "bearish_pressure": False, "valid": False}
+    if price and atr and anchor and ref:
+        atr_directional = {
+            "threshold": ATR_SIGNAL_FRACTION,
+            "bullish_ready": price >= anchor + ATR_SIGNAL_FRACTION*atr,
+            "bearish_pressure": price <= ref - ATR_SIGNAL_FRACTION*atr,
+            "valid": True,
+        }
+        if stage in ("DOWN_EARLY", "DOWN_CONFIRMED"):
+            reasons.append("ATR_DOWN_0_6_SUPPORT" if atr_directional["bearish_pressure"] else
+                           "ATR_DOWN_0_6_NOT_YET_CONFIRMED")
 
     # Final source-side bullish filter, after the inverse early-observation
     # exception: no BUY_SETUP/BUY_CONFIRMED may pass below or without the
@@ -1014,6 +1029,7 @@ def scan(payload, service, now=None):
         "live_price": price, "live_change_pct": quote.get("change_pct"),
 
         "live_price_source": quote.get("source"), "atr14":atr, "anchor":anchor,
+        "atr_directional": atr_directional,
 
         "market_proxy":proxy, "sector_etf":sector,
         "inverse_market_info": inverse_info_only and stage in BUY_STAGES and decision["send_allowed"],
