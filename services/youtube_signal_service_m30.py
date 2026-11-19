@@ -2135,7 +2135,7 @@ def unified_scan_batch() -> Any:
             # while retaining all existing event keys and JEV/market verdicts.
             if not isinstance(result, dict) or result.get("ok") is not True or result.get("engine_version") != "three-lists-v3-m30":
                 raise SignalServiceError("BATCH_INVALID_EVALUATION")
-            keys = ("ok", "engine_version", "stage", "send_allowed", "events",
+            keys = ("ok", "engine_version", "stage", "send_allowed", "events", "jev_gate",
                     "reasons", "live_price", "live_change_pct", "live_price_source",
                     "atr14", "session", "confidence_adjustment", "bar_interval_minutes", "contract_version")
             wire = {key: result[key] for key in keys if key in result}

@@ -12,6 +12,7 @@ class UnifiedScanBatchVwap9Tests(unittest.TestCase):
             "engine_version": "three-lists-v3-m30",
             "stage": "WATCH",
             "send_allowed": False,
+            "jev_gate": {"status": "JEV_GATE_DISABLED", "decision": "NOT_EVALUATED"},
             "events": [],
             "reasons": [],
             "live_price": 110.0,
@@ -41,6 +42,7 @@ class UnifiedScanBatchVwap9Tests(unittest.TestCase):
         body = response.get_json()
         self.assertTrue(body["ok"])
         wire = body["results"][0]["result"]
+        self.assertEqual(wire["jev_gate"], scan_result["jev_gate"])
         self.assertEqual(wire["technical"]["basis"], "COMPLETED_DAILY")
         self.assertEqual(wire["technical"]["as_of"], "2026-11-09 15:30:00")
         self.assertEqual(wire["technical"]["vwap9"], 105.0)
