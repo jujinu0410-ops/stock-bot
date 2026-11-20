@@ -79,7 +79,7 @@ test('11/10 09:07 incident cases format as rebound in daily downtrend, never 하
    const x=signal(code,pct,'DOWN_CONFIRMED');
    const syntheticPlan={item:x.item,result:x.result,state:x.old,events:[{key:'DOWN_CONFIRMED',stage:'DOWN_CONFIRMED',stateKey:'DOWN_CONFIRMED'}]};
    const msg=ctx.umMessage_M30([syntheticPlan],now);
-   assert.match(msg.subject,/일봉 하락 추세 속 반등 진행/);
+   assert.match(msg.subject,/일봉 하락 중 상승 시도/);
    assert(!msg.subject.includes('하락확인'));
    assert(!msg.subject.includes('매수확인'));
    assert(!msg.subject.includes('▼'));
@@ -96,8 +96,8 @@ test('30m-confirmed rebound passes once per day for Market ETF and Held, with ac
    assert.equal(p.events.length,1);
    assert.equal(p.events[0].key,'DOWN_CONFIRMED');
    const msg=ctx.umMessage_M30([p],now0935);
-   assert.match(msg.subject,/↗/);
-   assert.match(msg.subject,/일봉 약세 속 30분봉 반등 확인/);
+   assert.match(msg.subject,/\^/);
+   assert.match(msg.subject,/일봉 하락 중 상승 시도/);
    assert(!msg.subject.includes('하락확인'));
    assert(!msg.subject.includes('매수확인'));
    assert.match(msg.body,/일봉 약세 속 30분봉 반등 확인 · 전일\(2026-11-09\) 완성 일봉 하락 추세/);

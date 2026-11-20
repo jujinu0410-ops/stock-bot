@@ -654,6 +654,32 @@ function umSignalGlyph_M30(stage) {
   if(stage==='DOWN_EARLY')return {mark:'▽',color:'#1565c0'};
   return {mark:'▼',color:'#1565c0'};
 }
+// Display-only mixed-trend visual states: no change to event keys, send policy,
+// stop/risk decisions, deduplication, or machine-readable UNIFIED_EVENTS_JSON.
+function umSixSignalVisual_M30(p,now) {
+  const r=(p&&p.result)||{},item=(p&&p.item)||{},stage=umDisplayStage_M30(p);
+  const base=umSignalGlyph_M30(stage),events=(p&&p.events)||[];
+  const keys=events.map(e=>String(e.key||''));
+  const live=umLiveDirection_M30(r,now),ctx=live.ctx||{};
+  if(!live.official||!live.verified_quote||!['UP','DOWN'].includes(live.live_direction))
+    return {...base,caption:''};
+  const stop=Number(item.stop_price),price=Number(r.live_price);
+  const breached=isFinite(stop)&&stop>0&&isFinite(price)&&price>0&&price<=stop;
+  const hardRisk=breached||keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:')||
+    k==='MARKET_CRASH'||k==='MARKET_WEAK_EARLY'||k==='ATR_DOWN_1_0');
+  const technicalWarning=keys.some(k=>k==='OBV15_WARNING'||k==='SELL_PREP_WARNING');
+  if(hardRisk||(stage==='RISK'&&!technicalWarning))return {...base,caption:''};
+  // Unconfirmed daily states cannot claim a confirmed up/down-trend.
+  if(ctx.daily_direction==='UP'&&live.live_direction==='DOWN')
+    return {mark:'V',color:'#1565c0',caption:'일봉 상승 중 눌림목'};
+  if(ctx.daily_direction==='DOWN'&&live.live_direction==='UP')
+    return {mark:'^',color:'#c62828',caption:'일봉 하락 중 상승 시도'};
+  // A short-term SELL_PREP/OBV warning during a genuine live rise is also a
+  // mixed signal. When daily direction is unconfirmed, never mislabel it DOWN.
+  if(ctx.daily_direction==='UNCONFIRMED'&&technicalWarning&&live.live_direction==='UP')
+    return {mark:'^',color:'#c62828',caption:'일봉 추세 미확정 · 당일 상승 시도'};
+  return {...base,caption:''};
+}
 function umDisplayStage_M30(p) {
   // The underlying engine can be BUY_CONFIRMED while the emitted event is
   // deliberately only an early △ observation awaiting the next evaluation.
@@ -737,6 +763,9 @@ function umSignalBrief_M30(p,now) {
       !/30분봉/.test(basis))basis+=' · 30분봉 '+bar.slice(11,16)+' 참조';
   const note=umDirectionNote_M30(p,now);
   if(note&&basis.indexOf(note)<0)basis+=' · '+note;
+  const visual=umSixSignalVisual_M30(p,now);
+  if(visual.caption&&basis.indexOf(visual.caption)<0)
+    basis=inverseInfo?basis+' · '+visual.caption:visual.caption+' · '+basis;
   return basis;
 }
 function umSignalNews_M30(p) {
@@ -805,12 +834,14 @@ function umMarketSituation_M30(p,round,now) {
 function umMarketSubject_M30(p,now,round) {
   const item=p.item,stage=umDisplayStage_M30(p),rebound=umIsReboundDisplay_M30(p,now);
   const live=umLiveDirection_M30(p.result,now);
-  const titleStage=(p.events||[]).some(e=>e.key==='VWAP30_BULL_STACK_EARLY')?
+  const visual=umSixSignalVisual_M30(p,now);
+  const titleStage=visual.caption?(visual.caption+(stage==='RISK'?' · 위험경고':'')):
+    (p.events||[]).some(e=>e.key==='VWAP30_BULL_STACK_EARLY')?
     '30분봉 정배열 관심':rebound?
     (live.m30_direction==='UP'?'일봉 약세 속 30분봉 반등 확인':'일봉 하락 추세 속 반등 진행'):
     ({BUY_SETUP:'상승조짐',BUY_CONFIRMED:'상승확인',
       DOWN_EARLY:'하락조짐',DOWN_CONFIRMED:'하락확인',RISK:'위험경고'}[stage]||'기술신호');
-  const mark=rebound?'↗':umSignalGlyph_M30(stage).mark;
+  const mark=visual.mark;
   const context=umMarketSituation_M30(p,round,now);
   return '[주식 통합신호] '+mark+' '+
     UM30_MARKET_MAIL_NAMES[item.ticker]+' '+titleStage+
@@ -822,7 +853,7 @@ function umMessage_M30(plans,now,round) {
     const r=p.result,item=p.item,displayStage=umDisplayStage_M30(p),rebound=umIsReboundDisplay_M30(p,now);
     const label=(p.events||[]).some(e=>e.key==='VWAP30_BULL_STACK_EARLY')?
       '30분봉 정배열 관심':(UM30.LABELS[displayStage]||UM30.LABELS.WATCH);
-    const visual=rebound?{mark:'↗',color:'#ef6c00'}:umSignalGlyph_M30(displayStage),id=umEventId_M30(p,now);
+    const visual=umSixSignalVisual_M30(p,now),id=umEventId_M30(p,now);
     const price=Number(r.live_price||0).toLocaleString('ko-KR')+'원';
     const change=Number(r.live_change_pct||0)*100;
     const pct=(change>0?'+':'')+change.toFixed(2)+'%';
@@ -852,8 +883,11 @@ function umMessage_M30(plans,now,round) {
   const singleRebound=plans.length===1&&umIsReboundDisplay_M30(plans[0],now);
   const singleReboundTitle=singleRebound?
     (umLiveDirection_M30(plans[0].result,now).m30_direction==='UP'?'일봉 약세 속 30분봉 반등 확인':'일봉 하락 추세 속 반등 진행'):'';
+  const singleMixedTitle=plans.length===1?umSixSignalVisual_M30(plans[0],now).caption:'';
   const subjectHint=plans.length===1?
-    (marks[0]+' '+plans[0].item.name+(singleReboundTitle?' '+singleReboundTitle:'')+' · '):
+    (marks[0]+' '+plans[0].item.name+
+     (singleMixedTitle?' '+singleMixedTitle+(umDisplayStage_M30(plans[0])==='RISK'?' · 위험경고':''):
+      singleReboundTitle?' '+singleReboundTitle:'')+' · '):
     Array.from(new Set(marks)).join('')+' ';
   const subject=plans.length===1&&umIsMarketMail_M30(plans[0].item)?
     umMarketSubject_M30(plans[0],now,round):
