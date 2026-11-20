@@ -674,6 +674,17 @@ function umSixSignalVisual_M30(p,now) {
     return {mark:'V',color:'#1565c0',caption:'일봉 상승 중 눌림목'};
   if(ctx.daily_direction==='DOWN'&&live.live_direction==='UP')
     return {mark:'^',color:'#c62828',caption:'일봉 하락 중 상승 시도'};
+  // A verified M30 bullish stack is an *inspection-only* event. In a falling
+  // session it must not inherit the red BUY_SETUP triangle simply because
+  // umDisplayStage_M30 maps this event to a bullish-looking label.
+  if(keys.includes('VWAP30_BULL_STACK_EARLY')&&live.live_direction==='DOWN') {
+    if(ctx.daily_direction==='DOWN')
+      return {mark:'▽',color:'#1565c0',
+        caption:'일봉·당일 하락 중 30분봉 정배열 관심(매수확인 아님)'};
+    if(ctx.daily_direction==='UNCONFIRMED')
+      return {mark:'▽',color:'#1565c0',
+        caption:'당일 하락 중 30분봉 정배열 관심(일봉 추세 미확정)'};
+  }
   // A short-term SELL_PREP/OBV warning during a genuine live rise is also a
   // mixed signal. When daily direction is unconfirmed, never mislabel it DOWN.
   if(ctx.daily_direction==='UNCONFIRMED'&&technicalWarning&&live.live_direction==='UP')

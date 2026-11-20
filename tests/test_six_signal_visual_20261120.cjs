@@ -66,6 +66,42 @@ test('Live inverse case: EARLY_IMPROVEMENT is not misrepresented as completed da
   assert.match(mail.body,/단기 매도 경고/);
   assert(!mail.subject.includes('일봉 하락 중 상승 시도'));
 });
+test('Today HPSP -6.86%: daily down and live down + M30 observation must be blue ▽',()=>{
+  const p=make('WATCH','BOUNCE_IN_DOWNREGIME',-.0686,['VWAP30_BULL_STACK_EARLY'],{
+    ticker:'403870',name:'HPSP',price:39400});
+  const v=visual(p),m=c.umMessage_M30([p],now);
+  assert.equal(v.mark,'▽');assert.equal(v.color,'#1565c0');
+  assert.match(m.subject,/▽ HPSP 일봉·당일 하락 중 30분봉 정배열 관심/);
+  assert.match(m.htmlBody,/<span style="color:#1565c0">▽<\/span>/);
+  assert.match(m.body,/30분봉 정배열 새로 포착/);
+  assert.equal(JSON.parse(m.body.split('UNIFIED_EVENTS_JSON=')[1])[0].stage,'30분봉 정배열 관심');
+  assert.equal(p.events[0].key,'VWAP30_BULL_STACK_EARLY');
+});
+test('Today KC Tech and Korean Kolmar: negative live / down or uncertain daily = blue ▽',()=>{
+  for(const regime of ['BOUNCE_IN_DOWNREGIME','EARLY_WEAKENING','NEUTRAL']){
+    const p=make('WATCH',regime,-.0048,['VWAP30_BULL_STACK_EARLY'],{ticker:'281820',name:'케이씨텍',price:83200});
+    const v=visual(p);
+    assert.equal(v.mark,'▽',regime);
+    assert.match(v.caption,/당일 하락/);
+    assert.equal(v.color,'#1565c0');
+  }
+});
+test('Today Hyundai Glovis +1.47%: daily up and live up keeps red △',()=>{
+  const p=make('WATCH','BULL_CONFIRMED',.0147,['VWAP30_BULL_STACK_EARLY'],{
+    ticker:'086280',name:'현대글로비스',price:206500});
+  const v=visual(p),m=c.umMessage_M30([p],now);
+  assert.equal(v.mark,'△');assert.equal(v.color,'#c62828');
+  assert.equal(v.caption,'');
+  assert.match(m.subject,/△ 현대글로비스/);
+});
+test('Day down but live rising 30m stack remains red ^ and holds source event ID',()=>{
+  const p=make('WATCH','BOUNCE_IN_DOWNREGIME',.0033,['VWAP30_BULL_STACK_EARLY'],{
+    ticker:'003550',name:'LG',price:90600});
+  const v=visual(p),m=c.umMessage_M30([p],now);
+  assert.equal(v.mark,'^');assert.equal(v.caption,'일봉 하락 중 상승 시도');
+  assert.match(m.body,/일봉 하락 중 상승 시도/);
+  assert.equal(JSON.parse(m.body.split('UNIFIED_EVENTS_JSON=')[1])[0].id,c.umEventId_M30(p,now));
+});
 test('STOP_BREACH takes precedence over upside on previous close',()=>{
   const p=make('RISK','BEAR_CONFIRMED',.0397,['STOP_BREACH'],{
     ticker:'114800',name:'KODEX 인버스',sources:['ETF','HELD'],price:1361,stop_price:1400});
