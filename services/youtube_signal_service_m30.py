@@ -2137,11 +2137,12 @@ def unified_scan_batch() -> Any:
                 raise SignalServiceError("BATCH_INVALID_EVALUATION")
             keys = ("ok", "engine_version", "stage", "send_allowed", "events", "jev_gate",
                     "inverse_market_info", "reasons", "live_price", "live_change_pct", "live_price_source",
-                    "atr14", "session", "confidence_adjustment", "bar_interval_minutes", "contract_version")
+                    "atr14", "session", "confidence_adjustment", "bar_interval_minutes", "contract_version",
+                    "daily_dual_vwap")
             wire = {key: result[key] for key in keys if key in result}
             if isinstance(result.get("technical"), dict):
                 wire["technical"] = {key: result["technical"][key] for key in
-                    ("basis", "as_of", "vwap9", "regime", "stage", "provisional") if key in result["technical"]}
+                    ("basis", "as_of", "vwap9", "vwap26", "regime", "stage", "provisional") if key in result["technical"]}
             # Existing m30 wire shape stays unchanged. Paper consumers receive
             # full validation evidence through a separate additive field.
             if isinstance(result.get("paper_data"), dict):

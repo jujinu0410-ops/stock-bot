@@ -46,10 +46,12 @@ class UnifiedScanBatchVwap9Tests(unittest.TestCase):
             "confidence_adjustment": 0,
             "bar_interval_minutes": 30,
             "contract_version": "KRX_M30_V1",
+            "daily_dual_vwap": {"observed_at": "2026-11-10T10:00:00+09:00", "eligible": False},
             "technical": {
                 "basis": "COMPLETED_DAILY",
                 "as_of": "2026-11-09 15:30:00",
                 "vwap9": 105.0,
+                "vwap26": 112.0,
                 "regime": "BULL_CONFIRMED",
                 "stage": "WATCH",
                 "provisional": {"available": True, "basis": "INCOMPLETE_DAILY_NOT_CONFIRMED"},
@@ -69,6 +71,8 @@ class UnifiedScanBatchVwap9Tests(unittest.TestCase):
         self.assertEqual(wire["technical"]["basis"], "COMPLETED_DAILY")
         self.assertEqual(wire["technical"]["as_of"], "2026-11-09 15:30:00")
         self.assertEqual(wire["technical"]["vwap9"], 105.0)
+        self.assertEqual(wire["technical"]["vwap26"], 112.0)
+        self.assertEqual(wire["daily_dual_vwap"], scan_result["daily_dual_vwap"])
         self.assertEqual(wire["m30"]["vwap9"], 108.0)
 
 

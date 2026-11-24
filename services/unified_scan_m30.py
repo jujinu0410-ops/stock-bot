@@ -965,6 +965,23 @@ def scan(payload, service, now=None):
     # bullish confirmation is M30 alignment + current price > daily VWAP9.
     bull_confirmed_sim = bool(stacked_m30 and gt_daily_v9)
 
+    dual_vwap_observation = None
+    change_pct = quote.get("change_pct")
+    daily_v26 = number(daily.get("vwap26"))
+    if (price and quote.get("source") == "KIWOOM_KA10001"
+            and change_pct is not None and math.isfinite(change_pct) and minute.get("current")
+            and daily.get("basis") == "COMPLETED_DAILY" and number(daily_v9) and daily_v26):
+        # Keep a valid price below either line so Apps Script can detect a
+        # price crossing even if the earlier observation had no buy stage.
+        dual_vwap_observation = {
+            "observed_at": base["as_of"],
+            "eligible": bool(
+                decision["send_allowed"] and decision["stage"] in BUY_STAGES and not inverse_info_only
+                and bull_confirmed_sim and price > daily_v26
+                and str(m30.get("completed_bar") or "")[:10] == now.date().isoformat()
+            ),
+        }
+
     sim_data = {
 
         "qualified": bull_confirmed_sim,
@@ -1025,6 +1042,7 @@ def scan(payload, service, now=None):
     return {**base, **decision, **paper_extra, "engine_version": VERSION, "events": events, "sim_bull_confirmed": sim_data,
 
         "technical": daily, "m30": m30, "obv15": obv15, "exit_risk": exit_risk,
+        "daily_dual_vwap": dual_vwap_observation,
 
         "live_price": price, "live_change_pct": quote.get("change_pct"),
 

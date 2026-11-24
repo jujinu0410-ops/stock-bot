@@ -235,6 +235,52 @@ function umDirectionNote_M30(p,now) {
   return '';
 }
 
+const UM30_DUAL_VWAP_KEY='DAILY_DUAL_VWAP_BREAKOUT';
+
+function umPlanDualVwap_M30(result,state,now,dailyGate,continuous,unsafe,candidates) {
+  if(state.sent[UM30_DUAL_VWAP_KEY])return;
+  const observation=result.daily_dual_vwap||{},previous=state.dailyDualVwap;
+  const at=umQuoteTime_M30(observation.observed_at);
+  if(previous&&at<=umQuoteTime_M30(previous.observedAt))return;
+  const v26=Number((result.technical||{}).vwap26),price=dailyGate.price;
+  if(!dailyGate.valid||!isFinite(v26)||v26<=0||!isFinite(at)||
+     at<now.getTime()-1000||at>now.getTime()+UM30.MAX_RUNTIME) {
+    if(previous)previous.pending=false;
+    return;
+  }
+
+  const above=dailyGate.qualified&&price>v26;
+  const sameBasis=previous&&previous.asOf===dailyGate.as_of&&
+    previous.vwap9===dailyGate.vwap9&&previous.vwap26===v26;
+  const stage=result.stage,m30=result.m30||{},events=result.events||[];
+  const v9m=Number(m30.vwap9),v26m=Number(m30.vwap26);
+  const canSend=above&&observation.eligible===true&&result.send_allowed===true&&
+    !unsafe&&result.inverse_market_info!==true&&
+    price>v9m&&v9m>v26m&&v26m>0&&
+    (stage==='BUY_SETUP'||stage==='BUY_CONFIRMED')&&
+    events.some(e=>e.key===stage&&e.stage===stage)&&
+    !events.some(e=>['RISK','DOWN_EARLY','DOWN_CONFIRMED'].includes(e.stage));
+  const ctx=canSend?umDirectionContext_M30(result,new Date(at)):null;
+  const eligible=ctx&&ctx.daily_direction!=='DOWN'&&ctx.daily_regime!=='EARLY_WEAKENING'&&
+    ctx.m30_alignment==='GOLD';
+  const pending=Boolean(eligible&&sameBasis&&
+    (previous.price<=Math.max(dailyGate.vwap9,v26)||(previous.pending===true&&continuous)));
+
+  state.dailyDualVwap={asOf:dailyGate.as_of,vwap9:dailyGate.vwap9,vwap26:v26,
+    price:price,observedAt:observation.observed_at,pending:pending};
+  if(!pending||state.count<2)return;
+
+  const regular=candidates.find(e=>e.key===stage);
+  if(regular) {
+    // Keep the original event ID and record both receipts after the one send.
+    regular.dualVwapBreakout=true;
+  } else if(candidates.length===0) {
+    candidates.push({key:UM30_DUAL_VWAP_KEY,stage:stage,level:1,
+      reason:'일봉 VWAP9·26 돌파 + 30분봉 정배열',
+      stateKey:UM30_DUAL_VWAP_KEY,dualVwapBreakout:true});
+  }
+}
+
 function umPlan_M30(item,result,old,now) {
   const day=umDay_M30(now),slot=Math.floor(now.getTime()/300000);
   if(old&&old.quarantined===true) {
@@ -455,6 +501,7 @@ function umPlan_M30(item,result,old,now) {
       completed_bar: currentBar
     };
   }
+  umPlanDualVwap_M30(result,state,now,dailyVwap9Gate,isConsecutive,unsafe,candidates);
   if((freshBullishStack||firstStrong)&&buyGateOK&&!unsafe&&
     candidates.length===0&&
     !state.sent[earlyKey]&&!state.sent.BUY_SETUP&&!state.sent.BUY_CONFIRMED) {
@@ -466,7 +513,9 @@ function umPlan_M30(item,result,old,now) {
 }
 function umCommit_M30(plan,now,messageId,eventId) {
   plan.events.forEach(function(e){
-    plan.state.sent[e.stateKey]={at:now.toISOString(),messageId:messageId,eventId:eventId};
+    const receipt={at:now.toISOString(),messageId:messageId,eventId:eventId};
+    plan.state.sent[e.stateKey]=receipt;
+    if(e.dualVwapBreakout===true)plan.state.sent[UM30_DUAL_VWAP_KEY]=receipt;
     if(e.key==='MARKET_CRASH')plan.state.crashLevel=e.level;
     if(e.key==='STOP_BREACH') {
       plan.state.lastStopAt=now.toISOString();
@@ -654,6 +703,11 @@ function umSignalGlyph_M30(stage) {
   if(stage==='DOWN_EARLY')return {mark:'▽',color:'#1565c0'};
   return {mark:'▼',color:'#1565c0'};
 }
+function umDualVwapTitle_M30(p) {
+  if(!(p.events||[]).some(e=>e.dualVwapBreakout===true))return '';
+  if(p.result.stage==='BUY_CONFIRMED')return '강력 매수확인';
+  return p.result.stage==='BUY_SETUP'?'강화된 매수 관심':'';
+}
 // Display-only mixed-trend visual states: no change to event keys, send policy,
 // stop/risk decisions, deduplication, or machine-readable UNIFIED_EVENTS_JSON.
 function umSixSignalVisual_M30(p,now) {
@@ -669,6 +723,7 @@ function umSixSignalVisual_M30(p,now) {
     k==='MARKET_CRASH'||k==='MARKET_WEAK_EARLY'||k==='ATR_DOWN_1_0');
   const technicalWarning=keys.some(k=>k==='OBV15_WARNING'||k==='SELL_PREP_WARNING');
   if(hardRisk||(stage==='RISK'&&!technicalWarning))return {...base,caption:''};
+  if(umDualVwapTitle_M30(p))return {...base,caption:''};
   // Unconfirmed daily states cannot claim a confirmed up/down-trend.
   if(ctx.daily_direction==='UP'&&live.live_direction==='DOWN')
     return {mark:'V',color:'#1565c0',caption:'일봉 상승 중 눌림목'};
@@ -719,6 +774,7 @@ function umSignalBrief_M30(p,now) {
   const hasPct=typeof r.live_change_pct==='number'&&isFinite(r.live_change_pct);
   const pctVal=Number(r.live_change_pct||0)*100;
   const pctStr=hasPct?'당일 '+(pctVal>0?'+':'')+pctVal.toFixed(2)+'%':'';
+  const dualVwapTitle=umDualVwapTitle_M30(p);
   let basis='';
   if(keys.indexOf('VWAP30_BULL_STACK_EARLY')>=0&&r.stage!=='RISK'&&!(stop>0&&price>0&&price<=stop))
     basis='30분봉 정배열 새로 포착 · 현재가 > VWAP9 > VWAP26 · MTS 관심종목';
@@ -741,6 +797,8 @@ function umSignalBrief_M30(p,now) {
     basis='전일 기준 1 ATR 이상 하락 · 실시간 시세';
   else if(inverseInfo)
     basis='인버스 상승 조짐 · 기초지수 하락 확인 (매수확정 아님)';
+  else if(dualVwapTitle)
+    basis=umSignalGlyph_M30(r.stage).mark+' '+dualVwapTitle+' — 일봉 VWAP9·26 돌파 + 30분봉 정배열';
   else if(r.stage==='BUY_CONFIRMED')
     basis=officialDaily?dailyPrefix+' 매수확인 · 단기 조건 별도 검증':'기술적 매수확인 · 판단 기준 미확인';
   else if(r.stage==='BUY_SETUP')
@@ -846,12 +904,12 @@ function umMarketSubject_M30(p,now,round) {
   const item=p.item,stage=umDisplayStage_M30(p),rebound=umIsReboundDisplay_M30(p,now);
   const live=umLiveDirection_M30(p.result,now);
   const visual=umSixSignalVisual_M30(p,now);
-  const titleStage=visual.caption?(visual.caption+(stage==='RISK'?' · 위험경고':'')):
+  const titleStage=umDualVwapTitle_M30(p)||(visual.caption?(visual.caption+(stage==='RISK'?' · 위험경고':'')):
     (p.events||[]).some(e=>e.key==='VWAP30_BULL_STACK_EARLY')?
     '30분봉 정배열 관심':rebound?
     (live.m30_direction==='UP'?'일봉 약세 속 30분봉 반등 확인':'일봉 하락 추세 속 반등 진행'):
     ({BUY_SETUP:'상승조짐',BUY_CONFIRMED:'상승확인',
-      DOWN_EARLY:'하락조짐',DOWN_CONFIRMED:'하락확인',RISK:'위험경고'}[stage]||'기술신호');
+      DOWN_EARLY:'하락조짐',DOWN_CONFIRMED:'하락확인',RISK:'위험경고'}[stage]||'기술신호'));
   const mark=visual.mark;
   const context=umMarketSituation_M30(p,round,now);
   return '[주식 통합신호] '+mark+' '+
@@ -895,9 +953,11 @@ function umMessage_M30(plans,now,round) {
   const singleReboundTitle=singleRebound?
     (umLiveDirection_M30(plans[0].result,now).m30_direction==='UP'?'일봉 약세 속 30분봉 반등 확인':'일봉 하락 추세 속 반등 진행'):'';
   const singleMixedTitle=plans.length===1?umSixSignalVisual_M30(plans[0],now).caption:'';
+  const singleDualVwapTitle=plans.length===1?umDualVwapTitle_M30(plans[0]):'';
   const subjectHint=plans.length===1?
     (marks[0]+' '+plans[0].item.name+
-     (singleMixedTitle?' '+singleMixedTitle+(umDisplayStage_M30(plans[0])==='RISK'?' · 위험경고':''):
+     (singleDualVwapTitle?' '+singleDualVwapTitle:
+      singleMixedTitle?' '+singleMixedTitle+(umDisplayStage_M30(plans[0])==='RISK'?' · 위험경고':''):
       singleReboundTitle?' '+singleReboundTitle:'')+' · '):
     Array.from(new Set(marks)).join('')+' ';
   const subject=plans.length===1&&umIsMarketMail_M30(plans[0].item)?

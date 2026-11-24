@@ -117,3 +117,43 @@ class UnifiedJevDisabledTests(unittest.TestCase):
         self.assertTrue(result["send_allowed"])
         self.assertEqual([e["key"] for e in result["events"]], ["STOP_BREACH"])
         self.post.assert_not_called()
+
+    def test_dual_vwap_requires_strict_price_above_both_daily_lines_in_either_order(self):
+        for v9, v26, eligible in ((105, 109, True), (109, 105, True),
+                                  (105, 110, False), (105, 112, False)):
+            with self.subTest(v9=v9, v26=v26):
+                self.official.update(vwap9=v9, vwap26=v26)
+                result = self.scan()
+                self.assertEqual(result["stage"], "BUY_CONFIRMED")
+                self.assertEqual(result["daily_dual_vwap"], {
+                    "observed_at": self.now.isoformat(), "eligible": eligible,
+                })
+        self.post.assert_not_called()
+
+    def test_dual_vwap_keeps_only_valid_observations(self):
+        self.official.update(vwap9=110, vwap26=109)
+        result = self.scan()
+        self.assertEqual(result["stage"], "WATCH")
+        self.assertIs(result["daily_dual_vwap"]["eligible"], False)
+        with patch.object(m30, "daily_states", side_effect=ValueError("STALE_DAILY")):
+            self.assertIsNone(self.scan()["daily_dual_vwap"])
+        self.official["basis"] = "INCOMPLETE_DAILY_NOT_CONFIRMED"
+        self.assertIsNone(self.scan()["daily_dual_vwap"])
+        self.official["basis"] = "COMPLETED_DAILY"
+        self.service._fetch_kiwoom_minute_bars.return_value["bars"][0]["time"] = "20261119133000"
+        self.assertIsNone(self.scan()["daily_dual_vwap"])
+        self.post.assert_not_called()
+
+    def test_dual_vwap_respects_completed_m30_and_engine_safety(self):
+        self.official.update(vwap9=105, vwap26=109)
+        with patch.object(m30.KRXCalendar, "get_completed_30m_bar", return_value=None):
+            result = self.scan()
+            self.assertTrue(result["m30"]["available"])  # Previous session, before the first bar.
+            self.assertIs(result["daily_dual_vwap"]["eligible"], False)
+        with patch.object(m30, "entry_guard", return_value=["ABOVE_OVERHEAT_LIMIT"]):
+            self.assertIs(self.scan()["daily_dual_vwap"]["eligible"], False)
+        self.payload["stop_price"] = 110
+        result = self.scan()
+        self.assertEqual(result["stage"], "RISK")
+        self.assertIs(result["daily_dual_vwap"]["eligible"], False)
+        self.post.assert_not_called()
