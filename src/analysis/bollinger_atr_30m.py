@@ -199,12 +199,16 @@ def resolve_tick_regime(item: Dict[str, Any]) -> Optional[bool]:
     return is_etf
 
 
+def _bb26_2_bounds(middle, std):
+    offset = BB_SIGMA * std
+    return middle - offset, middle, middle + offset
+
+
 def bb26_2_bands(close: pd.Series) -> Tuple[pd.Series, pd.Series, pd.Series]:
     """Calculate BB(26, 2.0) using population standard deviation."""
-    rolling = pd.to_numeric(close, errors="coerce").where(lambda values: np.isfinite(values)).rolling(BB_WINDOW)
-    middle = rolling.mean()
-    offset = BB_SIGMA * rolling.std(ddof=BB_DDOF)
-    return middle - offset, middle, middle + offset
+    numeric = pd.to_numeric(close, errors="coerce")
+    rolling = numeric.where(np.isfinite(numeric)).rolling(BB_WINDOW)
+    return _bb26_2_bounds(rolling.mean(), rolling.std(ddof=BB_DDOF))
 
 
 def calculate_bb26_2(df: pd.DataFrame) -> Tuple[float, float, float]:
@@ -213,7 +217,10 @@ def calculate_bb26_2(df: pd.DataFrame) -> Tuple[float, float, float]:
     column = "Close" if "Close" in df.columns else "close_price" if "close_price" in df.columns else None
     if column is None:
         return np.nan, np.nan, np.nan
-    return tuple(float(band.iloc[-1]) for band in bb26_2_bands(df[column].iloc[-BB_WINDOW:]))
+    tail = pd.to_numeric(df[column], errors="coerce").iloc[-BB_WINDOW:]
+    if len(tail) != BB_WINDOW or tail.isna().any() or not np.isfinite(tail.to_numpy(dtype=float)).all():
+        return np.nan, np.nan, np.nan
+    return _bb26_2_bounds(float(tail.mean()), float(tail.std(ddof=BB_DDOF)))
 
 
 def normalize_to_legal_tick(price: float, direction: str, is_etf: bool) -> int:
