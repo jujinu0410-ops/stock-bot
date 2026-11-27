@@ -695,9 +695,15 @@ def scan(payload, service, now=None):
 
     stop = number(payload.get("stop_price"))
 
-    if price and stop and price <= stop:
+    # A completed first-breach warning belongs to the current holding episode,
+    # not to each new market day. Keep monitoring directional/ATR signals after
+    # acknowledgement; other genuinely new risk events remain unaffected.
+    # Only the authenticated held-stock dispatcher may send this strict bool.
+    stop_notified = "HELD" in sources and payload.get("stop_notified") is True
 
-        events.append({"key": "STOP_BREACH", "stage": "RISK", "reason": "손절선 침범", "level": 1})
+    if price and stop and price <= stop and not stop_notified:
+
+        events.append({"key": "STOP_BREACH", "stage": "RISK", "reason": "손절선 최초 침범", "level": 1})
 
     if ticker == "069500" and quote.get("change_pct") is not None:
 
