@@ -24,7 +24,7 @@ import subprocess
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 import requests
 
@@ -518,10 +518,9 @@ class PortfolioReconciler:
                 raw_sheet = self.read_remote_config()
                 if len(raw_sheet) > 1:
                     existing_rows = raw_sheet[1:]  # skip header
-                if raw_sheet and (raw_sheet[0][20:21] not in ([], [""], ["HOLDING_EPISODE"]) or (
-                    raw_sheet[0][20:21] != ["HOLDING_EPISODE"]
-                    and any(row[20:21] not in ([], [""]) for row in existing_rows)
-                )):
+                header = raw_sheet[0][20:21] if raw_sheet else []
+                occupied = any(row[20:21] not in ([], [""]) for row in existing_rows)
+                if header != ["HOLDING_EPISODE"] and (header not in ([], [""]) or occupied):
                     raise ValueError("MONITOR_CONFIG column U is already in use")
                 config_read_ok = True
             except Exception as exc:
@@ -618,7 +617,10 @@ class PortfolioReconciler:
                 cur_price = int(live.get("current_price") or live.get("raw_balance_price") or 0)
                 live_name = live.get("stock_name") or name
                 if strat["confirmed_closed"]:
-                    strat["holding_episode"] = f"ep-{uuid4().hex}"
+                    # Two retries reading the same CLOSED row must agree on the new episode.
+                    previous = strat["holding_episode"]
+                    identity = f"stockbot-holding:{self.spreadsheet_id}:{code}:{previous}"
+                    strat["holding_episode"] = f"ep-{uuid5(NAMESPACE_URL, identity).hex}"
 
                 # Validate strategy without modifying strategy config
                 val = validate_position_strategy(strat, live, prev_qty, prev_avg)

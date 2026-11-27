@@ -257,6 +257,9 @@ class TestPortfolioReconciler(unittest.TestCase):
         self.assertEqual(reopened[6], 7500)
         self.assertEqual(reopened[10:12], [9000, 10000])
 
+        self.reconciler.reconcile([held], sync_to_sheet=True)
+        self.assertEqual(mock_write.call_args.args[0][0][20], reopened[20])
+
         mock_read.return_value = [header, reopened]
         self.reconciler.reconcile([held], sync_to_sheet=True)
         self.assertEqual(mock_write.call_args.args[0][0][20], reopened[20])
