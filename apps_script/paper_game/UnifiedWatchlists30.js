@@ -235,6 +235,24 @@ function umDirectionNote_M30(p,now) {
   return '';
 }
 
+const UM30_BOLLINGER_RECEIPT='BOLLINGER_TRAILING_WATCH';
+const UM30_BOLLINGER_LABELS=Object.freeze({
+  COMPRESSION:'변동성 압축',
+  BUY_PREPARATION:'매수 준비',
+  TRAILING_WATCH:'트레일링 매수 관찰',
+});
+function umBollingerDetail_M30(result) {
+  const band=result.bollinger_assist;
+  if(!band||!Object.prototype.hasOwnProperty.call(UM30_BOLLINGER_LABELS,band.stage)||
+     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(band.completed_bar)||
+     !Number.isFinite(band.percent_b)||!Number.isFinite(band.bandwidth_pct)||
+     !Number.isFinite(band.compression_ceiling_pct))return '';
+  let text=UM30_BOLLINGER_LABELS[band.stage]+' · 30분 완료봉 '+band.completed_bar.slice(-5)+
+    ' · Band %b '+band.percent_b.toFixed(1)+' · Bandwidth '+band.bandwidth_pct.toFixed(2)+'%';
+  if(band.stage==='TRAILING_WATCH'&&Number.isFinite(band.volume_ratio))
+    text+=' · 거래량 '+band.volume_ratio.toFixed(2)+'배 (직전 20봉 중앙값 대비)';
+  return text;
+}
 function umPlan_M30(item,result,old,now) {
   const day=umDay_M30(now),slot=Math.floor(now.getTime()/300000);
   if(old&&old.quarantined===true) {
@@ -462,11 +480,18 @@ function umPlan_M30(item,result,old,now) {
       reason:'30분봉 정배열 + 현재가의 일봉 VWAP9 상회 확인 · MTS 확인용',
       stateKey:earlyKey});
   }
+  // Stage 3 can accompany an already selected E30 email. Stages 1 and 2
+  // remain in the scan audit, and there is no auxiliary-only delivery.
+  if(candidates.length&&!state.sent[UM30_BOLLINGER_RECEIPT]&&
+     !candidates.some(e=>e.stage==='RISK')&&result.bollinger_assist&&
+     result.bollinger_assist.stage==='TRAILING_WATCH'&&umBollingerDetail_M30(result))
+    candidates[0].bollingerAssist=true;
   return {item:item,result:result,state:state,events:candidates};
 }
 function umCommit_M30(plan,now,messageId,eventId) {
   plan.events.forEach(function(e){
     plan.state.sent[e.stateKey]={at:now.toISOString(),messageId:messageId,eventId:eventId};
+    if(e.bollingerAssist===true)plan.state.sent[UM30_BOLLINGER_RECEIPT]=plan.state.sent[e.stateKey];
     if(e.key==='MARKET_CRASH')plan.state.crashLevel=e.level;
     if(e.key==='STOP_BREACH') {
       plan.state.lastStopAt=now.toISOString();
@@ -828,7 +853,9 @@ function umMessage_M30(plans,now,round) {
     const pct=(change>0?'+':'')+change.toFixed(2)+'%';
     const brief=umSignalBrief_M30(p,now),news=umSignalNews_M30(p);
     const first=visual.mark+' '+item.name+' ('+item.ticker+')  '+price+' · 전일비 '+pct;
+    const bands=p.events.some(e=>e.bollingerAssist===true)?umBollingerDetail_M30(r):'';
     human.push(first,'  '+brief);
+    if(bands)human.push('  보조신호 · '+bands);
     if(news.length)human.push('  뉴스: '+news.join(' / '));
     human.push('');
     const pctColor=change>0?'#c62828':change<0?'#1565c0':'#444444';
@@ -841,6 +868,7 @@ function umMessage_M30(plans,now,round) {
       '<span style="white-space:nowrap">'+umEscape_M30(price)+'</span> '+
       '<span style="font-size:14px;color:'+pctColor+';white-space:nowrap">(전일비 '+umEscape_M30(pct)+')</span></div>'+
       '<div style="font-size:14px;color:#303030;margin-top:4px">'+umEscape_M30(brief)+'</div>'+
+      (bands?'<div style="font-size:13px;color:#555;margin-top:5px">보조신호 · '+umEscape_M30(bands)+'</div>':'')+
       newsHtml+'</div>');
     marks.push(visual.mark);
     metadata.push({id:id,source:item.sources.join('+'),ticker:item.ticker,name:item.name,
@@ -943,6 +971,7 @@ function umRequest_M30(item,props) {
   const url=String(props.getProperty('SIGNAL_API_URL')||'').replace(/\/$/,''),token=props.getProperty('SIGNAL_API_TOKEN');
   if(!url||!token)throw new Error('UNIFIED_API_NOT_CONFIGURED');
   const data=Object.assign({},item);delete data.refs;delete data.quantity;delete data.average_price;
+  if(props.getProperty('E30_BOLLINGER_ASSIST_ENABLED')==='true')data.bollinger_assist=true;
   return {url:url+'/unified-scan',method:'post',contentType:'application/json',
     headers:{'X-StockBot-Token':token},payload:JSON.stringify(data),muteHttpExceptions:true};
 }
@@ -1188,7 +1217,7 @@ function umTick5mM30(now) {
           }
           evaluated++;scan.retry.delete(item.ticker);
           audit.push([now,item.ticker,item.sources.join('+'),r.stage,r.send_allowed,r.live_price||'',
-            (r.reasons||[]).join('|'),r.engine_version,(r.events||[]).map(e=>e.key).join('|')]);
+            (r.reasons||[]).concat(umBollingerDetail_M30(r)||[]).join('|'),r.engine_version,(r.events||[]).map(e=>e.key).join('|')]);
         }catch(e){
           const reason='STATE_'+String(e).slice(0,160);
           failedEntries.push({entry:entry,item:item,reason:reason});
@@ -1242,7 +1271,7 @@ function umTick5mM30(now) {
           }
           evaluated++;scan.retry.delete(item.ticker);
           audit.push([now,item.ticker,item.sources.join('+'),r.stage,r.send_allowed,r.live_price||'',
-            (r.reasons||[]).join('|'),r.engine_version,(r.events||[]).map(e=>e.key).join('|')]);
+            (r.reasons||[]).concat(umBollingerDetail_M30(r)||[]).join('|'),r.engine_version,(r.events||[]).map(e=>e.key).join('|')]);
         }catch(e){
           errors++;scan.retry.add(item.ticker);
           audit.push([now,item.ticker,item.sources.join('+'),'ERROR',false,'',
