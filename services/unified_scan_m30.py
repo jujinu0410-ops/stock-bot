@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from dataclasses import replace
-
 import math
 
 import threading
@@ -41,8 +39,6 @@ import requests
 from services.unified_signal_engine import evaluate_signal, normalize_sources, BUY_STAGES
 
 from src.analysis.held_obv30_warning import analyze_obv15_sell_warning
-
-from src.analysis.jev_alert_gate import JevGateSettings, evaluate_jev_alert_gate
 
 from src.runtime.krx_calendar import KRXCalendar
 
@@ -454,6 +450,20 @@ def minute_is_current(minute, now):
 
 
 
+def breakeven_observation(minute, now):
+    """Pair the existing Kiwoom minute price with its provider timestamp."""
+    if minute.get("source") != "KIWOOM_KA10080" or not minute_is_current(minute, now):
+        return None
+    bar = minute["bars"][-1]
+    stamp = datetime.strptime(str(bar["time"]), "%Y%m%d%H%M%S").replace(tzinfo=KST)
+    price = bar.get("close")
+    if stamp.date() != now.date() or stamp > now or type(price) not in (int, float):
+        return None
+    if not math.isfinite(price) or price <= 0:
+        return None
+    return {"price": price, "as_of": stamp.isoformat(timespec="seconds")}
+
+
 def entry_guard(price, atr, anchor, daily, m30, minute, quote):
 
     reasons = []
@@ -708,7 +718,8 @@ def scan(payload, service, now=None):
 
             "as_of": now.isoformat(timespec="seconds"), "session": "KRX_SESSION",
 
-            "order_api": False, "mail_sent": False, "bar_interval_minutes": 30, "contract_version": "KRX_M30_V1"}
+            "order_api": False, "mail_sent": False, "bar_interval_minutes": 30, "contract_version": "KRX_M30_V1",
+            "jev_gate": {"status": "JEV_GATE_DISABLED", "decision": "NOT_EVALUATED"}}
 
     if payload.get("suspended") is True:
 
@@ -811,7 +822,8 @@ def scan(payload, service, now=None):
 
     paper_frame, paper_source, paper_quality = None, "NONE", "HISTORY_NOT_REQUESTED"
 
-    need_history = bool(daily) or bool(price and atr)
+    track_breakeven = "HELD" in sources and (stop_notified or (stop and price and price <= stop))
+    need_history = bool(daily) or bool(price and atr) or track_breakeven
 
     if price and need_history:
 
@@ -1006,43 +1018,7 @@ def scan(payload, service, now=None):
 
         "sector_etf_pct": sq.get("change_pct") if sq.get("available") else None})
 
-    # One active Jev policy for every buy, independent of discovery source.
-
-    gate = {"decision":"SEND", "reason":"RISK_BYPASS_OR_NO_BUY"}
-
-    if stage in BUY_STAGES and decision["send_allowed"] and payload.get("evaluate_jev", True):
-
-        if inverse_info_only:
-
-            # Explicitly informational, non-executable alert. JEV still guards
-
-            # confirmed entries; it must not hide market-wide early observations.
-
-            gate = {"status": "EARLY_MARKET_INFO", "decision": "SEND",
-
-                    "reason": "INDEX_INVERSE_EARLY_ONLY_NO_CONFIRMED_BUY"}
-
-        else:
-
-            cfg = replace(JevGateSettings.from_env("UNIFIED"), mode="ACTIVE")
-
-            gate = evaluate_jev_alert_gate({"source":"UNIFIED", "ticker":ticker, "name":base["name"],
-
-                "event_keys":[stage], "current_price":price, "change_pct":quote.get("change_pct"),
-
-                **daily, "context":{"market_adjustment":decision["confidence_adjustment"], "30m":m30}}, settings=cfg)
-
-            # Inability to verify the final buy filter is a hold, never a new buy.
-
-            if gate.get("status") != "OK" or gate.get("decision") != "SEND":
-
-                decision["send_allowed"] = False
-
-                reasons.append("JEV_BUY_HOLD:" + str(gate.get("reason")))
-
-    stacked_m30, m30_daily_vwap9_qualified, m30_daily_obv_wma9_qualified = (
-        m30_bullish_qualification(price, m30, daily, now)
-    )
+    stacked_m30, m30_daily_vwap9_qualified, _ = m30_bullish_qualification(price, m30, daily, now)
 
     daily_v9 = daily.get("vwap9")
     daily_obv = daily.get("obv")
@@ -1123,7 +1099,9 @@ def scan(payload, service, now=None):
         "live_price": price, "live_change_pct": quote.get("change_pct"),
 
         "live_price_source": quote.get("source"), "atr14":atr, "anchor":anchor,
+        "breakeven_observation": breakeven_observation(minute, now) if track_breakeven else None,
 
-        "market_proxy":proxy, "sector_etf":sector, "jev_gate":gate,
+        "market_proxy":proxy, "sector_etf":sector,
+        "inverse_market_info": inverse_info_only and stage in BUY_STAGES and decision["send_allowed"],
 
         "reasons":decision["reasons"]+reasons, "kiwoom_429_retry_count":session.retry_count}

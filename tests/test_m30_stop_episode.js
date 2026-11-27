@@ -106,6 +106,47 @@ const watch = {...item,sources:['YOUTUBE']};
 assert.equal(sandbox.umPlan_M30(watch,stop,null,at).events.length,0);
 assert.doesNotMatch(sandbox.umSignalBrief_M30({...d2,item:watch},at),/본전 회복까지/);
 
+const recoveryItem={...item,average_price:100,stop_price:90};
+const tick=(d,t)=>new Date(`2026-11-${d}T${t}:00+09:00`);
+const view=(price,at,base={...stop,stage:'WATCH',events:[],send_allowed:false})=>({
+  ...base,live_price:price,breakeven_observation:{price,as_of:at.toISOString()}
+});
+const recoveredEvent=p=>p.events.find(e=>e.key==='BREAKEVEN_RECOVERED');
+const firstAt=tick(26,'14:50'),openAt=tick(27,'09:05');
+const seed=sandbox.umPlan_M30(recoveryItem,view(85,firstAt,stop),null,firstAt);
+assert.equal(recoveredEvent(seed),undefined,'a planned stop alone cannot alert');
+assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(100,openAt),null,openAt)),undefined);
+const seedState=sandbox.umCommit_M30(seed,firstAt,'first-stop','first-id');
+const loaded=JSON.parse(JSON.stringify(seedState));
+const atAverage=sandbox.umPlan_M30(recoveryItem,view(100,openAt),loaded,openAt);
+assert.equal(recoveredEvent(atAverage).average,100);
+assert.match(sandbox.umMessage_M30([atAverage],openAt).subject,/본전 회복/);
+assert.match(sandbox.umSignalBrief_M30(atAverage,openAt),/평단 100원 · 확인가 100원/);
+const sentRecovery=sandbox.umCommit_M30(atAverage,openAt,'recovery-receipt','recovery-id');
+const later=tick(27,'09:10');
+assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(110,later),sentRecovery,later)),undefined);
+const nextTradingDay=new Date('2026-11-30T09:05:00+09:00');
+assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(110,nextTradingDay),sentRecovery,nextTradingDay)),undefined);
+assert.equal(sentRecovery.breakeven.receipt.messageId,'recovery-receipt');
+const lowerAverage={...recoveryItem,average_price:80};
+const averageReset=sandbox.umPlan_M30(lowerAverage,view(85,openAt),loaded,openAt);
+assert.equal(recoveredEvent(averageReset),undefined,'changed average discards the old threshold crossing');
+const belowNew=sandbox.umPlan_M30(lowerAverage,view(79,later),averageReset.state,later);
+const later2=tick(27,'09:15');
+assert.equal(recoveredEvent(sandbox.umPlan_M30(lowerAverage,view(80,later2),belowNew.state,later2)).average,80);
+for(const invalid of [null,true,'',' ',0,-1,Infinity,NaN,'invalid']){
+  assert.equal(recoveredEvent(sandbox.umPlan_M30({...recoveryItem,average_price:invalid},view(100,openAt),loaded,openAt)),undefined);
+  assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(invalid,openAt),loaded,openAt)),undefined);
+}
+assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(100,tick(27,'09:01')),loaded,openAt)),undefined);
+assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(100,later),loaded,openAt)),undefined);
+assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(100,firstAt),loaded,openAt)),undefined);
+const repriced={...recoveryItem,holding_episode:'ep-'+'c'.repeat(32)};
+const newSeed=sandbox.umPlan_M30(repriced,view(85,later,stop),sentRecovery,later);
+assert.ok(newSeed.events.some(e=>e.key==='STOP_BREACH'));
+const newHolding=sandbox.umCommit_M30(newSeed,later,'new-stop','new-stop-event');
+assert.ok(recoveredEvent(sandbox.umPlan_M30(repriced,view(100,later2),newHolding,later2)));
+
 // In-memory stand-ins exercise the real draft journal, commit, and state reload.
 let pendingRows=[], stateRows=[], sendAttempts=0;
 const properties = new Map();
@@ -165,5 +206,21 @@ sandbox.umPutState_M30(damagedStore,'005930',quarantined,at);
 damagedStore.dirty=true;
 sandbox.umFlushStateStore_M30(damagedStore,at);
 assert.equal(stateRows.find(row=>row[0]==='005930')[3],damaged);
+
+stateRows=[];receipt=null;sendAttempts=0;
+const recoveryRetry=sandbox.umPlan_M30(recoveryItem,view(101,openAt),loaded,openAt);
+assert.throws(()=>sandbox.umDispatch_M30([recoveryRetry],testProps,openAt,null,null),/mail provider failed/);
+assert.equal(stateRows.length,0,'failed send has no recovery receipt');
+const recoveryDraft=JSON.parse(testProps.getProperty('UM2_PENDING'));
+recoveryDraft.created=Date.now()-120001;
+testProps.setProperty('UM2_PENDING',JSON.stringify(recoveryDraft));
+logWriteCrash=true;
+assert.throws(()=>sandbox.umResumeDelivery_M30(testProps),/audit write failed/);
+const recoveredState=sandbox.umLoadState_M30(testProps,item.ticker,sandbox.umOpenStateStore_M30(book,testProps,[]));
+assert.equal(recoveredState.breakeven.receipt.messageId,'gmail-receipt');
+assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(105,later),recoveredState,later)),undefined);
+logWriteCrash=false;
+sandbox.umResumeDelivery_M30(testProps);
+assert.equal(sendAttempts,2,'the successful recovery receipt prevents duplicate retry');
 
 console.log('PASS: first stop, trading-day rollover, recross, up/down, new average, repurchase, watchlist, failed mail and durable recovery.');
