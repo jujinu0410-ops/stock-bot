@@ -28,6 +28,8 @@ from zoneinfo import ZoneInfo
 
 
 
+import numpy as np
+
 import pandas as pd
 
 import requests
@@ -143,6 +145,38 @@ def daily_vwap9_gate(price, daily, now):
     return stamp.strftime("%H:%M:%S") == "15:30:00" and stamp.date() < now.date() and float(price) > vwap9
 
 
+def _finite_value(value):
+    if type(value) not in (int, float):
+        return None
+    try:
+        return value if math.isfinite(value) else None
+    except OverflowError:
+        return None
+
+
+def daily_obv_wma9_status(daily, now):
+    """Report the canonical session, validated window, and values for Apps Script."""
+    daily = daily if isinstance(daily, dict) else {}
+    expected_as_of = f"{previous_day(now).isoformat()} 15:30:00"
+    as_of = daily.get("as_of")
+    obv = _finite_value(daily.get("obv"))
+    wma9 = _finite_value(daily.get("obv_wma9"))
+    valid = (
+        daily.get("basis") == "COMPLETED_DAILY"
+        and as_of == expected_as_of
+        and daily.get("obv_wma9_window_valid") is True
+        and obv is not None
+        and wma9 is not None
+    )
+    return {"session_date": now.date().isoformat(), "expected_as_of": expected_as_of,
+            "as_of": as_of, "valid": valid, "qualified": valid and obv > wma9,
+            "obv": obv if valid else None, "wma9": wma9 if valid else None}
+
+
+def daily_obv_wma9_gate(daily, now):
+    return daily_obv_wma9_status(daily, now)["qualified"]
+
+
 def apply_daily_vwap9_gate(stage, price, daily, now):
     """Fail closed for all bullish stages; preserve WATCH and downside/risk stages."""
     passed = daily_vwap9_gate(price, daily, now)
@@ -151,26 +185,46 @@ def apply_daily_vwap9_gate(stage, price, daily, now):
     return stage, passed
 
 
+def is_confirmed_rebound(stage, daily, m30, quote, now):
+    """Match the dispatcher's confirmed downside-trend rebound classification."""
+    change = _finite_value(quote.get("change_pct"))
+    slot = KRXCalendar.get_completed_30m_bar(now)
+    return (
+        stage == "DOWN_CONFIRMED" and daily.get("basis") == "COMPLETED_DAILY"
+        and daily.get("regime") in {"BEAR_CONFIRMED", "BOUNCE_IN_DOWNREGIME",
+                                    "OBV_REBOUND_BASE_DOWN", "EARLY_WEAKENING"}
+        and quote.get("available") is True and quote.get("source") == "KIWOOM_KA10001"
+        and change is not None and change > 0 and slot is not None
+        and m30.get("available") is True and bool(m30.get("source"))
+        and m30.get("completed_bar") == f"{now.date()} {slot[2]}:00"
+        and m30.get("vwap9_dir") == "RISING"
+    )
+
+
 def m30_bullish_qualification(price, m30, daily, now):
     p, v9, v26 = number(price), number((m30 or {}).get("vwap9")), number((m30 or {}).get("vwap26"))
     stacked = bool((m30 or {}).get("available") is True and (m30 or {}).get("gold") is True
                    and p and v9 and v26 and p > v9 > v26)
-    return stacked, bool(stacked and daily_vwap9_gate(p, daily, now))
+    return (
+        stacked,
+        bool(stacked and daily_vwap9_gate(p, daily, now)),
+        bool(stacked and daily_obv_wma9_gate(daily, now)),
+    )
+
+
+def _previous_krx_sessions(day, count):
+    sessions = []
+    for _ in range(20 * count):
+        day -= timedelta(days=1)
+        if KRXCalendar.is_krx_trading_day(day):
+            sessions.append(day)
+            if len(sessions) == count:
+                return sessions[::-1]
+    raise ValueError("PREVIOUS_TRADING_DAY_UNAVAILABLE")
 
 
 def previous_day(now):
-
-    day = now.date() - timedelta(days=1)
-
-    for _ in range(20):
-
-        if KRXCalendar.is_krx_trading_day(day):
-
-            return day
-
-        day -= timedelta(days=1)
-
-    raise ValueError("PREVIOUS_TRADING_DAY_UNAVAILABLE")
+    return _previous_krx_sessions(now.date(), 1)[0]
 
 
 
@@ -248,7 +302,7 @@ def daily_frame(ticker):
 
 
 
-def indicators(df):
+def indicators(df, *, with_obv_wma9=False):
 
     """Same daily VWAP/OBV slope thresholds as the existing REGIME sheets."""
 
@@ -298,6 +352,13 @@ def indicators(df):
 
                   obv_rel="GOLD" if obv.iloc[-1] > o9.iloc[-1] else "DEAD")
 
+    if with_obv_wma9:
+        # The gate uses a separate WMA. Regime classification keeps its SMA.
+        weighted = float(np.dot(obv.tail(9).to_numpy(), np.arange(1, 10, dtype=float)) / 45)
+        if math.isfinite(weighted):
+            result["obv_wma9"] = weighted
+            result["obv_wma9_rel"] = "GOLD" if result["obv"] > weighted else "DEAD"
+
     a, b, c, d = [result[k] for k in ("vwap9_dir", "vwap26_dir", "obv_dir", "obv9_dir")]
 
     if result["vwap_rel"] == result["obv_rel"] == "GOLD" and a == b == c == d == "RISING":
@@ -333,10 +394,17 @@ def indicators(df):
 def daily_states(df, now, live_price=None):
     if df.index[-1].date() > now.date(): raise ValueError("FUTURE_DAILY_BAR")
     completed=df.loc[df.index.date < now.date()].copy()
-    if len(completed)<30 or completed.index[-1].date()!=previous_day(now):
+    sessions = _previous_krx_sessions(now.date(), 9)
+    if len(completed)<30 or completed.index[-1].date()!=sessions[-1]:
         raise ValueError("DAILY_COMPLETED_HISTORY_STALE_OR_INCOMPLETE")
-    official={**indicators(completed),"ma20":float(completed.Close.tail(20).mean()),
-              "basis":"COMPLETED_DAILY","as_of":completed.index[-1].strftime("%Y-%m-%d 15:30:00")}
+    recent = completed.tail(9)
+    window_valid = (list(recent.index.date) == sessions
+                    and np.isfinite(recent[["Open", "High", "Low", "Close", "Volume"]].to_numpy()).all()
+                    and (recent[["Open", "High", "Low", "Close"]] > 0).to_numpy().all()
+                    and (recent.Volume >= 0).all())
+    official={**indicators(completed, with_obv_wma9=window_valid),"ma20":float(completed.Close.tail(20).mean()),
+              "basis":"COMPLETED_DAILY","as_of":completed.index[-1].strftime("%Y-%m-%d 15:30:00"),
+              "obv_wma9_window_valid":bool(window_valid)}
     provisional={"available":False,"basis":"INCOMPLETE_DAILY_NOT_CONFIRMED"}
     if df.index[-1].date()==now.date():
         partial=df.copy()
@@ -905,13 +973,17 @@ def scan(payload, service, now=None):
 
             stage = "BUY_SETUP"
 
-    # Final source-side bullish filter, after the inverse early-observation
-    # exception: no BUY_SETUP/BUY_CONFIRMED may pass below or without the
-    # latest completed daily VWAP9. Downside and risk events are untouched.
+    # Final source-side bullish filters, after the inverse early-observation
+    # exception: filter buy stages and source-side confirmed rebound events.
     pre_gate_stage = stage
     stage, daily_vwap9_passed = apply_daily_vwap9_gate(stage, price, daily, now)
+    obv_gate = daily_obv_wma9_status(daily, now)
     if pre_gate_stage in BUY_STAGES and not daily_vwap9_passed:
         reasons.append("DAILY_VWAP9_GATE_CLOSED")
+    if not obv_gate["qualified"] and (pre_gate_stage in BUY_STAGES or
+                                      is_confirmed_rebound(stage, daily, m30, quote, now)):
+        stage = "WATCH"
+        reasons.append("DAILY_OBV9_WMA_GATE_CLOSED")
 
     if stage != "WATCH" and price:
 
@@ -959,7 +1031,7 @@ def scan(payload, service, now=None):
 
         "sector_etf_pct": sq.get("change_pct") if sq.get("available") else None})
 
-    stacked_m30, gt_daily_v9 = m30_bullish_qualification(price, m30, daily, now)
+    stacked_m30, m30_daily_vwap9_qualified, m30_daily_obv_qualified = m30_bullish_qualification(price, m30, daily, now)
 
     daily_v9 = daily.get("vwap9")
 
@@ -967,9 +1039,9 @@ def scan(payload, service, now=None):
 
     gt_prev_high = bool(price and prev_high_val and price > prev_high_val)
 
-    # Previous-day high is retained as context only; the user's required
-    # bullish confirmation is M30 alignment + current price > daily VWAP9.
-    bull_confirmed_sim = bool(stacked_m30 and gt_daily_v9)
+    # A simulated bullish confirmation now requires M30 alignment and both
+    # completed-daily gates: price above VWAP9 and OBV above WMA9.
+    bull_confirmed_sim = m30_daily_vwap9_qualified and m30_daily_obv_qualified
 
     sim_data = {
 
@@ -977,10 +1049,11 @@ def scan(payload, service, now=None):
 
         "stacked_m30": stacked_m30,
 
-        "price_gt_daily_vwap9": gt_daily_v9,
+        "price_gt_daily_vwap9": m30_daily_vwap9_qualified,
 
-        "daily_vwap9_gate": {"qualified": gt_daily_v9, "basis": daily.get("basis"),
+        "daily_vwap9_gate": {"qualified": daily_vwap9_passed, "basis": daily.get("basis"),
                              "as_of": daily.get("as_of")},
+        "daily_obv_wma9_gate": obv_gate,
 
         "price_gt_prev_high": gt_prev_high,
 
@@ -1030,7 +1103,7 @@ def scan(payload, service, now=None):
 
     return {**base, **decision, **paper_extra, "engine_version": VERSION, "events": events, "sim_bull_confirmed": sim_data,
 
-        "technical": daily, "m30": m30, "obv15": obv15, "exit_risk": exit_risk,
+        "technical": daily, "daily_obv_wma9_gate": obv_gate, "m30": m30, "obv15": obv15, "exit_risk": exit_risk,
 
         "live_price": price, "live_change_pct": quote.get("change_pct"),
 

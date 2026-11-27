@@ -12,6 +12,9 @@ OFFICIAL = {
     "basis": "COMPLETED_DAILY",
     "as_of": "2026-11-09 15:30:00",
     "vwap9": 105.0,
+    "obv": 120.0,
+    "obv_wma9": 110.0,
+    "obv_wma9_window_valid": True,
     "prev_high": 120.0,
 }
 
@@ -39,25 +42,27 @@ class DailyVwap9GateTests(unittest.TestCase):
         self.assertEqual(apply_daily_vwap9_gate("RISK", 104, OFFICIAL, NOW), ("RISK", False))
         self.assertEqual(apply_daily_vwap9_gate("WATCH", 104, OFFICIAL, NOW), ("WATCH", False))
 
-    def test_m30_alignment_plus_daily_vwap9_is_sufficient_without_prev_high(self):
+    def test_m30_alignment_plus_daily_vwap9_and_obv_wma9_without_prev_high(self):
         m30 = {"available": True, "gold": True, "vwap9": 108.0, "vwap26": 100.0}
-        stacked, qualified = m30_bullish_qualification(110, m30, OFFICIAL, NOW)
+        stacked, vwap_qualified, obv_qualified = m30_bullish_qualification(110, m30, OFFICIAL, NOW)
         self.assertTrue(stacked)
-        self.assertTrue(qualified)  # live price 110 is below prev_high 120
+        self.assertTrue(vwap_qualified)
+        self.assertTrue(obv_qualified)  # live price 110 is below prev_high 120
 
     def test_m30_alignment_alone_is_not_sufficient(self):
         m30 = {"available": True, "gold": True, "vwap9": 108.0, "vwap26": 100.0}
         daily_below = {**OFFICIAL, "vwap9": 115.0}
-        stacked, qualified = m30_bullish_qualification(110, m30, daily_below, NOW)
+        stacked, vwap_qualified, obv_qualified = m30_bullish_qualification(110, m30, daily_below, NOW)
         self.assertTrue(stacked)
-        self.assertFalse(qualified)
+        self.assertFalse(vwap_qualified)
+        self.assertTrue(obv_qualified)
 
     def test_unverified_or_non_aligned_m30_never_qualifies(self):
         m30 = {"available": False, "gold": True, "vwap9": 108.0, "vwap26": 100.0}
-        self.assertEqual(m30_bullish_qualification(110, m30, OFFICIAL, NOW), (False, False))
+        self.assertEqual(m30_bullish_qualification(110, m30, OFFICIAL, NOW), (False, False, False))
         m30["available"] = True
         m30["gold"] = False
-        self.assertEqual(m30_bullish_qualification(110, m30, OFFICIAL, NOW), (False, False))
+        self.assertEqual(m30_bullish_qualification(110, m30, OFFICIAL, NOW), (False, False, False))
 
 
 if __name__ == "__main__":

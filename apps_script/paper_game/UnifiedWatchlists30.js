@@ -176,6 +176,30 @@ function umDailyVwap9Gate_M30(result,now) {
   const valid=ctx.daily_basis==='COMPLETED_DAILY'&&quoteValid&&isFinite(vwap9)&&vwap9>0;
   return {valid:valid,qualified:valid&&price>vwap9,price:price,vwap9:vwap9,as_of:ctx.daily_as_of||''};
 }
+function umDailyObvWma9Gate_M30(result,now) {
+  const r=result||{},tech=r.technical||{},gate=r.daily_obv_wma9_gate||{},day=umDay_M30(now);
+  const expected=gate.expected_as_of;
+  // Python resolves the KRX calendar and vets the nine completed sessions.
+  const calendarValid=gate.session_date===day&&typeof expected==='string'&&
+    /^(\d{4}-\d{2}-\d{2}) 15:30:00$/.test(expected)&&expected.slice(0,10)<day&&
+    Number.isFinite(umQuoteTime_M30(expected.replace(' ','T')+'+09:00'));
+  const numeric=Number.isFinite(gate.obv)&&Number.isFinite(gate.wma9);
+  const gold=numeric&&gate.obv>gate.wma9;
+  const valid=calendarValid&&tech.basis==='COMPLETED_DAILY'&&tech.as_of===expected&&
+    gate.as_of===expected&&gate.valid===true&&numeric&&gate.qualified===gold;
+  return {valid:valid,qualified:valid&&gold,obv:valid?gate.obv:null,wma9:valid?gate.wma9:null,
+    as_of:valid?expected:'',previous_session:calendarValid?expected.slice(0,10):''};
+}
+function umCarryM30Stack_M30(old,state,previousSession) {
+  if(!old||old.day!==previousSession||!old.vwap30Source||old.vwap30StackValid!==true||
+     old.vwap30Stacked!==true||old.vwap30ObvGateValid!==true||
+     String(old.vwap30Bar||'').slice(0,10)!==previousSession)return;
+  // Keep verified evidence only. Daily slot counts and sent keys still reset.
+  ['vwap30StackValid','vwap30Stacked','vwap30Source','vwap30Bar','vwap30Price','vwap30Vwap9',
+    'vwap30Vwap26','vwap30Watermark','vwap30DailyGateInitialized','vwap30DailyGateValid',
+    'vwap30DailyQualified','vwap30ObvGateInitialized','vwap30ObvGateValid',
+    'vwap30ObvQualified','vwap30ObvAsOf'].forEach(key=>{state[key]=old[key];});
+}
 function umLiveDirection_M30(result,now) {
   const r=result||{},ctx=umDirectionContext_M30(r,now);
   const official=ctx.daily_basis==='COMPLETED_DAILY';
@@ -324,13 +348,22 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
     regime:provisional.regime||'',stage:provisional.stage||'',volume_scaled:false};
   state.lastResult.directionContext=umDirectionContext_M30(result,now);
   const dailyVwap9Gate=umDailyVwap9Gate_M30(result,now);
+  const dailyObvWma9Gate=umDailyObvWma9Gate_M30(result,now);
+  if(old&&old.day!==day)umCarryM30Stack_M30(old,state,dailyObvWma9Gate.previous_session);
   state.lastResult.dailyVwap9Gate=dailyVwap9Gate;
+  state.lastResult.dailyObvWma9Gate=dailyObvWma9Gate;
   const candidates=[];
   if(result.send_allowed===true)(result.events||[]).forEach(function(e){
-    // Every bullish event requires the latest completed daily VWAP9 gate.
-    // Missing/stale/provisional daily evidence is fail-closed; risk/down events
-    // deliberately bypass this bullish-only filter.
-    if((e.key==='BUY_SETUP'||e.key==='BUY_CONFIRMED')&&!dailyVwap9Gate.qualified)return;
+    // Every bullish event requires both latest completed-daily gates.
+    // Missing/stale/provisional daily evidence is fail-closed; true downside
+    // and risk events deliberately bypass this bullish-only filter.
+    if((e.key==='BUY_SETUP'||e.key==='BUY_CONFIRMED')&&
+       (!dailyVwap9Gate.qualified||!dailyObvWma9Gate.qualified)) {
+      if(!dailyObvWma9Gate.qualified&&Array.isArray(result.reasons)&&
+         !result.reasons.includes('DAILY_OBV9_WMA_GATE_CLOSED'))
+        result.reasons.push('DAILY_OBV9_WMA_GATE_CLOSED');
+      return;
+    }
     // One shared calculation, source-aware notifications only:
     // HELD -> both directions / stop / OBV risk; market ETFs -> both directions;
     // all other watchlists keep their BUY-only policy.
@@ -354,7 +387,7 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
        result.live_price_source==='KIWOOM_KA10001'&&
        typeof result.live_change_pct==='number'&&
        isFinite(result.live_change_pct)&&result.live_change_pct>0) {
-      const liveCtx=umLiveDirection_M30(result,now);
+      const liveCtx=umLiveDirection_M30(result,observedAt);
       if(liveCtx.official) {
         const hasRisk=result.stage==='RISK'||
           (!umStopNotifiedForHolding_M30(item,state)&&Number(item.stop_price)>0&&
@@ -363,6 +396,11 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
             state.sent.SELL_PREP_WARNING||state.sent.VWAP30_BULL_STACK_EARLY));
         const confirmedRebound=e.key==='DOWN_CONFIRMED'&&liveCtx.daily_bearish&&liveCtx.m30_direction==='UP'&&!hasRisk;
         if(!confirmedRebound)return;
+        if(!dailyObvWma9Gate.qualified) {
+          if(Array.isArray(result.reasons)&&!result.reasons.includes('DAILY_OBV9_WMA_GATE_CLOSED'))
+            result.reasons.push('DAILY_OBV9_WMA_GATE_CLOSED');
+          return;
+        }
       }
     }
     const key=e.key+(e.key==='MARKET_CRASH'?':'+e.level:'');
@@ -384,8 +422,9 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
   const price=Number(result.live_price),v9=Number(m30.vwap9),v26=Number(m30.vwap26);
   const currentSource=String(m30.source||'');
   const currentBar=String(m30.completed_bar||'');
-  const fresh=m30.available===true&&
-    currentBar.slice(0,10)===day&&
+  const observedStamp=Utilities.formatDate(observedAt,UM30.TZ,'yyyy-MM-dd HH:mm:ss');
+  const verifiedBar=umDirectionContext_M30(result,observedAt).completed_bar;
+  const fresh=Boolean(verifiedBar)&&currentBar===verifiedBar&&currentBar.slice(0,10)===day&&
     String(result.live_price_source||'')==='KIWOOM_KA10001'&&
     isFinite(price)&&price>0&&isFinite(v9)&&v9>0&&isFinite(v26)&&v26>0;
   const stacked=fresh&&price>v9&&v9>v26&&m30.gold===true;
@@ -411,11 +450,24 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
   // crosses above daily VWAP9 while the same verified M30 stack remains valid.
   const dailyGateCross=previouslySeen&&comparable&&wasStacked&&stacked&&
     state.vwap30DailyGateInitialized===true&&state.vwap30DailyQualified===false&&dailyVwap9Gate.qualified;
-  const freshBullishStack=(freshCross&&dailyVwap9Gate.qualified)||dailyGateCross;
+  const dailyObvGateCross=previouslySeen&&comparable&&wasStacked&&stacked&&
+    state.vwap30ObvGateInitialized===true&&state.vwap30ObvQualified===false&&
+    dailyObvWma9Gate.qualified&&
+    (state.vwap30ObvGateValid!==true||state.vwap30ObvAsOf!==dailyObvWma9Gate.as_of)&&
+    !isDataCorrectionCross;
+  if(dailyObvGateCross)state.vwap30ObvTransitionAsOf=dailyObvWma9Gate.as_of;
+  if(!fresh||!stacked||!dailyObvWma9Gate.qualified||!comparable)
+    delete state.vwap30ObvTransitionAsOf;
+  const obvTransitionReady=Boolean(state.vwap30ObvTransitionAsOf)&&
+    state.vwap30ObvTransitionAsOf===dailyObvWma9Gate.as_of&&dailyVwap9Gate.qualified;
+  const freshBullishStack=(freshCross&&dailyVwap9Gate.qualified&&dailyObvWma9Gate.qualified)||
+    (dailyGateCross&&dailyObvWma9Gate.qualified)||
+    obvTransitionReady;
   const isBuyStage=stage==='BUY_SETUP'||stage==='BUY_CONFIRMED';
-  const buyGateOK=!isBuyStage||(result.send_allowed===true&&dailyVwap9Gate.qualified);
+  const buyGateOK=!isBuyStage||(result.send_allowed===true&&
+    dailyVwap9Gate.qualified&&dailyObvWma9Gate.qualified);
   const firstStrong=stage==='BUY_CONFIRMED'&&result.send_allowed===true&&state.count===1&&
-    stacked&&dailyVwap9Gate.qualified;
+    stacked&&dailyVwap9Gate.qualified&&dailyObvWma9Gate.qualified;
   const unsafe=stage==='RISK'||(!umStopNotifiedForHolding_M30(item,state)&&item.stop_price&&price<=item.stop_price)||
     (result.reasons||[]).some(x=>/ABOVE_OVERHEAT_LIMIT|RECENT_1M_WEAKENING|LIVE_MINUTES_UNAVAILABLE_OR_STALE/.test(String(x)));
 
@@ -432,17 +484,29 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
     state.vwap30DailyGateInitialized=true;
     state.vwap30DailyGateValid=dailyVwap9Gate.valid;
     state.vwap30DailyQualified=dailyVwap9Gate.qualified;
+    state.vwap30ObvGateInitialized=true;
+    state.vwap30ObvGateValid=dailyObvWma9Gate.valid;
+    state.vwap30ObvQualified=dailyObvWma9Gate.qualified;
+    state.vwap30ObvAsOf=dailyObvWma9Gate.as_of;
     state.vwap30LastChecked=now.toISOString();
+  } else if(observedStamp.slice(11,16)>='09:30') {
+    // Before the first completed bar, retain yesterday's verified evidence.
+    // Once a current bar is due, missing or stale data breaks continuity.
+    state.vwap30StackValid=false;
   }
 
-  // Diagnostic confirmation uses only the two user-required factors:
-  // verified M30 alignment + live price above the latest completed daily VWAP9.
+  // Diagnostic confirmation requires all three factors:
+  // verified M30 alignment, live price above completed daily VWAP9,
+  // and completed-daily OBV above its WMA9 signal.
   const tech=result.technical||{};
   const dailyVwap9=Number(tech.vwap9);
   const prevHigh=Number(tech.prev_high);
   const priceGtDailyVwap9=dailyVwap9Gate.qualified;
   const priceGtPrevHigh=isFinite(prevHigh)&&prevHigh>0&&price>prevHigh;
-  const bullConfirmedSim=stacked&&priceGtDailyVwap9;
+  const bullConfirmedSim=stacked&&priceGtDailyVwap9&&dailyObvWma9Gate.qualified;
+  if(stacked&&priceGtDailyVwap9&&!dailyObvWma9Gate.qualified&&
+     Array.isArray(result.reasons)&&!result.reasons.includes('DAILY_OBV9_WMA_GATE_CLOSED'))
+    result.reasons.push('DAILY_OBV9_WMA_GATE_CLOSED');
 
   const obsTime=now.toISOString();
   const dailyAsOf=tech.as_of||obsTime;
@@ -456,6 +520,10 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
       price_as_of: obsTime,
       daily_vwap9: dailyVwap9,
       daily_vwap9_as_of: dailyAsOf,
+      daily_obv: dailyObvWma9Gate.obv,
+      daily_obv_wma9: dailyObvWma9Gate.wma9,
+      daily_obv_wma9_as_of: dailyObvWma9Gate.as_of,
+      daily_obv_wma9_gold: dailyObvWma9Gate.qualified,
       price_gt_prev_high: priceGtPrevHigh,
       prev_high: prevHigh,
       prev_high_as_of: prevHighAsOf,
@@ -467,7 +535,9 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
     };
     result.sim_bull_confirmed = Object.assign({qualified: true}, state.simBullConfirmed);
     if(Array.isArray(result.reasons) && !result.reasons.some(r=>String(r).startsWith('SIM_BULL_CONFIRMED:'))) {
-      result.reasons.push('SIM_BULL_CONFIRMED:P='+price+'@'+obsTime+'>DV9='+dailyVwap9+'@'+dailyAsOf+';SLOPE='+Number(m30.vwap9_slope||0)+'('+String(m30.vwap9_dir||'')+')');
+      result.reasons.push('SIM_BULL_CONFIRMED:P='+price+'@'+obsTime+'>DV9='+dailyVwap9+'@'+dailyAsOf+
+        ';OBV='+dailyObvWma9Gate.obv+'>WMA9='+dailyObvWma9Gate.wma9+';SLOPE='+
+        Number(m30.vwap9_slope||0)+'('+String(m30.vwap9_dir||'')+')');
     }
   } else {
     result.sim_bull_confirmed = {
@@ -480,6 +550,10 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
       price_gt_daily_vwap9: priceGtDailyVwap9,
       daily_vwap9: dailyVwap9,
       daily_vwap9_as_of: dailyAsOf,
+      daily_obv: dailyObvWma9Gate.obv,
+      daily_obv_wma9: dailyObvWma9Gate.wma9,
+      daily_obv_wma9_as_of: dailyObvWma9Gate.as_of,
+      daily_obv_wma9_gold: dailyObvWma9Gate.qualified,
       price_gt_prev_high: priceGtPrevHigh,
       prev_high: prevHigh,
       prev_high_as_of: prevHighAsOf,
@@ -494,9 +568,10 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
     candidates.length===0&&
     !state.sent[earlyKey]&&!state.sent.BUY_SETUP&&!state.sent.BUY_CONFIRMED) {
     candidates.push({key:earlyKey,stage:'WATCH',level:1,
-      reason:'30분봉 정배열 + 현재가의 일봉 VWAP9 상회 확인 · MTS 확인용',
+      reason:'30분봉 정배열 + 일봉 VWAP9 상회 + 일봉 OBV9 WMA 골드 확인 · MTS 확인용',
       stateKey:earlyKey});
   }
+  state.lastResult.reasons=(result.reasons||[]).slice(-5);
   // The initial below-average observation is persisted with the stop receipt.
   umTrackBreakeven_M30(item,result,state,now,observedAt,candidates);
   return {item:item,result:result,state:state,events:candidates};

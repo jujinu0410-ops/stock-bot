@@ -26,7 +26,9 @@ class UnifiedJevDisabledTests(unittest.TestCase):
         }
         self.service._analyze_30m_exit_risk_df.return_value = {}
         self.official = {"stage": "BUY_CONFIRMED", "basis": "COMPLETED_DAILY",
-                         "as_of": "2026-11-18 15:30:00", "vwap9": 105}
+                         "as_of": "2026-11-18 15:30:00", "vwap9": 105,
+                         "obv": 110., "obv_wma9": 100., "obv_wma9_window_valid": True}
+        self.m30 = {"vwap_rel": "GOLD", "vwap9": 108., "vwap26": 102., "vwap9_dir": "RISING"}
         daily = pd.DataFrame({"High": [111]}, index=pd.to_datetime(["2026-11-18"]))
 
         def cache(key, ttl, loader, **kwargs):
@@ -40,7 +42,7 @@ class UnifiedJevDisabledTests(unittest.TestCase):
             "cached": {"side_effect": cache}, "daily_frame": {"return_value": daily},
             "daily_states": {"return_value": (self.official, {})},
             "atr_and_anchor": {"return_value": (10., 103., 108.)},
-            "indicators": {"return_value": {"vwap_rel": "GOLD", "vwap9": 108., "vwap26": 102.}},
+            "indicators": {"return_value": self.m30},
             "analyze_obv15_sell_warning": {"return_value": {}},
         }.items():
             stack.enter_context(patch.object(m30, name, **options))
@@ -99,4 +101,29 @@ class UnifiedJevDisabledTests(unittest.TestCase):
             with self.subTest(timestamp=timestamp, price=price):
                 minute["bars"] = [{"time": timestamp, "close": price}]
                 self.assertIsNone(self.scan()["breakeven_observation"])
+        self.post.assert_not_called()
+
+    def test_both_buy_events_are_filtered_before_generation(self):
+        for stage in ("BUY_SETUP", "BUY_CONFIRMED"):
+            with self.subTest(stage=stage):
+                self.official.update(stage=stage, obv=90.)
+                result = self.scan()
+                self.assertEqual(result["stage"], "WATCH")
+                self.assertEqual(result["events"], [])
+                self.assertIn("DAILY_OBV9_WMA_GATE_CLOSED", result["reasons"])
+        self.post.assert_not_called()
+
+    def test_rebound_is_filtered_at_source_while_decline_and_stop_remain(self):
+        self.official.update(stage="DOWN_CONFIRMED", regime="BEAR_CONFIRMED", obv=90.)
+        result = self.scan()
+        self.assertEqual(result["events"], [])
+        self.assertIn("DAILY_OBV9_WMA_GATE_CLOSED", result["reasons"])
+        self.official["obv"] = 110.
+        self.assertEqual([e["key"] for e in self.scan()["events"]], ["DOWN_CONFIRMED"])
+        self.official["obv"] = 90.
+        self.service._fetch_kiwoom_quote.return_value["change_pct"] = -.01
+        self.m30["vwap9_dir"] = "FALLING"
+        self.assertEqual([e["key"] for e in self.scan()["events"]], ["DOWN_CONFIRMED"])
+        self.payload["stop_price"] = 112
+        self.assertIn("STOP_BREACH", [e["key"] for e in self.scan()["events"]])
         self.post.assert_not_called()

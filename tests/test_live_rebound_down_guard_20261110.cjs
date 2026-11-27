@@ -25,6 +25,8 @@ function signal(ticker='229200',pct=.0535,stage='DOWN_CONFIRMED',extra={}) {
    reasons:[],events:[{key:stage,stage,level:1,reason:'2026-11-09 completed daily'}],
    technical:{basis:'COMPLETED_DAILY',as_of:'2026-11-09 15:30:00',
     regime:stage==='DOWN_EARLY'?'EARLY_WEAKENING':'BEAR_CONFIRMED',stage},
+   daily_obv_wma9_gate:{session_date:'2026-11-10',as_of:'2026-11-09 15:30:00',expected_as_of:'2026-11-09 15:30:00',
+     valid:true,qualified:true,obv:100,wma9:90},
    m30:{available:false}},extra.result||{}),
   old:JSON.parse(JSON.stringify(extra.old||previous))
  };
