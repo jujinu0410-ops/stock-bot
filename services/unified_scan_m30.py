@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 
 from dataclasses import replace
 
+import logging
 import math
 
 import threading
@@ -39,6 +40,8 @@ import requests
 from services.unified_signal_engine import evaluate_signal, normalize_sources, BUY_STAGES
 
 from src.analysis.held_obv30_warning import analyze_obv15_sell_warning
+
+from src.analysis.m30_indicators import obv_series, vwap_series
 
 from src.analysis.jev_alert_gate import JevGateSettings, evaluate_jev_alert_gate
 
@@ -258,17 +261,9 @@ def indicators(df):
 
     close, vol = df.Close, df.Volume
 
-    tp = (df.High + df.Low + close) / 3
+    v9, v26 = vwap_series(df, 9), vwap_series(df, 26)
 
-    v9 = (tp * vol).rolling(9).sum() / vol.rolling(9).sum()
-
-    v26 = (tp * vol).rolling(26).sum() / vol.rolling(26).sum()
-
-    delta = close.diff()
-
-    obv = vol.where(delta > 0, (-vol).where(delta < 0, 0)).cumsum()
-
-    o9 = obv.rolling(9).mean()
+    obv, o9 = obv_series(close, vol)
 
     def direction(series, scale, threshold):
 
@@ -1044,7 +1039,21 @@ def scan(payload, service, now=None):
 
             paper_extra["paper_data"] = {"schema": 2, "quality": "METADATA_ERROR"}
 
-    return {**base, **decision, **paper_extra, "engine_version": VERSION, "events": events, "sim_bull_confirmed": sim_data,
+    band_extra = {}
+    if payload.get("bollinger_assist") is True and m30.get("available") and paper_quality == "VALID":
+        expected_end = pd.Timestamp(m30["completed_bar"])
+        if expected_end.date() == now.date():
+            try:
+                from src.analysis.m30_bollinger_assist import bollinger_assist
+
+                report = cached(("m30-bollinger-assist", ticker, expected_end.isoformat()), 1800,
+                                lambda: bollinger_assist(paper_frame, expected_end), cache_if=bool)
+                if report:
+                    band_extra["bollinger_assist"] = report
+            except Exception:
+                logging.getLogger(__name__).exception("E30 Bollinger advisory unavailable")
+
+    return {**base, **decision, **paper_extra, **band_extra, "engine_version": VERSION, "events": events, "sim_bull_confirmed": sim_data,
 
         "technical": daily, "m30": m30, "obv15": obv15, "exit_risk": exit_risk,
 

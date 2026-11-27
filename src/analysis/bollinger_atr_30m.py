@@ -15,7 +15,10 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from src.analysis.intraday_analysis import Intraday45mAnalyzer as Intraday30mAnalyzer
+try:
+    from src.analysis.intraday_analysis import Intraday30mAnalyzer
+except ImportError:
+    from src.analysis.intraday_analysis import Intraday45mAnalyzer as Intraday30mAnalyzer
 from src.analysis.technical_analysis import adjust_krx_tick_size
 from src.utils.logger import logger
 from src.runtime.krx_calendar import KRXCalendar
@@ -196,19 +199,21 @@ def resolve_tick_regime(item: Dict[str, Any]) -> Optional[bool]:
     return is_etf
 
 
+def bb26_2_bands(close: pd.Series) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    """Calculate BB(26, 2.0) using population standard deviation."""
+    rolling = pd.to_numeric(close, errors="coerce").where(lambda values: np.isfinite(values)).rolling(BB_WINDOW)
+    middle = rolling.mean()
+    offset = BB_SIGMA * rolling.std(ddof=BB_DDOF)
+    return middle - offset, middle, middle + offset
+
+
 def calculate_bb26_2(df: pd.DataFrame) -> Tuple[float, float, float]:
-    """Calculate independent BB(26, 2.0) using population std (ddof=0)."""
     if not isinstance(df, pd.DataFrame) or len(df) < BB_WINDOW:
         return np.nan, np.nan, np.nan
     column = "Close" if "Close" in df.columns else "close_price" if "close_price" in df.columns else None
     if column is None:
         return np.nan, np.nan, np.nan
-    tail = pd.to_numeric(df[column], errors="coerce").iloc[-BB_WINDOW:]
-    if len(tail) != BB_WINDOW or tail.isna().any() or not np.isfinite(tail.to_numpy(dtype=float)).all():
-        return np.nan, np.nan, np.nan
-    middle = float(tail.mean())
-    std = float(tail.std(ddof=BB_DDOF))
-    return middle - BB_SIGMA * std, middle, middle + BB_SIGMA * std
+    return tuple(float(band.iloc[-1]) for band in bb26_2_bands(df[column].iloc[-BB_WINDOW:]))
 
 
 def normalize_to_legal_tick(price: float, direction: str, is_etf: bool) -> int:

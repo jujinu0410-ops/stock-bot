@@ -46,6 +46,23 @@ class UnifiedScanBatchVwap9Tests(unittest.TestCase):
         self.assertEqual(wire["technical"]["vwap9"], 105.0)
         self.assertEqual(wire["m30"]["vwap9"], 108.0)
 
+    def test_band_report_is_additive_in_batch(self):
+        normal = {"ok": True, "engine_version": "three-lists-v3-m30",
+                  "stage": "WATCH", "send_allowed": False, "events": []}
+        report = {"stage": "COMPRESSION", "completed_bar": "2026-11-27T12:30",
+                  "percent_b": 22, "bandwidth_pct": 2, "compression_ceiling_pct": 2.1}
+        payload = {"items": [{"ticker": "000660"}, {"ticker": "005930", "bollinger_assist": True}]}
+        with patch.object(service_module, "_secret_ok", return_value=True), patch.object(
+            scan_module, "scan", side_effect=[normal, {**normal, "bollinger_assist": report}]
+        ) as scan:
+            response = service_module.app.test_client().post("/unified-scan-batch", json=payload)
+        self.assertEqual(response.status_code, 200)
+        first, second = (item["result"] for item in response.get_json()["results"])
+        self.assertNotIn("bollinger_assist", first)
+        self.assertEqual(second.pop("bollinger_assist"), report)
+        self.assertEqual(first, second)
+        self.assertIs(scan.call_args_list[1].args[0]["bollinger_assist"], True)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

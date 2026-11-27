@@ -310,17 +310,10 @@ def _analyze_30m_exit_risk_df(df_30m: Any, source: str = "") -> Dict[str, Any]:
         close = work["Close"].astype(float)
         volume = work["Volume"].astype(float).fillna(0.0)
 
-        delta = close.diff()
-        signed_volume = volume * 0.0
-        signed_volume = signed_volume.where(~(delta > 0), volume)
-        signed_volume = signed_volume.where(~(delta < 0), -volume)
-        obv = signed_volume.fillna(0.0).cumsum()
-        obv9 = obv.rolling(9).mean()
+        from src.analysis.m30_indicators import macd_series, obv_series
 
-        ema12 = close.ewm(span=12, adjust=False).mean()
-        ema26 = close.ewm(span=26, adjust=False).mean()
-        macd = ema12 - ema26
-        macd_signal = macd.ewm(span=9, adjust=False).mean()
+        obv, obv9 = obv_series(close, volume)
+        macd, macd_signal = macd_series(close)
 
         calc = work[["Close"]].copy()
         calc["obv"] = obv
@@ -2148,6 +2141,8 @@ def unified_scan_batch() -> Any:
                 wire["paper_data"] = result["paper_data"]
             if isinstance(result.get("m30"), dict):
                 wire["m30"] = dict(result["m30"])
+            if isinstance(result.get("bollinger_assist"), dict):
+                wire["bollinger_assist"] = result["bollinger_assist"]
             results.append({"ticker": ticker, "status": 200, "result": wire})
         except SignalServiceError as exc:
             app.logger.warning("unified batch ticker rejected ticker=%s reason=%s", ticker, exc)
