@@ -120,6 +120,80 @@ test('all stages, regimes, slopes and quote signs preserve existing decisions',(
     assert.deepEqual(b,a);trials++;
   }
 });
+function observe(stage, slot, old, extra={}, event={key:stage,stage,level:1}) {
+  const item={ticker:'069500',name:'KODEX 200',sources:['HELD','ETF'],stop_price:90};
+  const at=new Date(now.getTime()+slot*300000);
+  const r=result('BULL_CONFIRMED','RISING',{stage,send_allowed:true,events:[event],...extra});
+  const p=updated.umPlan_M30(item,r,old,at);
+  return {keys:Array.from(p.events,e=>e.stateKey),state:updated.umCommit_M30(p,at,'mock-mail','mock-event')};
+}
+test('first strong M30 stack ignores absent, disabled, HOLD and error JEV verdicts',()=>{
+  for(const gate of [undefined,{status:'JEV_GATE_DISABLED',decision:'NOT_EVALUATED'},
+    {status:'OK',decision:'HOLD'},{status:'ERROR',decision:'SEND'}]){
+    assert.deepStrictEqual(observe('BUY_CONFIRMED',0,null,{jev_gate:gate}).keys,['VWAP30_BULL_STACK_EARLY']);
+  }
+  for(const extra of [{send_allowed:false},{technical:{}},{m30:{available:false}},
+    {live_price_source:'STALE'},{reasons:['ABOVE_OVERHEAT_LIMIT']},{reasons:['RECENT_1M_WEAKENING']}]){
+    assert.deepStrictEqual(observe('BUY_CONFIRMED',0,null,extra).keys,[]);
+  }
+});
+test('setup and promotion require two observations each and retain distinct sent records',()=>{
+  const old={day:'2026-11-06',sent:{OBV15_WARNING:{eventId:'prior',messageId:'prior-mail'}},count:0};
+  let current=observe('BUY_SETUP',0,old);
+  assert.deepStrictEqual(current.keys,[]);
+  current=observe('BUY_SETUP',1,current.state);
+  assert.deepStrictEqual(current.keys,['BUY_SETUP']);
+  current=observe('BUY_CONFIRMED',2,current.state);
+  assert.deepStrictEqual(current.keys,[]);
+  current=observe('BUY_CONFIRMED',3,current.state);
+  assert.deepStrictEqual(current.keys,['BUY_CONFIRMED']);
+  const history=clone(current.state.sent);
+  current=observe('BUY_CONFIRMED',4,clone(current.state));
+  assert.deepStrictEqual(current.keys,[]);
+  assert.deepStrictEqual(clone(current.state.sent),history);
+  assert.deepStrictEqual(history.OBV15_WARNING,old.sent.OBV15_WARNING);
+});
+test('new BUY_SETUP stack crosses on a later completed bar without JEV approval',()=>{
+  const previous=oldM30State(false);
+  const hold={status:'OK',decision:'HOLD'};
+  assert.deepStrictEqual(observe('BUY_SETUP',0,previous,{jev_gate:hold}).keys,['VWAP30_BULL_STACK_EARLY']);
+  assert.deepStrictEqual(observe('BUY_SETUP',0,previous,{jev_gate:hold,send_allowed:false}).keys,[]);
+});
+test('market crash escalation and first-stop-only alerts retain their respective rules',()=>{
+  let state;
+  for(const [i,level,expected] of [[0,3,['MARKET_CRASH:3']],[1,3,[]],[2,5,['MARKET_CRASH:5']],[3,3,[]]]){
+    const p=observe('RISK',i,state,{}, {key:'MARKET_CRASH',stage:'RISK',level});
+    assert.deepStrictEqual(p.keys,expected); state=p.state;
+  }
+  const stop={key:'STOP_BREACH',stage:'RISK',level:1};
+  const breach=(slot,old)=>observe('RISK',slot,old,{live_price:85},stop);
+  const first=breach(0,null);
+  assert.deepStrictEqual(first.keys,['STOP_BREACH']);
+  assert.deepStrictEqual(breach(7,first.state).keys,[]);
+  const recovered=observe('WATCH',1,first.state,{send_allowed:false,events:[]});
+  assert.deepStrictEqual(breach(5,recovered.state).keys,[]);
+  assert.deepStrictEqual(breach(6,recovered.state).keys,[]);
+});
+test('inverse market guidance follows the batch flag and yields to a stop warning',()=>{
+  const item={ticker:'114800',name:'KODEX 인버스',sources:['ETF'],stop_price:0};
+  const setup={key:'BUY_SETUP',stage:'BUY_SETUP',level:1,stateKey:'BUY_SETUP'};
+  const base=result('BULL_CONFIRMED','RISING',{stage:'BUY_SETUP',send_allowed:true,events:[setup],
+    jev_gate:{status:'JEV_GATE_DISABLED',decision:'NOT_EVALUATED'}});
+  const guidance='인버스 상승 조짐 · 기초지수 하락 확인 (매수확정 아님)';
+  function brief(r){return updated.umSignalBrief_M30({item,result:r,events:r.events},now);}
+  const inverse={...base,inverse_market_info:true};
+  assert(brief(inverse).startsWith(guidance));
+  const mail=updated.umMessage_M30([{item,result:inverse,events:inverse.events}],now);
+  assert(mail.body.includes(guidance));
+  assert(mail.htmlBody.includes(guidance));
+  for(const ordinary of [base,{...base,inverse_market_info:false}]){
+    assert(!brief(ordinary).includes(guidance));
+    assert(brief(ordinary).includes('매수조짐'));
+  }
+  const risk={...inverse,stage:'RISK',events:[{key:'STOP_BREACH',stage:'RISK',reason:'손절선 최초 이탈'}]};
+  assert(brief(risk).startsWith('손절선 최초 이탈'));
+  assert(!brief(risk).includes(guidance));
+});
 const summary={tests,failures,errors:0,skipped:0,machine_parity_cases:trials,outbound_network:0,orders:0,outcomes};
 fs.mkdirSync(path.join(B,'evidence'),{recursive:true});fs.writeFileSync(path.join(B,'evidence/direction-tests.json'),JSON.stringify(summary,null,2));
 console.log(JSON.stringify({...summary,outcomes:undefined}));process.exitCode=failures?1:0;

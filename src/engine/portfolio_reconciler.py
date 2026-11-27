@@ -24,6 +24,7 @@ import subprocess
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import NAMESPACE_URL, uuid5
 
 import requests
 
@@ -352,7 +353,7 @@ class PortfolioReconciler:
         """Reads current MONITOR_CONFIG from Google Sheet."""
         token = self._get_token()
         headers = {"Authorization": f"Bearer {token}"}
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{SHEET_CONFIG_TAB}!A1:T100"
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{SHEET_CONFIG_TAB}!A1:U"
         res = requests.get(url, headers=headers, timeout=15)
         if res.status_code != 200:
             raise RuntimeError(f"Google Sheets read failed ({res.status_code}): {res.text}")
@@ -366,7 +367,7 @@ class PortfolioReconciler:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{SHEET_CONFIG_TAB}!A2:T{len(rows)+1}?valueInputOption=USER_ENTERED"
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{SHEET_CONFIG_TAB}!A2:U{len(rows)+1}?valueInputOption=USER_ENTERED"
         body = {"values": rows}
         res = requests.put(url, headers=headers, json=body, timeout=15)
         if res.status_code != 200:
@@ -375,19 +376,19 @@ class PortfolioReconciler:
         return updated_cells
 
     def update_header_if_needed(self) -> None:
-        """Ensures headers A1:T1 contain STRATEGY_STATUS, STRATEGY_WARNING, and ATR trailing columns."""
+        """Ensures the position, strategy and holding episode columns are labelled."""
         try:
             token = self._get_token()
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json"
             }
-            url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{SHEET_CONFIG_TAB}!A1:T1?valueInputOption=USER_ENTERED"
+            url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{SHEET_CONFIG_TAB}!A1:U1?valueInputOption=USER_ENTERED"
             header_row = [
                 "TICKER", "EXCHANGE", "NAME", "QTY", "AVG_PRICE", "REF_CLOSE",
                 "STOP_PRICE", "STATUS", "BASE_DATE", "ENABLED", "TARGET1", "TARGET2",
                 "TARGET_SOURCE", "TARGET_BASE_DATE", "STRATEGY_STATUS", "STRATEGY_WARNING",
-                "ATR14", "BUY_TRAILING_DIST", "SELL_TRAILING_DIST", "ATR_BASE_DATE"
+                "ATR14", "BUY_TRAILING_DIST", "SELL_TRAILING_DIST", "ATR_BASE_DATE", "HOLDING_EPISODE"
             ]
             requests.put(url, headers=headers, json={"values": [header_row]}, timeout=10)
         except Exception as exc:
@@ -511,11 +512,17 @@ class PortfolioReconciler:
 
         # 3. Read existing sheet rows (Strategy Config)
         existing_rows: List[List[Any]] = []
+        config_read_ok = False
         if sync_to_sheet:
             try:
                 raw_sheet = self.read_remote_config()
                 if len(raw_sheet) > 1:
                     existing_rows = raw_sheet[1:]  # skip header
+                header = raw_sheet[0][20:21] if raw_sheet else []
+                occupied = any(row[20:21] not in ([], [""]) for row in existing_rows)
+                if header != ["HOLDING_EPISODE"] and (header not in ([], [""]) or occupied):
+                    raise ValueError("MONITOR_CONFIG column U is already in use")
+                config_read_ok = True
             except Exception as exc:
                 logger.warning(f"[PortfolioReconciler] Could not read remote sheet ({exc}). Continuing with local reconciliation.")
 
@@ -548,6 +555,11 @@ class PortfolioReconciler:
                 "buy_trailing_dist": row[17] if len(row) > 17 else "",
                 "sell_trailing_dist": row[18] if len(row) > 18 else "",
                 "atr_base_date": row[19] if len(row) > 19 else "",
+                "holding_episode": row[20] if len(row) > 20 else "",
+                "confirmed_closed": (
+                    len(row) > 14 and str(row[3]).strip() == "0"
+                    and row[7] == row[14] == "CLOSED"
+                ),
             }
 
         reconciliation_log: List[str] = []
@@ -594,6 +606,7 @@ class PortfolioReconciler:
                     "",  # BUY_TRAILING_DIST empty
                     "",  # SELL_TRAILING_DIST empty
                     "",  # ATR_BASE_DATE empty
+                    strat["holding_episode"],
                 ])
             else:
                 live = live_map[code]
@@ -603,6 +616,11 @@ class PortfolioReconciler:
                 new_avg = float(live.get("avg_buy_price") or 0.0)
                 cur_price = int(live.get("current_price") or live.get("raw_balance_price") or 0)
                 live_name = live.get("stock_name") or name
+                if strat["confirmed_closed"]:
+                    # Two retries reading the same CLOSED row must agree on the new episode.
+                    previous = strat["holding_episode"]
+                    identity = f"stockbot-holding:{self.spreadsheet_id}:{code}:{previous}"
+                    strat["holding_episode"] = f"ep-{uuid5(NAMESPACE_URL, identity).hex}"
 
                 # Validate strategy without modifying strategy config
                 val = validate_position_strategy(strat, live, prev_qty, prev_avg)
@@ -682,6 +700,7 @@ class PortfolioReconciler:
                     atr_info["buy_trailing_dist"] if atr_info["buy_trailing_dist"] is not None else "",
                     atr_info["sell_trailing_dist"] if atr_info["sell_trailing_dist"] is not None else "",
                     atr_info["atr_base_date"] if atr_info["atr_round"] is not None else "",
+                    strat["holding_episode"],
                 ])
 
         # 5. Handle NEW holdings (in account but not in strategy config)
@@ -733,6 +752,7 @@ class PortfolioReconciler:
                 atr_info["buy_trailing_dist"] if atr_info["buy_trailing_dist"] is not None else "",
                 atr_info["sell_trailing_dist"] if atr_info["sell_trailing_dist"] is not None else "",
                 atr_info["atr_base_date"] if atr_info["atr_round"] is not None else "",
+                "",  # No previous closure for a newly tracked holding.
             ]
             reconciled_rows.append(new_row)
 
@@ -765,7 +785,7 @@ class PortfolioReconciler:
 
         # 6. Write back to Google Sheet if enabled
         sheet_update_success = False
-        if sync_to_sheet and reconciled_rows:
+        if config_read_ok and reconciled_rows:
             try:
                 self.update_header_if_needed()
                 self.write_remote_config(reconciled_rows)

@@ -15,7 +15,10 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from src.analysis.intraday_analysis import Intraday45mAnalyzer as Intraday30mAnalyzer
+try:
+    from src.analysis.intraday_analysis import Intraday30mAnalyzer
+except ImportError:
+    from src.analysis.intraday_analysis import Intraday45mAnalyzer as Intraday30mAnalyzer
 from src.analysis.technical_analysis import adjust_krx_tick_size
 from src.utils.logger import logger
 from src.runtime.krx_calendar import KRXCalendar
