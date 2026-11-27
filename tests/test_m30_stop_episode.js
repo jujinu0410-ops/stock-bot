@@ -76,10 +76,84 @@ assert.doesNotMatch(body,/손절선 189,900원 도달/);
 const noAtr = sandbox.umSignalBrief_M30({
   ...d2, result:{...down,atr14:null}
 },new Date(2026,10,27,10,15,0));
-assert.match(noAtr,/ATR 자료 없음/);
+assert.doesNotMatch(noAtr,/본전 회복까지/);
 const withoutAvg = sandbox.umSignalBrief_M30({
   ...d2,item:{...item,average_price:null}
 },new Date(2026,10,27,10,15,0));
 assert.doesNotMatch(withoutAvg,/본전 회복까지/);
 
-console.log('PASS: 12 independent assertions, first stop, next-day idempotence, recovery, directional alerts, breakeven percent/ATR, fallback.');
+const at = new Date(2026,10,27,10,20,0);
+const increased = {...item,quantity:155,average_price:195000};
+const more = sandbox.umPlan_M30(increased,down,d2.state,at);
+assert.match(sandbox.umSignalBrief_M30(more,at),/본전 회복까지 \+7\.4% \/ 0\.82 ATR/);
+assert.equal(sandbox.umPlan_M30(increased,stop,more.state,at).events.length,0);
+const up = {...down,stage:'BUY_SETUP',events:[{key:'BUY_SETUP',stage:'BUY_SETUP'}],
+  jev_gate:{status:'OK',decision:'SEND'}};
+const upAt=new Date(at.getTime()+300000);
+const u1 = sandbox.umPlan_M30(item,up,more.state,upAt);
+const u2 = sandbox.umPlan_M30(item,up,u1.state,new Date(at.getTime()+600000));
+assert.ok(u2.events.some(e=>e.key==='BUY_SETUP'));
+assert.match(sandbox.umSignalBrief_M30(u2,at),/본전 회복까지/);
+
+const sameDayAcknowledged = sandbox.umCommit_M30(first,at,'old-message','old-event');
+const reopened = {...item,holding_episode:'ep-'+'a'.repeat(32)};
+assert.equal('stop_notified' in JSON.parse(sandbox.umRequest_M30(reopened,props,sameDayAcknowledged).payload),false);
+const repurchase = sandbox.umPlan_M30(reopened,stop,sameDayAcknowledged,at);
+assert.equal(repurchase.events.length,1);
+assert.notEqual(sandbox.umEventId_M30(repurchase,at),sandbox.umEventId_M30(first,at));
+const watch = {...item,sources:['YOUTUBE']};
+assert.equal(sandbox.umPlan_M30(watch,stop,null,at).events.length,0);
+assert.doesNotMatch(sandbox.umSignalBrief_M30({...d2,item:watch},at),/본전 회복까지/);
+
+// In-memory stand-ins exercise the real draft journal, commit, and state reload.
+let pendingRows=[], stateRows=[], sendAttempts=0;
+const properties = new Map();
+const testProps = {
+  getProperty:k=>properties.get(k),
+  setProperty:(k,v)=>properties.set(k,v),
+  deleteProperty:k=>properties.delete(k),
+};
+const control = {getRange:(row)=>row==='E1'?{setValue:()=>{}}:{
+  setValues:v=>{pendingRows=v;}, getValues:()=>pendingRows,
+  clearContent:()=>{pendingRows=[];},
+}};
+const sheet = {getLastRow:()=>stateRows.length+1,getRange:()=>({
+  setValues:v=>{stateRows=v;}, getValues:()=>stateRows,
+})};
+let logWriteCrash=false, receipt=null;
+const log = {getLastRow:()=>1,getRange:()=>({setValues:()=>{
+  if(logWriteCrash)throw Error('audit write failed');
+}})};
+const book = {getSheetByName:name=>name==='UNIFIED_CONTROL'?control:name==='ALERT_LOG'?log:sheet};
+sandbox.SpreadsheetApp={openById:()=>book};
+sandbox.hmAlertRecipient_=()=> 'test@example.invalid';
+sandbox.umMessage_M30=()=>({subject:'test',body:'test',htmlBody:'test'});
+const draft = {getId:()=> 'draft',send:()=>{
+  if(++sendAttempts===1)throw Error('mail provider failed');
+  receipt={getId:()=> 'gmail-receipt',getPlainBody:()=>JSON.parse(testProps.getProperty('UM2_PENDING')).ids[0]};
+  return receipt;
+}};
+sandbox.GmailApp={createDraft:()=>draft,getDraft:()=>draft,search:()=>receipt?[{getMessages:()=>[receipt]}]:[]};
+// Use the real property and sheet names while keeping all services in memory.
+book.getSheetByName=name=>name===vm.runInContext('UM30.CONTROL',sandbox)?control:name==='ALERT_LOG'?log:sheet;
+assert.throws(()=>sandbox.umDispatch_M30([repurchase],testProps,at,null,null),/mail provider failed/);
+assert.equal(stateRows.length,0);
+assert.ok(testProps.getProperty('UM2_PENDING'));
+const expired=JSON.parse(testProps.getProperty('UM2_PENDING'));
+expired.created=Date.now()-120001;
+testProps.setProperty('UM2_PENDING',JSON.stringify(expired));
+logWriteCrash=true;
+assert.throws(()=>sandbox.umResumeDelivery_M30(testProps),/audit write failed/);
+const persisted=sandbox.umLoadState_M30(testProps,item.ticker,sandbox.umOpenStateStore_M30(book,testProps,[]));
+assert.equal(persisted.sent.STOP_BREACH.messageId,'gmail-receipt');
+assert.equal(sandbox.umPlan_M30(reopened,stop,persisted,at).events.length,0);
+logWriteCrash=false;
+sandbox.umResumeDelivery_M30(testProps);
+assert.equal(sendAttempts,2,'recover successful send through Sent without resending');
+assert.equal(testProps.getProperty('UM2_PENDING'),undefined);
+const inactiveStore=sandbox.umOpenStateStore_M30(book,testProps,[{ticker:'005930'}]);
+inactiveStore.dirty=true;
+sandbox.umFlushStateStore_M30(inactiveStore,at);
+assert.equal(stateRows.length,1,'keep successful stop state even when temporarily inactive');
+
+console.log('PASS: first stop, trading-day rollover, recross, up/down, new average, repurchase, watchlist, failed mail and durable recovery.');

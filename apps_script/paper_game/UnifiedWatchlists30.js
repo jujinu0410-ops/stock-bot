@@ -52,6 +52,7 @@ function umMerge_M30(rows) {
     if(row.source==='HELD') {
       old.stop_price=row.stop_price;old.atr14=row.atr14;
       old.quantity=row.quantity;old.average_price=row.average_price;
+      old.holding_episode=row.holding_episode;
     }
     old.suspended=old.suspended||row.suspended===true;
     old.inverse=old.inverse||row.inverse===true;
@@ -80,7 +81,7 @@ function umUniverse_M30(now) {
   m30Book_();
     const book=SpreadsheetApp.openById(UM30.BOOK), yt=SpreadsheetApp.openById(UM30.YT), rows=[];
   const confSheet = book.getSheetByName('MONITOR_CONFIG');
-  umRows_M30(book,'MONITOR_CONFIG',20).forEach(function(r,i){
+  umRows_M30(book,'MONITOR_CONFIG',21).forEach(function(r,i){
     if(!umOn_M30(r[9])||!umNumber_M30(r[3])||String(r[7])==='CLOSED')return;
     const ticker = String(r[0]||'').padStart(6, '0');
     let stop = umNumber_M30(r[6]);
@@ -97,6 +98,7 @@ function umUniverse_M30(now) {
     }
     rows.push({source:'HELD',ticker:ticker,name:String(r[2]),market:String(r[1]),
       quantity:r[3],average_price:r[4],stop_price:stop,atr14:umNumber_M30(r[16]),
+      holding_episode:/^ep-[0-9a-f]{32}$/.test(String(r[20]))?String(r[20]):'',
       suspended:/SUSPENDED/.test(String(r[7])+' '+String(r[14])),row:i+2});
   });
   const etfs=[];
@@ -215,7 +217,7 @@ function umDirectionNote_M30(p,now) {
   const r=p.result||{},item=p.item||{},live=umLiveDirection_M30(r,now),ctx=live.ctx;
   const keys=(p.events||[]).map(e=>e.key),early=keys.indexOf('VWAP30_BULL_STACK_EARLY')>=0;
   const risk=r.stage==='RISK'||keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:'))||
-    (!umStopNotified_M30(p.state)&&Number(item.stop_price)>0&&
+    (!umStopNotifiedForHolding_M30(item,p.state)&&Number(item.stop_price)>0&&
     Number(r.live_price)>0&&Number(r.live_price)<=Number(item.stop_price));
   if(risk) {
     if(ctx.m30_direction==='UP')return '30분봉 반등과 별개로 위험경고 유지';
@@ -238,7 +240,12 @@ function umDirectionNote_M30(p,now) {
 
 function umStopNotified_M30(old) {
   return !!(old && (old.stopNotified===true || old.lastStopAt ||
-    (old.sent&&old.sent.STOP_BREACH) || Number(old.stopBreachSeq)>0));
+    (old.sent&&Object.keys(old.sent).some(k=>/^STOP_BREACH(?::\d+)?$/.test(k)&&old.sent[k]))));
+}
+function umStopNotifiedForHolding_M30(item,old) {
+  return (item.sources||[]).includes('HELD')&&
+    (!item.holding_episode||item.holding_episode===(old&&old.holdingEpisode))&&
+    umStopNotified_M30(old);
 }
 function umPlan_M30(item,result,old,now) {
   const day=umDay_M30(now),slot=Math.floor(now.getTime()/300000);
@@ -251,11 +258,20 @@ function umPlan_M30(item,result,old,now) {
     return {item:item,result:result,state:quarantinedState,events:[]};
   }
   const state=old&&old.day===day?JSON.parse(JSON.stringify(old)):{day:day,sent:{},count:0};
-  // Keep the already-issued stop notification through the next trading day.
-  if(umStopNotified_M30(old)) {
-    state.stopNotified=true;
-    state.stopNotifiedAt=old.stopNotifiedAt||old.lastStopAt||
-      (old.sent&&old.sent.STOP_BREACH&&old.sent.STOP_BREACH.at)||'';
+  const newHolding=(item.sources||[]).includes('HELD')&&item.holding_episode&&
+    item.holding_episode!==(old&&old.holdingEpisode);
+  if(newHolding) {
+    // The account reconciler mints an ID on re-entry after a confirmed zero.
+    state.holdingEpisode=item.holding_episode;
+    ['stopNotified','stopNotifiedAt','lastStopAt','stopBreachSeq','stopRecovered'].forEach(k=>delete state[k]);
+    Object.keys(state.sent).filter(k=>/^STOP_BREACH(?::\d+)?$/.test(k)).forEach(k=>delete state.sent[k]);
+  } else if(old) {
+    if(old.holdingEpisode)state.holdingEpisode=old.holdingEpisode;
+    if(umStopNotified_M30(old)) {
+      state.stopNotified=true;
+      state.stopNotifiedAt=old.stopNotifiedAt||old.lastStopAt||
+        (old.sent&&old.sent.STOP_BREACH&&old.sent.STOP_BREACH.at)||'';
+    }
   }
   const stage=String(result.stage||'WATCH');
   const isPriority=umIsPriority_M30(item);
@@ -277,11 +293,6 @@ function umPlan_M30(item,result,old,now) {
   state.lastResult.directionContext=umDirectionContext_M30(result,now);
   const dailyVwap9Gate=umDailyVwap9Gate_M30(result,now);
   state.lastResult.dailyVwap9Gate=dailyVwap9Gate;
-  if(item.stop_price&&result.live_price>item.stop_price) {
-    if(state.lastStopAt||(state.sent&&state.sent.STOP_BREACH)||state.stopBreachSeq) {
-      state.stopRecovered=true;
-    }
-  }
   const candidates=[];
   if(result.send_allowed===true)(result.events||[]).forEach(function(e){
     // Every bullish event requires the latest completed daily VWAP9 gate.
@@ -314,45 +325,23 @@ function umPlan_M30(item,result,old,now) {
       const liveCtx=umLiveDirection_M30(result,now);
       if(liveCtx.official) {
         const hasRisk=result.stage==='RISK'||
-          (!umStopNotified_M30(state)&&Number(item.stop_price)>0&&
+          (!umStopNotifiedForHolding_M30(item,state)&&Number(item.stop_price)>0&&
             Number(result.live_price)>0&&Number(result.live_price)<=Number(item.stop_price))||
           Boolean(state.sent&&(state.sent.OBV15_WARNING||state.sent.SELL_PREP_WARNING||state.sent.VWAP30_BULL_STACK_EARLY));
         const confirmedRebound=e.key==='DOWN_CONFIRMED'&&liveCtx.daily_bearish&&liveCtx.m30_direction==='UP'&&!hasRisk;
         if(!confirmedRebound)return;
       }
     }
-    let key=e.key+(e.key==='MARKET_CRASH'?':'+e.level:'');
-    let breachSeq=1;
-    if(e.key==='STOP_BREACH') {
-      if(umStopNotified_M30(state))return; // once per holding episode
-      const hasBreachedBefore=Boolean(state.lastStopAt||(state.sent&&state.sent.STOP_BREACH)||state.stopBreachSeq);
-      if(!hasBreachedBefore) {
-        breachSeq=1;
-        key='STOP_BREACH';
-      } else {
-        const recovered=state.stopRecovered===true;
-        const timeSinceLastStop=state.lastStopAt?(now.getTime()-Date.parse(state.lastStopAt)):Infinity;
-        if(!recovered||timeSinceLastStop<30*60000) {
-          return;
-        }
-        breachSeq=(Number(state.stopBreachSeq)||1)+1;
-        key='STOP_BREACH:'+breachSeq;
-      }
-    }
+    const key=e.key+(e.key==='MARKET_CRASH'?':'+e.level:'');
+    if(e.key==='STOP_BREACH'&&umStopNotifiedForHolding_M30(item,state))return;
     if(state.sent[key])return;
     if(isMarketMail&&e.key==='DOWN_EARLY'&&
       (state.sent.MARKET_WEAK_EARLY||candidates.some(x=>x.key==='MARKET_WEAK_EARLY')))return;
-    if(e.key==='STOP_BREACH'&&breachSeq===1&&state.lastStopAt&&now.getTime()-Date.parse(state.lastStopAt)<30*60000)return;
     const urgent=e.stage==='RISK'||e.key==='ATR_DOWN_1_0';
     if(!urgent&&state.count<2)return;
     // An earlier crash level must never be resent after escalation.
     if(e.key==='MARKET_CRASH'&&Number(state.crashLevel||0)>=Number(e.level))return;
-    const candidateEvent=Object.assign({},e,{stateKey:key});
-    if(e.key==='STOP_BREACH'&&breachSeq>1) {
-      candidateEvent.seq=breachSeq;
-      candidateEvent.reason='실시간 손절선 '+Number(item.stop_price||0).toLocaleString('ko-KR')+'원 재침범('+breachSeq+'회차)';
-    }
-    candidates.push(candidateEvent);
+    candidates.push(Object.assign({},e,{stateKey:key}));
   });
   // Observe a NEW 30m bullish stack for every monitored source (HELD, ETF,
   // YOUTUBE), including WATCH/neutral names. This is an MTS inspection alert,
@@ -394,7 +383,7 @@ function umPlan_M30(item,result,old,now) {
   const buyGateOK=!isBuyStage||(result.send_allowed===true&&jev.status==='OK'&&jev.decision==='SEND'&&dailyVwap9Gate.qualified);
   const firstStrong=stage==='BUY_CONFIRMED'&&result.send_allowed===true&&state.count===1&&
     jev.status==='OK'&&jev.decision==='SEND'&&stacked&&dailyVwap9Gate.qualified;
-  const unsafe=stage==='RISK'||(!umStopNotified_M30(state)&&item.stop_price&&price<=item.stop_price)||
+  const unsafe=stage==='RISK'||(!umStopNotifiedForHolding_M30(item,state)&&item.stop_price&&price<=item.stop_price)||
     (result.reasons||[]).some(x=>/ABOVE_OVERHEAT_LIMIT|RECENT_1M_WEAKENING|LIVE_MINUTES_UNAVAILABLE_OR_STALE/.test(String(x)));
 
   // Record complete state upon every fresh observation
@@ -485,9 +474,6 @@ function umCommit_M30(plan,now,messageId,eventId) {
       plan.state.lastStopAt=now.toISOString();
       plan.state.stopNotified=true;
       plan.state.stopNotifiedAt=plan.state.lastStopAt;
-      if(e.seq) plan.state.stopBreachSeq=e.seq;
-      else if(!plan.state.stopBreachSeq) plan.state.stopBreachSeq=1;
-      plan.state.stopRecovered=false;
     }
   });
   return plan.state;
@@ -603,7 +589,7 @@ function umFlushStateStore_M30(store,now) {
   const fallbackStamp=(now instanceof Date?now:new Date()).toISOString();
   const codes=Object.keys(store.map).filter(function(code){
     if(!store.map[code])return false;
-    if(store.activeSet&&store.activeSet.size>0&&!store.activeSet.has(code))return false;
+    if(store.activeSet&&store.activeSet.size>0&&!store.activeSet.has(code)&&!umStopNotified_M30(store.map[code]))return false;
     return true;
   }).sort();
   const sh=store.sheet;
@@ -657,7 +643,8 @@ function umDisplay_M30(item,result) {
 }
 function umEventId_M30(plan,now) {
   return ['U2',umDay_M30(now),plan.result.session||'KRX_SESSION',plan.item.ticker,
-    plan.events.map(e=>e.stateKey).sort().join('+')].join('_');
+    plan.events.map(e=>e.stateKey).sort().join('+')].join('_')+
+    (plan.item.holding_episode&&plan.events.some(e=>e.key==='STOP_BREACH')?'_'+plan.item.holding_episode:'');
 }
 function umEscape_M30(s) { return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 // One glance first: coloured ▲/△ (up) and ▼/▽ (down).
@@ -682,7 +669,7 @@ function umIsReboundDisplay_M30(p,now) {
   if(keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:')||k==='MARKET_CRASH'||
     k.startsWith('MARKET_CRASH:')||k==='MARKET_WEAK_EARLY'||k==='OBV15_WARNING'||
     k==='SELL_PREP_WARNING'||k==='ATR_DOWN_1_0'))return false;
-  if(!umStopNotified_M30(p.state)&&Number(item.stop_price)>0&&
+  if(!umStopNotifiedForHolding_M30(item,p.state)&&Number(item.stop_price)>0&&
      Number(r.live_price)>0&&Number(r.live_price)<=Number(item.stop_price))return false;
   const live=umLiveDirection_M30(r,now);
   return live.daily_bearish&&live.live_direction==='UP';
@@ -700,14 +687,10 @@ function umSignalBrief_M30(p,now) {
   const pctStr=hasPct?'당일 '+(pctVal>0?'+':'')+pctVal.toFixed(2)+'%':'';
   let basis='';
   if(keys.indexOf('VWAP30_BULL_STACK_EARLY')>=0&&r.stage!=='RISK'&&
-    !(!umStopNotified_M30(p.state)&&stop>0&&price>0&&price<=stop))
+    !(!umStopNotifiedForHolding_M30(item,p.state)&&stop>0&&price>0&&price<=stop))
     basis='30분봉 정배열 새로 포착 · 현재가 > VWAP9 > VWAP26 · MTS 관심종목';
   else if(keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:'))) {
-    const breachEvent=(p.events||[]).find(e=>e.key==='STOP_BREACH');
-    if(breachEvent&&breachEvent.reason&&breachEvent.reason.indexOf('재침범')>=0)
-      basis=breachEvent.reason;
-    else
-      basis='실시간 손절선 '+stop.toLocaleString('ko-KR')+'원 도달·이탈';
+    basis=stop>0?'실시간 손절선 '+stop.toLocaleString('ko-KR')+'원 최초 이탈':'손절선 최초 이탈';
   }
   else if(keys.indexOf('MARKET_CRASH')>=0)
     basis='시장 급락 위험 · 실시간 지수 대표 ETF';
@@ -754,10 +737,11 @@ function umSignalBrief_M30(p,now) {
       !/30분봉/.test(basis))basis+=' · 30분봉 '+bar.slice(11,16)+' 참조';
   const note=umDirectionNote_M30(p,now);
   if(note&&basis.indexOf(note)<0)basis+=' · '+note;
-  const avg=Number(item.average_price||0);
-  if((item.sources||[]).indexOf('HELD')>=0&&umStopNotified_M30(p.state)&&price>0&&avg>price) {
-    basis+=' | 본전 회복까지 +'+((avg/price-1)*100).toFixed(1)+'%';
-    basis+=atr>0?' / '+((avg-price)/atr).toFixed(2)+' ATR':' / ATR 자료 없음';
+  const avg=umNumber_M30(item.average_price);
+  const directional=keys.some(k=>/^(BUY_SETUP|BUY_CONFIRMED|DOWN_EARLY|DOWN_CONFIRMED)$/.test(k));
+  if(directional&&umStopNotifiedForHolding_M30(item,p.state)&&
+     Number.isFinite(price)&&price>0&&avg>price&&Number.isFinite(atr)&&atr>0) {
+    basis+=' | 본전 회복까지 +'+((avg/price-1)*100).toFixed(1)+'% / '+((avg-price)/atr).toFixed(2)+' ATR';
   }
   return basis;
 }
@@ -964,8 +948,8 @@ function umResumeDelivery_M30(props,store) {
 function umRequest_M30(item,props,priorState) {
   const url=String(props.getProperty('SIGNAL_API_URL')||'').replace(/\/$/,''),token=props.getProperty('SIGNAL_API_TOKEN');
   if(!url||!token)throw new Error('UNIFIED_API_NOT_CONFIGURED');
-  const data=Object.assign({},item);delete data.refs;delete data.quantity;delete data.average_price;
-  if((item.sources||[]).indexOf('HELD')>=0&&umStopNotified_M30(priorState))
+  const data=Object.assign({},item);delete data.refs;delete data.quantity;delete data.average_price;delete data.holding_episode;
+  if(umStopNotifiedForHolding_M30(item,priorState))
     data.stop_notified=true;
   return {url:url+'/unified-scan',method:'post',contentType:'application/json',
     headers:{'X-StockBot-Token':token},payload:JSON.stringify(data),muteHttpExceptions:true};
@@ -1184,7 +1168,7 @@ function umTick5mM30(now) {
       if(Date.now()-start>UM30.MAX_RUNTIME)break;
       const batch=scan.work.slice(pos,pos+UM30.BATCH);
       const reqs=batch.map(entry=>umRequest_M30(entry.item,props,
-        mode==='ACTIVE'?umLoadState_M30(props,entry.item.ticker,stateStore):null));
+        mode==='ACTIVE'?(umLoadState_M30(props,entry.item.ticker,stateStore)||legacy[entry.item.ticker]):null));
       const fetched=umP0BatchFetch_M30(reqs),plans=[];
       batch.forEach(function(entry,i){
         const item=entry.item,packet=fetched.results[i]||{},response=packet.response;
@@ -1238,7 +1222,7 @@ function umTick5mM30(now) {
       }).slice(0,12);
       Utilities.sleep(1000);
       const retryReqs=retryCandidates.map(c=>umRequest_M30(c.item,props,
-        mode==='ACTIVE'?umLoadState_M30(props,c.item.ticker,stateStore):null));
+        mode==='ACTIVE'?(umLoadState_M30(props,c.item.ticker,stateStore)||legacy[c.item.ticker]):null));
       const retryFetched=umP0BatchFetch_M30(retryReqs),retryPlans=[];
       const retriedSet=new Set();
       retryCandidates.forEach(function(cand,i){

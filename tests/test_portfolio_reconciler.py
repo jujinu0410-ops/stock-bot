@@ -227,6 +227,47 @@ class TestPortfolioReconciler(unittest.TestCase):
         self.assertEqual(row_sh[14], "REVIEW_REQUIRED")
         self.assertIn("손절선", row_sh[15])
 
+    @patch.object(PortfolioReconciler, "update_header_if_needed")
+    @patch.object(PortfolioReconciler, "read_remote_config")
+    @patch.object(PortfolioReconciler, "write_remote_config")
+    def test_holding_episode_changes_only_after_confirmed_zero(self, mock_write, mock_read, _header):
+        header = [""] * 20 + ["HOLDING_EPISODE"]
+        old_episode = "ep-" + "a" * 32
+        row = ["086450", "KOSDAQ", "Test", 10, 8000, 8100, 7500, "ACTIVE",
+               "", "TRUE", 9000, 10000, "", "", "NORMAL", "", "", "", "", "", old_episode]
+        held = {"stock_code": "086450", "quantity": 12, "avg_buy_price": 8200, "current_price": 8500}
+        other = {"stock_code": "005930", "quantity": 2, "avg_buy_price": 100, "current_price": 100}
+
+        mock_read.return_value = [header, row]
+        self.reconciler.reconcile([held], sync_to_sheet=True)
+        increased = mock_write.call_args.args[0][0]
+        self.assertEqual(increased[20], old_episode)
+        self.assertEqual(increased[3:5], [12, 8200])
+
+        mock_read.return_value = [header, increased]
+        self.reconciler.reconcile([other], sync_to_sheet=True)
+        closed = mock_write.call_args.args[0][0]
+        self.assertEqual((closed[3], closed[7], closed[20]), (0, "CLOSED", old_episode))
+
+        mock_read.return_value = [header, closed]
+        self.reconciler.reconcile([held], sync_to_sheet=True)
+        reopened = mock_write.call_args.args[0][0]
+        self.assertRegex(reopened[20], r"^ep-[0-9a-f]{32}$")
+        self.assertNotEqual(reopened[20], old_episode)
+        self.assertEqual(reopened[6], 7500)
+        self.assertEqual(reopened[10:12], [9000, 10000])
+
+        mock_read.return_value = [header, reopened]
+        self.reconciler.reconcile([held], sync_to_sheet=True)
+        self.assertEqual(mock_write.call_args.args[0][0][20], reopened[20])
+
+    @patch.object(PortfolioReconciler, "read_remote_config", side_effect=RuntimeError("read failed"))
+    @patch.object(PortfolioReconciler, "write_remote_config")
+    def test_read_failure_does_not_overwrite_holding_episodes(self, mock_write, _read):
+        self.reconciler.reconcile([{"stock_code": "005930", "quantity": 2,
+                                   "avg_buy_price": 100, "current_price": 100}])
+        mock_write.assert_not_called()
+
     def test_snapshot_persistence(self):
         """13. Snapshots must be persisted to disk."""
         live_positions = [
@@ -321,7 +362,7 @@ class TestPortfolioReconciler(unittest.TestCase):
         written_rows = mock_write.call_args[0][0]
         self.assertEqual(len(written_rows), 1)
         row = written_rows[0]
-        self.assertEqual(len(row), 20)
+        self.assertEqual(len(row), 21)
         self.assertEqual(row[16], 893)   # ATR14
         self.assertEqual(row[17], 536)   # BUY_TRAILING_DIST
         self.assertEqual(row[18], 357)   # SELL_TRAILING_DIST
