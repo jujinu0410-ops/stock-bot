@@ -235,8 +235,10 @@ class TestPortfolioReconciler(unittest.TestCase):
         old_episode = "ep-" + "a" * 32
         row = ["086450", "KOSDAQ", "Test", 10, 8000, 8100, 7500, "ACTIVE",
                "", "TRUE", 9000, 10000, "", "", "NORMAL", "", "", "", "", "", old_episode]
-        held = {"stock_code": "086450", "quantity": 12, "avg_buy_price": 8200, "current_price": 8500}
-        other = {"stock_code": "005930", "quantity": 2, "avg_buy_price": 100, "current_price": 100}
+        held = {"stock_code": "086450", "quantity": 12, "avg_buy_price": 8200, "current_price": 8500,
+                "atr_14": 100, "atr_base_date": "2026-11-26"}
+        other = {"stock_code": "005930", "quantity": 2, "avg_buy_price": 100, "current_price": 100,
+                 "atr_14": 3, "atr_base_date": "2026-11-26"}
 
         mock_read.return_value = [header, row]
         self.reconciler.reconcile([held], sync_to_sheet=True)
@@ -268,7 +270,8 @@ class TestPortfolioReconciler(unittest.TestCase):
     @patch.object(PortfolioReconciler, "write_remote_config")
     def test_read_failure_does_not_overwrite_holding_episodes(self, mock_write, _read):
         self.reconciler.reconcile([{"stock_code": "005930", "quantity": 2,
-                                   "avg_buy_price": 100, "current_price": 100}])
+                                   "avg_buy_price": 100, "current_price": 100,
+                                   "atr_14": 3, "atr_base_date": "2026-11-26"}])
         mock_write.assert_not_called()
 
     def test_snapshot_persistence(self):
