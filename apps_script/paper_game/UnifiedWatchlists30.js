@@ -9,7 +9,7 @@ const UM30 = Object.freeze({
   YT:'10R11CnOs0Gi3Ffag8aWOw8sNZw0E_ZFlM5_qqSyO2xw',
   STATE_PREFIX:'UM2_', MAX_RUNTIME:260000, BATCH:12, GROUP_SIZE:6,
   LABELS:{WATCH:'· 관찰',BUY_SETUP:'△ 매수조짐',BUY_CONFIRMED:'▲ 매수확인',
-    DOWN_EARLY:'▽ 하락조짐',DOWN_CONFIRMED:'▼ 하락확인',RISK:'⚠ 위험경고'}
+    DOWN_EARLY:'▽ 하락조짐',DOWN_CONFIRMED:'▼ 하락확인',RISK:'⚠ 위험경고',BREAKEVEN_RECOVERED:'본전 회복'}
 });
 function umMode_M30() {
   const sh=SpreadsheetApp.openById(UM30.BOOK).getSheetByName(UM30.CONTROL);
@@ -247,7 +247,35 @@ function umStopNotifiedForHolding_M30(item,old) {
     (!item.holding_episode||item.holding_episode===(old&&old.holdingEpisode))&&
     umStopNotified_M30(old);
 }
-function umPlan_M30(item,result,old,now) {
+function umHoldingAverage_M30(value) {
+  return typeof value==='number'||typeof value==='string'?umNumber_M30(value):null;
+}
+function umTrackBreakeven_M30(item,result,state,now,observedAt,candidates) {
+  if((item.holding_episode||'')!==(state.holdingEpisode||''))return;
+  const acknowledged=umStopNotifiedForHolding_M30(item,state);
+  if(!acknowledged&&!candidates.some(event=>event.key==='STOP_BREACH'))return;
+  const tracking=state.breakeven||{};
+  if(tracking.receipt)return;
+  const average=umHoldingAverage_M30(item.average_price);
+  if(tracking.average!==average){
+    tracking.average=average;
+    delete tracking.belowAt;
+  }
+  state.breakeven=tracking;
+  const quote=result.breakeven_observation||{},stamp=umQuoteTime_M30(quote.as_of);
+  const age=observedAt.getTime()-stamp;
+  if(average===null||result.ok!==true||result.session!=='KRX_SESSION'||
+     !Number.isFinite(quote.price)||quote.price<=0||!Number.isFinite(stamp)||
+     age<0||age>180000||umDay_M30(new Date(stamp))!==umDay_M30(now)||
+     (tracking.seenAt!=null&&stamp<=tracking.seenAt))return;
+  tracking.seenAt=stamp;
+  if(quote.price<average){tracking.belowAt=stamp;return;}
+  if(acknowledged&&tracking.belowAt!=null){
+    candidates.push({key:'BREAKEVEN_RECOVERED',stateKey:'BREAKEVEN_RECOVERED',stage:'BREAKEVEN_RECOVERED',
+      level:1,average:average,price:quote.price,as_of:quote.as_of,reason:'손절경고 후 본전 회복'});
+  }
+}
+function umPlan_M30(item,result,old,now,observedAt=now) {
   const day=umDay_M30(now),slot=Math.floor(now.getTime()/300000);
   if(old&&old.quarantined===true) {
     const quarantinedState=JSON.parse(JSON.stringify(old));
@@ -263,14 +291,15 @@ function umPlan_M30(item,result,old,now) {
   if(newHolding) {
     // The account reconciler mints an ID on re-entry after a confirmed zero.
     state.holdingEpisode=item.holding_episode;
-    ['stopNotified','stopNotifiedAt','lastStopAt','stopBreachSeq','stopRecovered'].forEach(k=>delete state[k]);
-    Object.keys(state.sent).filter(k=>/^STOP_BREACH(?::\d+)?$/.test(k)).forEach(k=>delete state.sent[k]);
+    ['stopNotified','stopNotifiedAt','lastStopAt','stopBreachSeq','stopRecovered','breakeven'].forEach(k=>delete state[k]);
+    Object.keys(state.sent).filter(k=>/^STOP_BREACH(?::\d+)?$/.test(k)||k==='BREAKEVEN_RECOVERED').forEach(k=>delete state.sent[k]);
   } else if(old) {
     if(old.holdingEpisode)state.holdingEpisode=old.holdingEpisode;
     if(umStopNotified_M30(old)) {
       state.stopNotified=true;
       state.stopNotifiedAt=old.stopNotifiedAt||old.lastStopAt||
         (old.sent&&old.sent.STOP_BREACH&&old.sent.STOP_BREACH.at)||'';
+      if(old.breakeven)state.breakeven=Object.assign({},old.breakeven);
     }
   }
   const stage=String(result.stage||'WATCH');
@@ -464,6 +493,8 @@ function umPlan_M30(item,result,old,now) {
       reason:'30분봉 정배열 + 현재가의 일봉 VWAP9 상회 확인 · MTS 확인용',
       stateKey:earlyKey});
   }
+  // The initial below-average observation is persisted with the stop receipt.
+  umTrackBreakeven_M30(item,result,state,now,observedAt,candidates);
   return {item:item,result:result,state:state,events:candidates};
 }
 function umCommit_M30(plan,now,messageId,eventId) {
@@ -475,6 +506,7 @@ function umCommit_M30(plan,now,messageId,eventId) {
       plan.state.stopNotified=true;
       plan.state.stopNotifiedAt=plan.state.lastStopAt;
     }
+    if(e.key==='BREAKEVEN_RECOVERED')plan.state.breakeven.receipt=plan.state.sent[e.stateKey];
   });
   return plan.state;
 }
@@ -651,13 +683,15 @@ function umDisplay_M30(item,result) {
 function umEventId_M30(plan,now) {
   return ['U2',umDay_M30(now),plan.result.session||'KRX_SESSION',plan.item.ticker,
     plan.events.map(e=>e.stateKey).sort().join('+')].join('_')+
-    (plan.item.holding_episode&&plan.events.some(e=>e.key==='STOP_BREACH')?'_'+plan.item.holding_episode:'');
+    (plan.item.holding_episode&&plan.events.some(e=>e.key==='STOP_BREACH'||e.key==='BREAKEVEN_RECOVERED')?
+      '_'+plan.item.holding_episode:'');
 }
 function umEscape_M30(s) { return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 // One glance first: coloured ▲/△ (up) and ▼/▽ (down).
 // Keep the existing plain-text machine footer for downstream replay and
 // Gmail getPlainBody() delivery reconciliation; never show it in HTML.
 function umSignalGlyph_M30(stage) {
+  if(stage==='BREAKEVEN_RECOVERED')return {mark:'↗',color:'#c62828'};
   if(stage==='BUY_CONFIRMED')return {mark:'▲',color:'#c62828'};
   if(stage==='BUY_SETUP')return {mark:'△',color:'#c62828'};
   if(stage==='DOWN_EARLY')return {mark:'▽',color:'#1565c0'};
@@ -666,8 +700,11 @@ function umSignalGlyph_M30(stage) {
 function umDisplayStage_M30(p) {
   // The underlying engine can be BUY_CONFIRMED while the emitted event is
   // deliberately only an early △ observation awaiting the next evaluation.
-  return p.events&&p.events.length===1&&p.events[0].key==='VWAP30_BULL_STACK_EARLY'?
-    'BUY_SETUP':p.result.stage;
+  if(p.events&&p.events.length===1){
+    if(p.events[0].key==='VWAP30_BULL_STACK_EARLY')return 'BUY_SETUP';
+    if(p.events[0].key==='BREAKEVEN_RECOVERED')return 'BREAKEVEN_RECOVERED';
+  }
+  return p.result.stage;
 }
 function umIsReboundDisplay_M30(p,now) {
   const r=(p&&p.result)||{},item=(p&&p.item)||{},keys=((p&&p.events)||[]).map(e=>e.key);
@@ -744,11 +781,17 @@ function umSignalBrief_M30(p,now) {
       !/30분봉/.test(basis))basis+=' · 30분봉 '+bar.slice(11,16)+' 참조';
   const note=umDirectionNote_M30(p,now);
   if(note&&basis.indexOf(note)<0)basis+=' · '+note;
-  const avg=umNumber_M30(item.average_price);
+  const avg=umHoldingAverage_M30(item.average_price);
   const directional=(p.events||[]).some(e=>/^(BUY_SETUP|BUY_CONFIRMED|DOWN_EARLY|DOWN_CONFIRMED)$/.test(e.stage));
   if(directional&&umStopNotifiedForHolding_M30(item,p.state)&&
      Number.isFinite(price)&&price>0&&avg>price&&Number.isFinite(atr)&&atr>0) {
     basis+=' | 본전 회복까지 +'+((avg/price-1)*100).toFixed(1)+'% / '+((avg-price)/atr).toFixed(2)+' ATR';
+  }
+  const recovery=(p.events||[]).find(e=>e.key==='BREAKEVEN_RECOVERED');
+  if(recovery){
+    const detail='손절경고 후 본전 회복 · 평단 '+recovery.average.toLocaleString('ko-KR')+
+      '원 · 확인가 '+recovery.price.toLocaleString('ko-KR')+'원';
+    basis=keys.length===1?detail:basis+' | '+detail;
   }
   return basis;
 }
@@ -822,7 +865,7 @@ function umMarketSubject_M30(p,now,round) {
     '30분봉 정배열 관심':rebound?
     (live.m30_direction==='UP'?'일봉 약세 속 30분봉 반등 확인':'일봉 하락 추세 속 반등 진행'):
     ({BUY_SETUP:'상승조짐',BUY_CONFIRMED:'상승확인',
-      DOWN_EARLY:'하락조짐',DOWN_CONFIRMED:'하락확인',RISK:'위험경고'}[stage]||'기술신호');
+      DOWN_EARLY:'하락조짐',DOWN_CONFIRMED:'하락확인',RISK:'위험경고',BREAKEVEN_RECOVERED:'본전 회복'}[stage]||'기술신호');
   const mark=rebound?'↗':umSignalGlyph_M30(stage).mark;
   const context=umMarketSituation_M30(p,round,now);
   return '[주식 통합신호] '+mark+' '+
@@ -866,7 +909,8 @@ function umMessage_M30(plans,now,round) {
   const singleReboundTitle=singleRebound?
     (umLiveDirection_M30(plans[0].result,now).m30_direction==='UP'?'일봉 약세 속 30분봉 반등 확인':'일봉 하락 추세 속 반등 진행'):'';
   const subjectHint=plans.length===1?
-    (marks[0]+' '+plans[0].item.name+(singleReboundTitle?' '+singleReboundTitle:'')+' · '):
+    (marks[0]+' '+plans[0].item.name+
+      (umDisplayStage_M30(plans[0])==='BREAKEVEN_RECOVERED'?' 본전 회복':singleReboundTitle?' '+singleReboundTitle:'')+' · '):
     Array.from(new Set(marks)).join('')+' ';
   const subject=plans.length===1&&umIsMarketMail_M30(plans[0].item)?
     umMarketSubject_M30(plans[0],now,round):
@@ -1193,7 +1237,7 @@ function umTick5mM30(now) {
         try {
           umCollectMarketQuote_M30(marketRound,item,r,Date.now());
           if(mode==='ACTIVE'){
-            const p=umPlan_M30(item,r,umLoadState_M30(props,item.ticker,stateStore)||legacy[item.ticker],now);
+            const p=umPlan_M30(item,r,umLoadState_M30(props,item.ticker,stateStore)||legacy[item.ticker],now,new Date());
             if(p.events.length)plans.push(p);
             else umPutState_M30(stateStore,item.ticker,p.state,now);
             umDisplay_M30(item,r);
@@ -1248,7 +1292,7 @@ function umTick5mM30(now) {
         try {
           umCollectMarketQuote_M30(marketRound,item,r,Date.now());
           if(mode==='ACTIVE'){
-            const p=umPlan_M30(item,r,umLoadState_M30(props,item.ticker,stateStore)||legacy[item.ticker],now);
+            const p=umPlan_M30(item,r,umLoadState_M30(props,item.ticker,stateStore)||legacy[item.ticker],now,new Date());
             if(p.events.length)retryPlans.push(p);
             else umPutState_M30(stateStore,item.ticker,p.state,now);
             umDisplay_M30(item,r);

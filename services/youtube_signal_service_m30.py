@@ -2137,6 +2137,7 @@ def unified_scan_batch() -> Any:
                 raise SignalServiceError("BATCH_INVALID_EVALUATION")
             keys = ("ok", "engine_version", "stage", "send_allowed", "events", "jev_gate",
                     "inverse_market_info", "reasons", "live_price", "live_change_pct", "live_price_source",
+                    "breakeven_observation",
                     "atr14", "session", "confidence_adjustment", "bar_interval_minutes", "contract_version")
             wire = {key: result[key] for key in keys if key in result}
             if isinstance(result.get("technical"), dict):

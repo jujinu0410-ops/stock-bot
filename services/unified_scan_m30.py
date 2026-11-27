@@ -395,6 +395,20 @@ def minute_is_current(minute, now):
 
 
 
+def breakeven_observation(minute, now):
+    """Pair the existing Kiwoom minute price with its provider timestamp."""
+    if minute.get("source") != "KIWOOM_KA10080" or not minute_is_current(minute, now):
+        return None
+    bar = minute["bars"][-1]
+    stamp = datetime.strptime(str(bar["time"]), "%Y%m%d%H%M%S").replace(tzinfo=KST)
+    price = bar.get("close")
+    if stamp.date() != now.date() or stamp > now or type(price) not in (int, float):
+        return None
+    if not math.isfinite(price) or price <= 0:
+        return None
+    return {"price": price, "as_of": stamp.isoformat(timespec="seconds")}
+
+
 def entry_guard(price, atr, anchor, daily, m30, minute, quote):
 
     reasons = []
@@ -753,7 +767,8 @@ def scan(payload, service, now=None):
 
     paper_frame, paper_source, paper_quality = None, "NONE", "HISTORY_NOT_REQUESTED"
 
-    need_history = bool(daily) or bool(price and atr)
+    track_breakeven = "HELD" in sources and (stop_notified or (stop and price and price <= stop))
+    need_history = bool(daily) or bool(price and atr) or track_breakeven
 
     if price and need_history:
 
@@ -1020,6 +1035,7 @@ def scan(payload, service, now=None):
         "live_price": price, "live_change_pct": quote.get("change_pct"),
 
         "live_price_source": quote.get("source"), "atr14":atr, "anchor":anchor,
+        "breakeven_observation": breakeven_observation(minute, now) if track_breakeven else None,
 
         "market_proxy":proxy, "sector_etf":sector,
         "inverse_market_info": inverse_info_only and stage in BUY_STAGES and decision["send_allowed"],

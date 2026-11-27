@@ -85,3 +85,18 @@ class UnifiedJevDisabledTests(unittest.TestCase):
         self.assertTrue(result["send_allowed"])
         self.assertEqual([e["key"] for e in result["events"]], ["STOP_BREACH"])
         self.post.assert_not_called()
+
+    def test_recovery_uses_timestamped_kiwoom_price_and_does_not_call_jev(self):
+        self.payload["stop_notified"] = True
+        minute = self.service._fetch_kiwoom_minute_bars.return_value
+        minute["source"] = "KIWOOM_KA10080"
+        minute["bars"] = [{"time": "20261119133400", "close": 111}]
+        self.assertEqual(self.scan()["breakeven_observation"],
+                         {"price": 111, "as_of": "2026-11-19T13:34:00+09:00"})
+        for timestamp, price in (("20261119133100", 111), ("20261119133600", 111),
+                                 ("20261118133400", 111), ("20261119133400", True),
+                                 ("20261119133400", "111"), ("20261119133400", float("inf"))):
+            with self.subTest(timestamp=timestamp, price=price):
+                minute["bars"] = [{"time": timestamp, "close": price}]
+                self.assertIsNone(self.scan()["breakeven_observation"])
+        self.post.assert_not_called()

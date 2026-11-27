@@ -159,7 +159,7 @@ test('new BUY_SETUP stack crosses on a later completed bar without JEV approval'
   assert.deepStrictEqual(observe('BUY_SETUP',0,previous,{jev_gate:hold}).keys,['VWAP30_BULL_STACK_EARLY']);
   assert.deepStrictEqual(observe('BUY_SETUP',0,previous,{jev_gate:hold,send_allowed:false}).keys,[]);
 });
-test('market crash escalation and recovered stop rebreach retain existing keys and timing',()=>{
+test('market crash escalation and first-stop-only alerts retain their respective rules',()=>{
   let state;
   for(const [i,level,expected] of [[0,3,['MARKET_CRASH:3']],[1,3,[]],[2,5,['MARKET_CRASH:5']],[3,3,[]]]){
     const p=observe('RISK',i,state,{}, {key:'MARKET_CRASH',stage:'RISK',level});
@@ -172,7 +172,7 @@ test('market crash escalation and recovered stop rebreach retain existing keys a
   assert.deepStrictEqual(breach(7,first.state).keys,[]);
   const recovered=observe('WATCH',1,first.state,{send_allowed:false,events:[]});
   assert.deepStrictEqual(breach(5,recovered.state).keys,[]);
-  assert.deepStrictEqual(breach(6,recovered.state).keys,['STOP_BREACH:2']);
+  assert.deepStrictEqual(breach(6,recovered.state).keys,[]);
 });
 test('inverse market guidance follows the batch flag and yields to a stop warning',()=>{
   const item={ticker:'114800',name:'KODEX 인버스',sources:['ETF'],stop_price:0};
@@ -190,8 +190,8 @@ test('inverse market guidance follows the batch flag and yields to a stop warnin
     assert(!brief(ordinary).includes(guidance));
     assert(brief(ordinary).includes('매수조짐'));
   }
-  const risk={...inverse,stage:'RISK',events:[{key:'STOP_BREACH',stage:'RISK',reason:'손절선 재침범'}]};
-  assert(brief(risk).startsWith('손절선 재침범'));
+  const risk={...inverse,stage:'RISK',events:[{key:'STOP_BREACH',stage:'RISK',reason:'손절선 최초 이탈'}]};
+  assert(brief(risk).startsWith('손절선 최초 이탈'));
   assert(!brief(risk).includes(guidance));
 });
 const summary={tests,failures,errors:0,skipped:0,machine_parity_cases:trials,outbound_network:0,orders:0,outcomes};
