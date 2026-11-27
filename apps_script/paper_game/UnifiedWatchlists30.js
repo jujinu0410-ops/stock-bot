@@ -248,7 +248,8 @@ function umStopNotifiedForHolding_M30(item,old) {
     umStopNotified_M30(old);
 }
 function umHoldingAverage_M30(value) {
-  return typeof value==='number'||typeof value==='string'?umNumber_M30(value):null;
+  if(typeof value==='number')return umNumber_M30(value);
+  return typeof value==='string'&&/^\d+(?:\.\d+)?$/.test(value.trim())?umNumber_M30(value):null;
 }
 function umTrackBreakeven_M30(item,result,state,now,observedAt,candidates) {
   if((item.holding_episode||'')!==(state.holdingEpisode||''))return;
@@ -268,6 +269,8 @@ function umTrackBreakeven_M30(item,result,state,now,observedAt,candidates) {
      !Number.isFinite(quote.price)||quote.price<=0||!Number.isFinite(stamp)||
      age<0||age>180000||umDay_M30(new Date(stamp))!==umDay_M30(now)||
      (tracking.seenAt!=null&&stamp<=tracking.seenAt))return;
+  const marketTime=Utilities.formatDate(new Date(stamp),UM30.TZ,'HH:mm');
+  if(marketTime<'09:00'||marketTime>'15:30')return;
   tracking.seenAt=stamp;
   if(quote.price<average){tracking.belowAt=stamp;return;}
   if(acknowledged&&tracking.belowAt!=null){
@@ -356,7 +359,8 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
         const hasRisk=result.stage==='RISK'||
           (!umStopNotifiedForHolding_M30(item,state)&&Number(item.stop_price)>0&&
             Number(result.live_price)>0&&Number(result.live_price)<=Number(item.stop_price))||
-          Boolean(state.sent&&(state.sent.OBV15_WARNING||state.sent.SELL_PREP_WARNING||state.sent.VWAP30_BULL_STACK_EARLY));
+          Boolean(state.sent&&(state.sent.STOP_BREACH||state.sent.OBV15_WARNING||
+            state.sent.SELL_PREP_WARNING||state.sent.VWAP30_BULL_STACK_EARLY));
         const confirmedRebound=e.key==='DOWN_CONFIRMED'&&liveCtx.daily_bearish&&liveCtx.m30_direction==='UP'&&!hasRisk;
         if(!confirmedRebound)return;
       }
@@ -700,10 +704,10 @@ function umSignalGlyph_M30(stage) {
 function umDisplayStage_M30(p) {
   // The underlying engine can be BUY_CONFIRMED while the emitted event is
   // deliberately only an early △ observation awaiting the next evaluation.
-  if(p.events&&p.events.length===1){
-    if(p.events[0].key==='VWAP30_BULL_STACK_EARLY')return 'BUY_SETUP';
-    if(p.events[0].key==='BREAKEVEN_RECOVERED')return 'BREAKEVEN_RECOVERED';
-  }
+  const keys=(p.events||[]).map(e=>e.key);
+  if(keys.includes('VWAP30_BULL_STACK_EARLY')&&
+     keys.every(k=>k==='VWAP30_BULL_STACK_EARLY'||k==='BREAKEVEN_RECOVERED'))return 'BUY_SETUP';
+  if(keys.length===1&&keys[0]==='BREAKEVEN_RECOVERED')return 'BREAKEVEN_RECOVERED';
   return p.result.stage;
 }
 function umIsReboundDisplay_M30(p,now) {
@@ -783,11 +787,11 @@ function umSignalBrief_M30(p,now) {
   if(note&&basis.indexOf(note)<0)basis+=' · '+note;
   const avg=umHoldingAverage_M30(item.average_price);
   const directional=(p.events||[]).some(e=>/^(BUY_SETUP|BUY_CONFIRMED|DOWN_EARLY|DOWN_CONFIRMED)$/.test(e.stage));
-  if(directional&&umStopNotifiedForHolding_M30(item,p.state)&&
+  const recovery=(p.events||[]).find(e=>e.key==='BREAKEVEN_RECOVERED');
+  if(!recovery&&directional&&umStopNotifiedForHolding_M30(item,p.state)&&
      Number.isFinite(price)&&price>0&&avg>price&&Number.isFinite(atr)&&atr>0) {
     basis+=' | 본전 회복까지 +'+((avg/price-1)*100).toFixed(1)+'% / '+((avg-price)/atr).toFixed(2)+' ATR';
   }
-  const recovery=(p.events||[]).find(e=>e.key==='BREAKEVEN_RECOVERED');
   if(recovery){
     const detail='손절경고 후 본전 회복 · 평단 '+recovery.average.toLocaleString('ko-KR')+
       '원 · 확인가 '+recovery.price.toLocaleString('ko-KR')+'원';

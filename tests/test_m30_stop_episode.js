@@ -12,9 +12,12 @@ const source = fs.readFileSync(
   path.join(__dirname, '../apps_script/paper_game/UnifiedWatchlists30.js'), 'utf8');
 const sandbox = {
   Date, Math, Number, JSON, Set, String, Array, Object, console,
-  Utilities: {formatDate(d) {
-    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+
-      '-'+String(d.getDate()).padStart(2,'0');
+  Utilities: {formatDate(d,zone,pattern) {
+    const kst=new Date(d.getTime()+9*3600000).toISOString();
+    if(pattern==='yyyy-MM-dd')return kst.slice(0,10);
+    if(pattern==='HH:mm')return kst.slice(11,16);
+    if(pattern==='MM-dd HH:mm')return kst.slice(5,16).replace('T',' ');
+    return kst.slice(0,19).replace('T',' ');
   }},
 };
 vm.createContext(sandbox);
@@ -133,13 +136,14 @@ assert.equal(recoveredEvent(averageReset),undefined,'changed average discards th
 const belowNew=sandbox.umPlan_M30(lowerAverage,view(79,later),averageReset.state,later);
 const later2=tick(27,'09:15');
 assert.equal(recoveredEvent(sandbox.umPlan_M30(lowerAverage,view(80,later2),belowNew.state,later2)).average,80);
-for(const invalid of [null,true,'',' ',0,-1,Infinity,NaN,'invalid']){
+for(const invalid of [null,true,'',' ',0,-1,Infinity,NaN,'invalid','0x64']){
   assert.equal(recoveredEvent(sandbox.umPlan_M30({...recoveryItem,average_price:invalid},view(100,openAt),loaded,openAt)),undefined);
   assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(invalid,openAt),loaded,openAt)),undefined);
 }
 assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(100,tick(27,'09:01')),loaded,openAt)),undefined);
 assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(100,later),loaded,openAt)),undefined);
 assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(100,firstAt),loaded,openAt)),undefined);
+assert.equal(recoveredEvent(sandbox.umPlan_M30(recoveryItem,view(100,tick(27,'08:59')),loaded,tick(27,'09:01'))),undefined);
 const repriced={...recoveryItem,holding_episode:'ep-'+'c'.repeat(32)};
 const newSeed=sandbox.umPlan_M30(repriced,view(85,later,stop),sentRecovery,later);
 assert.ok(newSeed.events.some(e=>e.key==='STOP_BREACH'));
