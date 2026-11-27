@@ -215,7 +215,8 @@ function umDirectionNote_M30(p,now) {
   const r=p.result||{},item=p.item||{},live=umLiveDirection_M30(r,now),ctx=live.ctx;
   const keys=(p.events||[]).map(e=>e.key),early=keys.indexOf('VWAP30_BULL_STACK_EARLY')>=0;
   const risk=r.stage==='RISK'||keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:'))||
-    (Number(item.stop_price)>0&&Number(r.live_price)>0&&Number(r.live_price)<=Number(item.stop_price));
+    (!umStopNotified_M30(p.state)&&Number(item.stop_price)>0&&
+    Number(r.live_price)>0&&Number(r.live_price)<=Number(item.stop_price));
   if(risk) {
     if(ctx.m30_direction==='UP')return '30분봉 반등과 별개로 위험경고 유지';
     if(live.verified_quote&&live.live_direction==='UP')return '당일 반등과 별개로 위험경고 유지';
@@ -235,6 +236,10 @@ function umDirectionNote_M30(p,now) {
   return '';
 }
 
+function umStopNotified_M30(old) {
+  return !!(old && (old.stopNotified===true || old.lastStopAt ||
+    (old.sent&&old.sent.STOP_BREACH) || Number(old.stopBreachSeq)>0));
+}
 function umPlan_M30(item,result,old,now) {
   const day=umDay_M30(now),slot=Math.floor(now.getTime()/300000);
   if(old&&old.quarantined===true) {
@@ -246,6 +251,12 @@ function umPlan_M30(item,result,old,now) {
     return {item:item,result:result,state:quarantinedState,events:[]};
   }
   const state=old&&old.day===day?JSON.parse(JSON.stringify(old)):{day:day,sent:{},count:0};
+  // Keep the already-issued stop notification through the next trading day.
+  if(umStopNotified_M30(old)) {
+    state.stopNotified=true;
+    state.stopNotifiedAt=old.stopNotifiedAt||old.lastStopAt||
+      (old.sent&&old.sent.STOP_BREACH&&old.sent.STOP_BREACH.at)||'';
+  }
   const stage=String(result.stage||'WATCH');
   const isPriority=umIsPriority_M30(item);
   const isConsecutive=isPriority ?
@@ -303,8 +314,9 @@ function umPlan_M30(item,result,old,now) {
       const liveCtx=umLiveDirection_M30(result,now);
       if(liveCtx.official) {
         const hasRisk=result.stage==='RISK'||
-          (Number(item.stop_price)>0&&Number(result.live_price)>0&&Number(result.live_price)<=Number(item.stop_price))||
-          Boolean(state.sent&&(state.sent.STOP_BREACH||state.sent.OBV15_WARNING||state.sent.SELL_PREP_WARNING||state.sent.VWAP30_BULL_STACK_EARLY));
+          (!umStopNotified_M30(state)&&Number(item.stop_price)>0&&
+            Number(result.live_price)>0&&Number(result.live_price)<=Number(item.stop_price))||
+          Boolean(state.sent&&(state.sent.OBV15_WARNING||state.sent.SELL_PREP_WARNING||state.sent.VWAP30_BULL_STACK_EARLY));
         const confirmedRebound=e.key==='DOWN_CONFIRMED'&&liveCtx.daily_bearish&&liveCtx.m30_direction==='UP'&&!hasRisk;
         if(!confirmedRebound)return;
       }
@@ -312,6 +324,7 @@ function umPlan_M30(item,result,old,now) {
     let key=e.key+(e.key==='MARKET_CRASH'?':'+e.level:'');
     let breachSeq=1;
     if(e.key==='STOP_BREACH') {
+      if(umStopNotified_M30(state))return; // once per holding episode
       const hasBreachedBefore=Boolean(state.lastStopAt||(state.sent&&state.sent.STOP_BREACH)||state.stopBreachSeq);
       if(!hasBreachedBefore) {
         breachSeq=1;
@@ -381,7 +394,7 @@ function umPlan_M30(item,result,old,now) {
   const buyGateOK=!isBuyStage||(result.send_allowed===true&&jev.status==='OK'&&jev.decision==='SEND'&&dailyVwap9Gate.qualified);
   const firstStrong=stage==='BUY_CONFIRMED'&&result.send_allowed===true&&state.count===1&&
     jev.status==='OK'&&jev.decision==='SEND'&&stacked&&dailyVwap9Gate.qualified;
-  const unsafe=stage==='RISK'||(item.stop_price&&price<=item.stop_price)||
+  const unsafe=stage==='RISK'||(!umStopNotified_M30(state)&&item.stop_price&&price<=item.stop_price)||
     (result.reasons||[]).some(x=>/ABOVE_OVERHEAT_LIMIT|RECENT_1M_WEAKENING|LIVE_MINUTES_UNAVAILABLE_OR_STALE/.test(String(x)));
 
   // Record complete state upon every fresh observation
@@ -470,6 +483,8 @@ function umCommit_M30(plan,now,messageId,eventId) {
     if(e.key==='MARKET_CRASH')plan.state.crashLevel=e.level;
     if(e.key==='STOP_BREACH') {
       plan.state.lastStopAt=now.toISOString();
+      plan.state.stopNotified=true;
+      plan.state.stopNotifiedAt=plan.state.lastStopAt;
       if(e.seq) plan.state.stopBreachSeq=e.seq;
       else if(!plan.state.stopBreachSeq) plan.state.stopBreachSeq=1;
       plan.state.stopRecovered=false;
@@ -667,7 +682,8 @@ function umIsReboundDisplay_M30(p,now) {
   if(keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:')||k==='MARKET_CRASH'||
     k.startsWith('MARKET_CRASH:')||k==='MARKET_WEAK_EARLY'||k==='OBV15_WARNING'||
     k==='SELL_PREP_WARNING'||k==='ATR_DOWN_1_0'))return false;
-  if(Number(item.stop_price)>0&&Number(r.live_price)>0&&Number(r.live_price)<=Number(item.stop_price))return false;
+  if(!umStopNotified_M30(p.state)&&Number(item.stop_price)>0&&
+     Number(r.live_price)>0&&Number(r.live_price)<=Number(item.stop_price))return false;
   const live=umLiveDirection_M30(r,now);
   return live.daily_bearish&&live.live_direction==='UP';
 }
@@ -683,7 +699,8 @@ function umSignalBrief_M30(p,now) {
   const pctVal=Number(r.live_change_pct||0)*100;
   const pctStr=hasPct?'당일 '+(pctVal>0?'+':'')+pctVal.toFixed(2)+'%':'';
   let basis='';
-  if(keys.indexOf('VWAP30_BULL_STACK_EARLY')>=0&&r.stage!=='RISK'&&!(stop>0&&price>0&&price<=stop))
+  if(keys.indexOf('VWAP30_BULL_STACK_EARLY')>=0&&r.stage!=='RISK'&&
+    !(!umStopNotified_M30(p.state)&&stop>0&&price>0&&price<=stop))
     basis='30분봉 정배열 새로 포착 · 현재가 > VWAP9 > VWAP26 · MTS 관심종목';
   else if(keys.some(k=>k==='STOP_BREACH'||k.startsWith('STOP_BREACH:'))) {
     const breachEvent=(p.events||[]).find(e=>e.key==='STOP_BREACH');
@@ -737,6 +754,11 @@ function umSignalBrief_M30(p,now) {
       !/30분봉/.test(basis))basis+=' · 30분봉 '+bar.slice(11,16)+' 참조';
   const note=umDirectionNote_M30(p,now);
   if(note&&basis.indexOf(note)<0)basis+=' · '+note;
+  const avg=Number(item.average_price||0);
+  if((item.sources||[]).indexOf('HELD')>=0&&price>0&&avg>price) {
+    basis+=' | 본전 회복까지 +'+((avg/price-1)*100).toFixed(1)+'%';
+    basis+=atr>0?' / '+((avg-price)/atr).toFixed(2)+' ATR':' / ATR 자료 없음';
+  }
   return basis;
 }
 function umSignalNews_M30(p) {
@@ -939,10 +961,12 @@ function umResumeDelivery_M30(props,store) {
   umFinishDelivery_M30(plans,message.getId(),props,new Date(pending.at),store);
   props.deleteProperty('UM2_PENDING');sh.getRange(2,5,pending.count,1).clearContent();
 }
-function umRequest_M30(item,props) {
+function umRequest_M30(item,props,priorState) {
   const url=String(props.getProperty('SIGNAL_API_URL')||'').replace(/\/$/,''),token=props.getProperty('SIGNAL_API_TOKEN');
   if(!url||!token)throw new Error('UNIFIED_API_NOT_CONFIGURED');
   const data=Object.assign({},item);delete data.refs;delete data.quantity;delete data.average_price;
+  if((item.sources||[]).indexOf('HELD')>=0&&umStopNotified_M30(priorState))
+    data.stop_notified=true;
   return {url:url+'/unified-scan',method:'post',contentType:'application/json',
     headers:{'X-StockBot-Token':token},payload:JSON.stringify(data),muteHttpExceptions:true};
 }
@@ -1159,7 +1183,8 @@ function umTick5mM30(now) {
     for(let pos=0;pos<scan.work.length;pos+=UM30.BATCH) {
       if(Date.now()-start>UM30.MAX_RUNTIME)break;
       const batch=scan.work.slice(pos,pos+UM30.BATCH);
-      const reqs=batch.map(entry=>umRequest_M30(entry.item,props));
+      const reqs=batch.map(entry=>umRequest_M30(entry.item,props,
+        mode==='ACTIVE'?umLoadState_M30(props,entry.item.ticker,stateStore):null));
       const fetched=umP0BatchFetch_M30(reqs),plans=[];
       batch.forEach(function(entry,i){
         const item=entry.item,packet=fetched.results[i]||{},response=packet.response;
@@ -1212,7 +1237,8 @@ function umTick5mM30(now) {
         return rank(a)-rank(b);
       }).slice(0,12);
       Utilities.sleep(1000);
-      const retryReqs=retryCandidates.map(c=>umRequest_M30(c.item,props));
+      const retryReqs=retryCandidates.map(c=>umRequest_M30(c.item,props,
+        mode==='ACTIVE'?umLoadState_M30(props,c.item.ticker,stateStore):null));
       const retryFetched=umP0BatchFetch_M30(retryReqs),retryPlans=[];
       const retriedSet=new Set();
       retryCandidates.forEach(function(cand,i){
