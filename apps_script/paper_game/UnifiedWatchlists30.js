@@ -345,9 +345,9 @@ function umPlan_M30(item,result,old,now) {
   });
   // Observe a NEW 30m bullish stack for every monitored source (HELD, ETF,
   // YOUTUBE), including WATCH/neutral names. This is an MTS inspection alert,
-  // not a buy approval; engine buy rules, JEV and 2-pass ▲ remain unchanged.
+  // The engine and the two-observation confirmation still govern buy alerts.
   // Only completed current-day 30m bars and existing quote data are used.
-  const m30=result.m30||{},jev=result.jev_gate||{},earlyKey='VWAP30_BULL_STACK_EARLY';
+  const m30=result.m30||{},earlyKey='VWAP30_BULL_STACK_EARLY';
   const price=Number(result.live_price),v9=Number(m30.vwap9),v26=Number(m30.vwap26);
   const currentSource=String(m30.source||'');
   const currentBar=String(m30.completed_bar||'');
@@ -380,9 +380,9 @@ function umPlan_M30(item,result,old,now) {
     state.vwap30DailyGateInitialized===true&&state.vwap30DailyQualified===false&&dailyVwap9Gate.qualified;
   const freshBullishStack=(freshCross&&dailyVwap9Gate.qualified)||dailyGateCross;
   const isBuyStage=stage==='BUY_SETUP'||stage==='BUY_CONFIRMED';
-  const buyGateOK=!isBuyStage||(result.send_allowed===true&&jev.status==='OK'&&jev.decision==='SEND'&&dailyVwap9Gate.qualified);
+  const buyGateOK=!isBuyStage||(result.send_allowed===true&&dailyVwap9Gate.qualified);
   const firstStrong=stage==='BUY_CONFIRMED'&&result.send_allowed===true&&state.count===1&&
-    jev.status==='OK'&&jev.decision==='SEND'&&stacked&&dailyVwap9Gate.qualified;
+    stacked&&dailyVwap9Gate.qualified;
   const unsafe=stage==='RISK'||(!umStopNotifiedForHolding_M30(item,state)&&item.stop_price&&price<=item.stop_price)||
     (result.reasons||[]).some(x=>/ABOVE_OVERHEAT_LIMIT|RECENT_1M_WEAKENING|LIVE_MINUTES_UNAVAILABLE_OR_STALE/.test(String(x)));
 
@@ -686,7 +686,7 @@ function umSignalBrief_M30(p,now) {
   const stop=Number(item.stop_price||0);
   const atr=Number(r.atr14||0);
   const price=Number(r.live_price||0);
-  const inverseInfo=r.jev_gate&&r.jev_gate.status==='EARLY_MARKET_INFO';
+  const inverseInfo=r.inverse_market_info===true||(r.jev_gate&&r.jev_gate.status==='EARLY_MARKET_INFO');
   const live=umLiveDirection_M30(r,now),ctx=live.ctx,officialDaily=live.official;
   const dailyPrefix=live.daily_date?'전일('+live.daily_date+') 완성 일봉':'완성 일봉';
   const hasPct=typeof r.live_change_pct==='number'&&isFinite(r.live_change_pct);

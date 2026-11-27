@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from dataclasses import replace
-
 import math
 
 import threading
@@ -39,8 +37,6 @@ import requests
 from services.unified_signal_engine import evaluate_signal, normalize_sources, BUY_STAGES
 
 from src.analysis.held_obv30_warning import analyze_obv15_sell_warning
-
-from src.analysis.jev_alert_gate import JevGateSettings, evaluate_jev_alert_gate
 
 from src.runtime.krx_calendar import KRXCalendar
 
@@ -653,7 +649,8 @@ def scan(payload, service, now=None):
 
             "as_of": now.isoformat(timespec="seconds"), "session": "KRX_SESSION",
 
-            "order_api": False, "mail_sent": False, "bar_interval_minutes": 30, "contract_version": "KRX_M30_V1"}
+            "order_api": False, "mail_sent": False, "bar_interval_minutes": 30, "contract_version": "KRX_M30_V1",
+            "jev_gate": {"status": "JEV_GATE_DISABLED", "decision": "NOT_EVALUATED"}}
 
     if payload.get("suspended") is True:
 
@@ -947,40 +944,6 @@ def scan(payload, service, now=None):
 
         "sector_etf_pct": sq.get("change_pct") if sq.get("available") else None})
 
-    # One active Jev policy for every buy, independent of discovery source.
-
-    gate = {"decision":"SEND", "reason":"RISK_BYPASS_OR_NO_BUY"}
-
-    if stage in BUY_STAGES and decision["send_allowed"] and payload.get("evaluate_jev", True):
-
-        if inverse_info_only:
-
-            # Explicitly informational, non-executable alert. JEV still guards
-
-            # confirmed entries; it must not hide market-wide early observations.
-
-            gate = {"status": "EARLY_MARKET_INFO", "decision": "SEND",
-
-                    "reason": "INDEX_INVERSE_EARLY_ONLY_NO_CONFIRMED_BUY"}
-
-        else:
-
-            cfg = replace(JevGateSettings.from_env("UNIFIED"), mode="ACTIVE")
-
-            gate = evaluate_jev_alert_gate({"source":"UNIFIED", "ticker":ticker, "name":base["name"],
-
-                "event_keys":[stage], "current_price":price, "change_pct":quote.get("change_pct"),
-
-                **daily, "context":{"market_adjustment":decision["confidence_adjustment"], "30m":m30}}, settings=cfg)
-
-            # Inability to verify the final buy filter is a hold, never a new buy.
-
-            if gate.get("status") != "OK" or gate.get("decision") != "SEND":
-
-                decision["send_allowed"] = False
-
-                reasons.append("JEV_BUY_HOLD:" + str(gate.get("reason")))
-
     stacked_m30, gt_daily_v9 = m30_bullish_qualification(price, m30, daily, now)
 
     daily_v9 = daily.get("vwap9")
@@ -1058,6 +1021,7 @@ def scan(payload, service, now=None):
 
         "live_price_source": quote.get("source"), "atr14":atr, "anchor":anchor,
 
-        "market_proxy":proxy, "sector_etf":sector, "jev_gate":gate,
+        "market_proxy":proxy, "sector_etf":sector,
+        "inverse_market_info": inverse_info_only and stage in BUY_STAGES and decision["send_allowed"],
 
         "reasons":decision["reasons"]+reasons, "kiwoom_429_retry_count":session.retry_count}
