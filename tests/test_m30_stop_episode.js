@@ -155,5 +155,14 @@ const inactiveStore=sandbox.umOpenStateStore_M30(book,testProps,[{ticker:'005930
 inactiveStore.dirty=true;
 sandbox.umFlushStateStore_M30(inactiveStore,at);
 assert.equal(stateRows.length,1,'keep successful stop state even when temporarily inactive');
+const damaged='{"day":"2026-11-27","sent":{"STOP_BREACH":{"messageId":"verified"}}';
+stateRows.push(['005930','2026-11-27',at.toISOString(),damaged]);
+const damagedStore=sandbox.umOpenStateStore_M30(book,testProps,[{ticker:item.ticker}]);
+const quarantined=sandbox.umLoadState_M30(testProps,'005930',damagedStore);
+assert.equal(quarantined.quarantined,true);
+sandbox.umPutState_M30(damagedStore,'005930',quarantined,at);
+damagedStore.dirty=true;
+sandbox.umFlushStateStore_M30(damagedStore,at);
+assert.equal(stateRows.find(row=>row[0]==='005930')[3],damaged);
 
 console.log('PASS: first stop, trading-day rollover, recross, up/down, new average, repurchase, watchlist, failed mail and durable recovery.');

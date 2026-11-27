@@ -515,9 +515,9 @@ function umOpenStateStore_M30(book,props,activeItems) {
   rows.forEach(function(r){
     const code=umCode_M30(r[0]);if(!code)return;
     const raw=String(r[3]||'').trim();if(!raw)return;
+    updatedAt[code]=r[2] instanceof Date?r[2].toISOString():String(r[2]||'');
     try{
       map[code]=JSON.parse(raw);
-      updatedAt[code]=r[2] instanceof Date?r[2].toISOString():String(r[2]||'');
     }catch(e){
       corrupt[code]=true;
       rawCorrupt[code]=raw;
@@ -579,6 +579,7 @@ function umLoadState_M30(props,ticker,store) {
 function umPutState_M30(store,ticker,state,now) {
   const code=umCode_M30(ticker)||String(ticker||'');
   if(!store||!code||!state)return;
+  if(store.corrupt[code]&&state.quarantined===true)return;
   store.map[code]=state;
   store.updatedAt[code]=now instanceof Date?now.toISOString():(state.lastResult&&state.lastResult.at)||new Date().toISOString();
   delete store.corrupt[code];
@@ -587,7 +588,8 @@ function umPutState_M30(store,ticker,state,now) {
 function umFlushStateStore_M30(store,now) {
   if(!store||!store.dirty||!store.sheet)return {saved:0};
   const fallbackStamp=(now instanceof Date?now:new Date()).toISOString();
-  const codes=Object.keys(store.map).filter(function(code){
+  const codes=Array.from(new Set(Object.keys(store.map).concat(Object.keys(store.corrupt)))).filter(function(code){
+    if(store.corrupt[code])return true;
     if(!store.map[code])return false;
     if(store.activeSet&&store.activeSet.size>0&&!store.activeSet.has(code)&&!umStopNotified_M30(store.map[code]))return false;
     return true;
@@ -595,8 +597,13 @@ function umFlushStateStore_M30(store,now) {
   const sh=store.sheet;
   if(codes.length){
     const rows=codes.map(function(code){
+      const updated=store.updatedAt[code]||fallbackStamp;
+      if(store.corrupt[code]) {
+        const raw=store.rawCorrupt[code];
+        return [code,umExtractDay_M30(raw)||'',updated,raw];
+      }
       const st=store.map[code];
-      return [code,String(st.day||''),store.updatedAt[code]||fallbackStamp,JSON.stringify(st)];
+      return [code,String(st.day||''),updated,JSON.stringify(st)];
     });
     if(typeof sh.getMaxRows==='function'&&typeof sh.insertRowsAfter==='function'&&sh.getMaxRows()<rows.length+1){
       sh.insertRowsAfter(sh.getMaxRows(),rows.length+1-sh.getMaxRows());
@@ -738,7 +745,7 @@ function umSignalBrief_M30(p,now) {
   const note=umDirectionNote_M30(p,now);
   if(note&&basis.indexOf(note)<0)basis+=' · '+note;
   const avg=umNumber_M30(item.average_price);
-  const directional=keys.some(k=>/^(BUY_SETUP|BUY_CONFIRMED|DOWN_EARLY|DOWN_CONFIRMED)$/.test(k));
+  const directional=(p.events||[]).some(e=>/^(BUY_SETUP|BUY_CONFIRMED|DOWN_EARLY|DOWN_CONFIRMED)$/.test(e.stage));
   if(directional&&umStopNotifiedForHolding_M30(item,p.state)&&
      Number.isFinite(price)&&price>0&&avg>price&&Number.isFinite(atr)&&atr>0) {
     basis+=' | 본전 회복까지 +'+((avg/price-1)*100).toFixed(1)+'% / '+((avg-price)/atr).toFixed(2)+' ATR';
