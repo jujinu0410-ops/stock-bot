@@ -14,6 +14,7 @@ OFFICIAL = {
     "vwap9": 105.0,
     "obv": 120.0,
     "obv_wma9": 110.0,
+    "obv_wma9_window_valid": True,
     "prev_high": 120.0,
 }
 

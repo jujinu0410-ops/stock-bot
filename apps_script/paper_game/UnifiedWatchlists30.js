@@ -177,14 +177,28 @@ function umDailyVwap9Gate_M30(result,now) {
   return {valid:valid,qualified:valid&&price>vwap9,price:price,vwap9:vwap9,as_of:ctx.daily_as_of||''};
 }
 function umDailyObvWma9Gate_M30(result,now) {
-  const r=result||{},tech=r.technical||{},ctx=umDirectionContext_M30(r,now);
-  const hasObv=tech.obv!==''&&tech.obv!=null;
-  const hasWma9=tech.obv_wma9!==''&&tech.obv_wma9!=null;
-  const obv=hasObv?Number(tech.obv):NaN;
-  const wma9=hasWma9?Number(tech.obv_wma9):NaN;
-  const valid=ctx.daily_basis==='COMPLETED_DAILY'&&hasObv&&hasWma9&&isFinite(obv)&&isFinite(wma9);
-  return {valid:valid,qualified:valid&&obv>wma9,obv:valid?obv:null,
-    wma9:valid?wma9:null,as_of:ctx.daily_as_of||''};
+  const r=result||{},tech=r.technical||{},gate=r.daily_obv_wma9_gate||{},day=umDay_M30(now);
+  const expected=gate.expected_as_of;
+  // Python resolves the KRX calendar and vets the nine completed sessions.
+  const calendarValid=gate.session_date===day&&typeof expected==='string'&&
+    /^(\d{4}-\d{2}-\d{2}) 15:30:00$/.test(expected)&&expected.slice(0,10)<day&&
+    Number.isFinite(umQuoteTime_M30(expected.replace(' ','T')+'+09:00'));
+  const numeric=Number.isFinite(gate.obv)&&Number.isFinite(gate.wma9);
+  const gold=numeric&&gate.obv>gate.wma9;
+  const valid=calendarValid&&tech.basis==='COMPLETED_DAILY'&&tech.as_of===expected&&
+    gate.as_of===expected&&gate.valid===true&&numeric&&gate.qualified===gold;
+  return {valid:valid,qualified:valid&&gold,obv:valid?gate.obv:null,wma9:valid?gate.wma9:null,
+    as_of:valid?expected:'',previous_session:calendarValid?expected.slice(0,10):''};
+}
+function umCarryM30Stack_M30(old,state,previousSession) {
+  if(!old||old.day!==previousSession||!old.vwap30Source||old.vwap30StackValid!==true||
+     old.vwap30Stacked!==true||old.vwap30ObvGateValid!==true||
+     String(old.vwap30Bar||'').slice(0,10)!==previousSession)return;
+  // Keep verified evidence only. Daily slot counts and sent keys still reset.
+  ['vwap30StackValid','vwap30Stacked','vwap30Source','vwap30Bar','vwap30Price','vwap30Vwap9',
+    'vwap30Vwap26','vwap30Watermark','vwap30DailyGateInitialized','vwap30DailyGateValid',
+    'vwap30DailyQualified','vwap30ObvGateInitialized','vwap30ObvGateValid',
+    'vwap30ObvQualified','vwap30ObvAsOf'].forEach(key=>{state[key]=old[key];});
 }
 function umLiveDirection_M30(result,now) {
   const r=result||{},ctx=umDirectionContext_M30(r,now);
@@ -258,7 +272,8 @@ function umStopNotifiedForHolding_M30(item,old) {
     umStopNotified_M30(old);
 }
 function umHoldingAverage_M30(value) {
-  return typeof value==='number'||typeof value==='string'?umNumber_M30(value):null;
+  if(typeof value==='number')return umNumber_M30(value);
+  return typeof value==='string'&&/^\d+(?:\.\d+)?$/.test(value.trim())?umNumber_M30(value):null;
 }
 function umTrackBreakeven_M30(item,result,state,now,observedAt,candidates) {
   if((item.holding_episode||'')!==(state.holdingEpisode||''))return;
@@ -278,6 +293,8 @@ function umTrackBreakeven_M30(item,result,state,now,observedAt,candidates) {
      !Number.isFinite(quote.price)||quote.price<=0||!Number.isFinite(stamp)||
      age<0||age>180000||umDay_M30(new Date(stamp))!==umDay_M30(now)||
      (tracking.seenAt!=null&&stamp<=tracking.seenAt))return;
+  const marketTime=Utilities.formatDate(new Date(stamp),UM30.TZ,'HH:mm');
+  if(marketTime<'09:00'||marketTime>'15:30')return;
   tracking.seenAt=stamp;
   if(quote.price<average){tracking.belowAt=stamp;return;}
   if(acknowledged&&tracking.belowAt!=null){
@@ -332,6 +349,7 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
   state.lastResult.directionContext=umDirectionContext_M30(result,now);
   const dailyVwap9Gate=umDailyVwap9Gate_M30(result,now);
   const dailyObvWma9Gate=umDailyObvWma9Gate_M30(result,now);
+  if(old&&old.day!==day)umCarryM30Stack_M30(old,state,dailyObvWma9Gate.previous_session);
   state.lastResult.dailyVwap9Gate=dailyVwap9Gate;
   state.lastResult.dailyObvWma9Gate=dailyObvWma9Gate;
   const candidates=[];
@@ -369,12 +387,13 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
        result.live_price_source==='KIWOOM_KA10001'&&
        typeof result.live_change_pct==='number'&&
        isFinite(result.live_change_pct)&&result.live_change_pct>0) {
-      const liveCtx=umLiveDirection_M30(result,now);
+      const liveCtx=umLiveDirection_M30(result,observedAt);
       if(liveCtx.official) {
         const hasRisk=result.stage==='RISK'||
           (!umStopNotifiedForHolding_M30(item,state)&&Number(item.stop_price)>0&&
             Number(result.live_price)>0&&Number(result.live_price)<=Number(item.stop_price))||
-          Boolean(state.sent&&(state.sent.OBV15_WARNING||state.sent.SELL_PREP_WARNING||state.sent.VWAP30_BULL_STACK_EARLY));
+          Boolean(state.sent&&(state.sent.STOP_BREACH||state.sent.OBV15_WARNING||
+            state.sent.SELL_PREP_WARNING||state.sent.VWAP30_BULL_STACK_EARLY));
         const confirmedRebound=e.key==='DOWN_CONFIRMED'&&liveCtx.daily_bearish&&liveCtx.m30_direction==='UP'&&!hasRisk;
         if(!confirmedRebound)return;
         if(!dailyObvWma9Gate.qualified) {
@@ -403,8 +422,9 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
   const price=Number(result.live_price),v9=Number(m30.vwap9),v26=Number(m30.vwap26);
   const currentSource=String(m30.source||'');
   const currentBar=String(m30.completed_bar||'');
-  const fresh=m30.available===true&&
-    currentBar.slice(0,10)===day&&
+  const observedStamp=Utilities.formatDate(observedAt,UM30.TZ,'yyyy-MM-dd HH:mm:ss');
+  const verifiedBar=umDirectionContext_M30(result,observedAt).completed_bar;
+  const fresh=Boolean(verifiedBar)&&currentBar===verifiedBar&&currentBar.slice(0,10)===day&&
     String(result.live_price_source||'')==='KIWOOM_KA10001'&&
     isFinite(price)&&price>0&&isFinite(v9)&&v9>0&&isFinite(v26)&&v26>0;
   const stacked=fresh&&price>v9&&v9>v26&&m30.gold===true;
@@ -435,9 +455,14 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
     dailyObvWma9Gate.qualified&&
     (state.vwap30ObvGateValid!==true||state.vwap30ObvAsOf!==dailyObvWma9Gate.as_of)&&
     !isDataCorrectionCross;
+  if(dailyObvGateCross)state.vwap30ObvTransitionAsOf=dailyObvWma9Gate.as_of;
+  if(!fresh||!stacked||!dailyObvWma9Gate.qualified||!comparable)
+    delete state.vwap30ObvTransitionAsOf;
+  const obvTransitionReady=Boolean(state.vwap30ObvTransitionAsOf)&&
+    state.vwap30ObvTransitionAsOf===dailyObvWma9Gate.as_of&&dailyVwap9Gate.qualified;
   const freshBullishStack=(freshCross&&dailyVwap9Gate.qualified&&dailyObvWma9Gate.qualified)||
     (dailyGateCross&&dailyObvWma9Gate.qualified)||
-    (dailyObvGateCross&&dailyVwap9Gate.qualified);
+    obvTransitionReady;
   const isBuyStage=stage==='BUY_SETUP'||stage==='BUY_CONFIRMED';
   const buyGateOK=!isBuyStage||(result.send_allowed===true&&
     dailyVwap9Gate.qualified&&dailyObvWma9Gate.qualified);
@@ -464,6 +489,10 @@ function umPlan_M30(item,result,old,now,observedAt=now) {
     state.vwap30ObvQualified=dailyObvWma9Gate.qualified;
     state.vwap30ObvAsOf=dailyObvWma9Gate.as_of;
     state.vwap30LastChecked=now.toISOString();
+  } else if(observedStamp.slice(11,16)>='09:30') {
+    // Before the first completed bar, retain yesterday's verified evidence.
+    // Once a current bar is due, missing or stale data breaks continuity.
+    state.vwap30StackValid=false;
   }
 
   // Diagnostic confirmation requires all three factors:
@@ -750,10 +779,10 @@ function umSignalGlyph_M30(stage) {
 function umDisplayStage_M30(p) {
   // The underlying engine can be BUY_CONFIRMED while the emitted event is
   // deliberately only an early △ observation awaiting the next evaluation.
-  if(p.events&&p.events.length===1){
-    if(p.events[0].key==='VWAP30_BULL_STACK_EARLY')return 'BUY_SETUP';
-    if(p.events[0].key==='BREAKEVEN_RECOVERED')return 'BREAKEVEN_RECOVERED';
-  }
+  const keys=(p.events||[]).map(e=>e.key);
+  if(keys.includes('VWAP30_BULL_STACK_EARLY')&&
+     keys.every(k=>k==='VWAP30_BULL_STACK_EARLY'||k==='BREAKEVEN_RECOVERED'))return 'BUY_SETUP';
+  if(keys.length===1&&keys[0]==='BREAKEVEN_RECOVERED')return 'BREAKEVEN_RECOVERED';
   return p.result.stage;
 }
 function umIsReboundDisplay_M30(p,now) {
@@ -833,11 +862,11 @@ function umSignalBrief_M30(p,now) {
   if(note&&basis.indexOf(note)<0)basis+=' · '+note;
   const avg=umHoldingAverage_M30(item.average_price);
   const directional=(p.events||[]).some(e=>/^(BUY_SETUP|BUY_CONFIRMED|DOWN_EARLY|DOWN_CONFIRMED)$/.test(e.stage));
-  if(directional&&umStopNotifiedForHolding_M30(item,p.state)&&
+  const recovery=(p.events||[]).find(e=>e.key==='BREAKEVEN_RECOVERED');
+  if(!recovery&&directional&&umStopNotifiedForHolding_M30(item,p.state)&&
      Number.isFinite(price)&&price>0&&avg>price&&Number.isFinite(atr)&&atr>0) {
     basis+=' | 본전 회복까지 +'+((avg/price-1)*100).toFixed(1)+'% / '+((avg-price)/atr).toFixed(2)+' ATR';
   }
-  const recovery=(p.events||[]).find(e=>e.key==='BREAKEVEN_RECOVERED');
   if(recovery){
     const detail='손절경고 후 본전 회복 · 평단 '+recovery.average.toLocaleString('ko-KR')+
       '원 · 확인가 '+recovery.price.toLocaleString('ko-KR')+'원';

@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 from services import unified_scan_m30 as scan_module
@@ -29,7 +30,7 @@ class UnifiedScanBatchVwap9Tests(unittest.TestCase):
             {"ticker": code, "status": 200, "result": signal} for code, signal in signals.items()
         ])
 
-    def test_batch_transports_official_daily_vwap9_to_apps_script(self):
+    def test_batch_transports_official_daily_obv_and_recovery_to_apps_script(self):
         scan_result = {
             "ok": True,
             "engine_version": "three-lists-v3-m30",
@@ -50,12 +51,18 @@ class UnifiedScanBatchVwap9Tests(unittest.TestCase):
                 "basis": "COMPLETED_DAILY",
                 "as_of": "2026-11-09 15:30:00",
                 "vwap9": 105.0,
+                "obv": 110.0,
+                "obv_wma9": 100.0,
+                "obv_wma9_window_valid": True,
                 "regime": "BULL_CONFIRMED",
                 "stage": "WATCH",
                 "provisional": {"available": True, "basis": "INCOMPLETE_DAILY_NOT_CONFIRMED"},
             },
             "m30": {"available": True, "gold": True, "vwap9": 108.0, "vwap26": 100.0},
+            "breakeven_observation": {"as_of": "2026-11-10T13:34:00+09:00", "price": 110.0},
         }
+        now = datetime.fromisoformat("2026-11-10T13:35:00+09:00")
+        scan_result["daily_obv_wma9_gate"] = scan_module.daily_obv_wma9_status(scan_result["technical"], now)
         with patch.object(service_module, "_secret_ok", return_value=True), \
              patch.object(scan_module, "scan", return_value=scan_result):
             response = service_module.app.test_client().post(
@@ -69,6 +76,9 @@ class UnifiedScanBatchVwap9Tests(unittest.TestCase):
         self.assertEqual(wire["technical"]["basis"], "COMPLETED_DAILY")
         self.assertEqual(wire["technical"]["as_of"], "2026-11-09 15:30:00")
         self.assertEqual(wire["technical"]["vwap9"], 105.0)
+        self.assertTrue(wire["daily_obv_wma9_gate"]["qualified"])
+        self.assertEqual(wire["daily_obv_wma9_gate"], scan_result["daily_obv_wma9_gate"])
+        self.assertEqual(wire["breakeven_observation"], scan_result["breakeven_observation"])
         self.assertEqual(wire["m30"]["vwap9"], 108.0)
 
 

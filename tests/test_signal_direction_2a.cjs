@@ -6,7 +6,9 @@ function context(folder){const local=path.join(B,folder,'UnifiedWatchlists30.js'
 // Compare against the exact production Apps Script clone captured before this gate change.
 const updated=context('apps'),before=context('apps-before'),now=new Date('2026-11-06T13:35:00+09:00');
 const clone=x=>JSON.parse(JSON.stringify(x));
-function result(regime='BEAR_CONFIRMED',dir='RISING',extra={}) {return Object.assign({ok:true,engine_version:'three-lists-v3-m30',stage:'BUY_SETUP',live_price:110,live_change_pct:-.03,atr14:5,send_allowed:false,events:[],reasons:[],session:'KRX_SESSION',technical:{basis:'COMPLETED_DAILY',as_of:'2026-11-05 15:30:00',vwap9:100,prev_high:105,regime,stage:'BUY_SETUP',provisional:{available:true,basis:'INCOMPLETE_DAILY_NOT_CONFIRMED',regime:'BULL_CONFIRMED'}},live_price_source:'KIWOOM_KA10001',m30:{available:true,gold:true,vwap9:105,vwap26:100,vwap9_dir:dir,completed_bar:'2026-11-06 13:30:00',source:'KIWOOM_15M_BAR_START',watermark:'2026-11-06 13:35:00'}},extra);}
+const obvGate={session_date:'2026-11-06',expected_as_of:'2026-11-05 15:30:00',
+  as_of:'2026-11-05 15:30:00',valid:true,qualified:true,obv:100,wma9:90};
+function result(regime='BEAR_CONFIRMED',dir='RISING',extra={}) {return Object.assign({ok:true,engine_version:'three-lists-v3-m30',stage:'BUY_SETUP',live_price:110,live_change_pct:-.03,atr14:5,send_allowed:false,events:[],reasons:[],session:'KRX_SESSION',technical:{basis:'COMPLETED_DAILY',as_of:'2026-11-05 15:30:00',vwap9:100,prev_high:105,regime,stage:'BUY_SETUP',provisional:{available:true,basis:'INCOMPLETE_DAILY_NOT_CONFIRMED',regime:'BULL_CONFIRMED'}},daily_obv_wma9_gate:{...obvGate},live_price_source:'KIWOOM_KA10001',m30:{available:true,gold:true,vwap9:105,vwap26:100,vwap9_dir:dir,completed_bar:'2026-11-06 13:30:00',source:'KIWOOM_15M_BAR_START',watermark:'2026-11-06 13:35:00'}},extra);}
 function call(name,...args){return clone(updated[name](...args));}
 function plan(r,events=[]){return {item:{ticker:'000990',name:'DB하이텍',sources:['HELD'],stop_price:90},result:r,events};}
 let tests=0,failures=0,trials=0;const outcomes=[];
@@ -108,6 +110,8 @@ test('all stages, regimes, slopes and quote signs preserve existing decisions',(
     const a=clone(before.umPlan_M30(clone(item),clone(r),clone(old),now)),b=clone(updated.umPlan_M30(clone(item),clone(r),clone(old),now));
     delete a.state.lastResult.directionContext;delete b.state.lastResult.directionContext;
     delete b.state.lastResult.dailyVwap9Gate;
+    delete b.state.lastResult.dailyObvWma9Gate;
+    for(const k of ['vwap30ObvGateInitialized','vwap30ObvGateValid','vwap30ObvQualified','vwap30ObvAsOf'])delete b.state[k];
     delete b.state.vwap30DailyGateInitialized;
     delete b.state.vwap30DailyGateValid;
     delete b.state.vwap30DailyQualified;
@@ -115,9 +119,10 @@ test('all stages, regimes, slopes and quote signs preserve existing decisions',(
     delete a.state.simBullConfirmed;delete b.state.simBullConfirmed;
     a.result.reasons=a.result.reasons.filter(x=>!String(x).startsWith('SIM_BULL_CONFIRMED:'));
     b.result.reasons=b.result.reasons.filter(x=>!String(x).startsWith('SIM_BULL_CONFIRMED:'));
+    b.state.lastResult.reasons=b.state.lastResult.reasons.filter(x=>!String(x).startsWith('SIM_BULL_CONFIRMED:'));
     a.events.forEach(e=>{if(e.key==='VWAP30_BULL_STACK_EARLY')e.reason='__BULLISH_GATE_REASON__';});
     b.events.forEach(e=>{if(e.key==='VWAP30_BULL_STACK_EARLY')e.reason='__BULLISH_GATE_REASON__';});
-    assert.deepEqual(b,a);trials++;
+    assert.deepStrictEqual(b,a);trials++;
   }
 });
 function observe(stage, slot, old, extra={}, event={key:stage,stage,level:1}) {
