@@ -755,7 +755,7 @@ function umSignalBrief_M30(p,now) {
   const note=umDirectionNote_M30(p,now);
   if(note&&basis.indexOf(note)<0)basis+=' · '+note;
   const avg=Number(item.average_price||0);
-  if((item.sources||[]).indexOf('HELD')>=0&&price>0&&avg>price) {
+  if((item.sources||[]).indexOf('HELD')>=0&&umStopNotified_M30(p.state)&&price>0&&avg>price) {
     basis+=' | 본전 회복까지 +'+((avg/price-1)*100).toFixed(1)+'%';
     basis+=atr>0?' / '+((avg-price)/atr).toFixed(2)+' ATR':' / ATR 자료 없음';
   }
