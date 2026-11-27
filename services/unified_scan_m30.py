@@ -30,6 +30,8 @@ from zoneinfo import ZoneInfo
 
 
 
+import numpy as np
+
 import pandas as pd
 
 import requests
@@ -147,9 +149,49 @@ def daily_vwap9_gate(price, daily, now):
     return stamp.strftime("%H:%M:%S") == "15:30:00" and stamp.date() < now.date() and float(price) > vwap9
 
 
+def _finite_value(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def daily_obv_wma9_gate(daily, now):
+    """Require OBV above its 9-session WMA on the latest completed daily bar."""
+    if not isinstance(daily, dict):
+        return False
+    if daily.get("basis") != "COMPLETED_DAILY":
+        return False
+    as_of = str(daily.get("as_of") or "")
+    try:
+        stamp = datetime.strptime(as_of, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return False
+    obv = _finite_value(daily.get("obv"))
+    obv_wma9 = _finite_value(daily.get("obv_wma9"))
+    return (
+        stamp.strftime("%H:%M:%S") == "15:30:00"
+        and stamp.date() < now.date()
+        and obv is not None
+        and obv_wma9 is not None
+        and obv > obv_wma9
+    )
+
+
 def apply_daily_vwap9_gate(stage, price, daily, now):
     """Fail closed for all bullish stages; preserve WATCH and downside/risk stages."""
     passed = daily_vwap9_gate(price, daily, now)
+    if stage in BUY_STAGES and not passed:
+        return "WATCH", False
+    return stage, passed
+
+
+def apply_daily_obv_wma9_gate(stage, daily, now):
+    """Fail closed for all bullish stages unless completed-daily OBV is above WMA9."""
+    passed = daily_obv_wma9_gate(daily, now)
     if stage in BUY_STAGES and not passed:
         return "WATCH", False
     return stage, passed
@@ -159,7 +201,11 @@ def m30_bullish_qualification(price, m30, daily, now):
     p, v9, v26 = number(price), number((m30 or {}).get("vwap9")), number((m30 or {}).get("vwap26"))
     stacked = bool((m30 or {}).get("available") is True and (m30 or {}).get("gold") is True
                    and p and v9 and v26 and p > v9 > v26)
-    return stacked, bool(stacked and daily_vwap9_gate(p, daily, now))
+    return (
+        stacked,
+        bool(stacked and daily_vwap9_gate(p, daily, now)),
+        bool(stacked and daily_obv_wma9_gate(daily, now)),
+    )
 
 
 def previous_day(now):
@@ -268,7 +314,14 @@ def indicators(df):
 
     obv = vol.where(delta > 0, (-vol).where(delta < 0, 0)).cumsum()
 
+    # Keep the legacy SMA9 fields used by existing regime classification.
+    # The new entry gate uses the MTS-matched 9-session WMA separately.
     o9 = obv.rolling(9).mean()
+    wma_weights = np.arange(1, 10, dtype=float)
+    obv_wma9 = obv.rolling(9).apply(
+        lambda window: float(np.dot(window, wma_weights) / wma_weights.sum()),
+        raw=True,
+    )
 
     def direction(series, scale, threshold):
 
@@ -284,7 +337,8 @@ def indicators(df):
 
               "vwap9_slope": float(slope9), "vwap26_slope": float(slope26),
 
-              "obv": float(obv.iloc[-1]), "obv9": float(o9.iloc[-1])}
+              "obv": float(obv.iloc[-1]), "obv9": float(o9.iloc[-1]),
+              "obv_wma9": float(obv_wma9.iloc[-1])}
 
     if not all(math.isfinite(x) for x in result.values()):
 
@@ -300,7 +354,8 @@ def indicators(df):
 
                   vwap_rel="GOLD" if v9.iloc[-1] > v26.iloc[-1] else "DEAD",
 
-                  obv_rel="GOLD" if obv.iloc[-1] > o9.iloc[-1] else "DEAD")
+                  obv_rel="GOLD" if obv.iloc[-1] > o9.iloc[-1] else "DEAD",
+                  obv_wma9_rel="GOLD" if obv.iloc[-1] > obv_wma9.iloc[-1] else "DEAD")
 
     a, b, c, d = [result[k] for k in ("vwap9_dir", "vwap26_dir", "obv_dir", "obv9_dir")]
 
@@ -893,13 +948,17 @@ def scan(payload, service, now=None):
 
             stage = "BUY_SETUP"
 
-    # Final source-side bullish filter, after the inverse early-observation
-    # exception: no BUY_SETUP/BUY_CONFIRMED may pass below or without the
-    # latest completed daily VWAP9. Downside and risk events are untouched.
+    # Final source-side bullish filters, after the inverse early-observation
+    # exception: every BUY_SETUP/BUY_CONFIRMED requires both completed-daily
+    # price > VWAP9 and OBV > WMA9. Downside and risk events are untouched.
     pre_gate_stage = stage
     stage, daily_vwap9_passed = apply_daily_vwap9_gate(stage, price, daily, now)
-    if pre_gate_stage in BUY_STAGES and not daily_vwap9_passed:
-        reasons.append("DAILY_VWAP9_GATE_CLOSED")
+    stage, daily_obv_wma9_passed = apply_daily_obv_wma9_gate(stage, daily, now)
+    if pre_gate_stage in BUY_STAGES:
+        if not daily_vwap9_passed:
+            reasons.append("DAILY_VWAP9_GATE_CLOSED")
+        if not daily_obv_wma9_passed:
+            reasons.append("DAILY_OBV9_WMA_GATE_CLOSED")
 
     if stage != "WATCH" and price:
 
@@ -981,17 +1040,21 @@ def scan(payload, service, now=None):
 
                 reasons.append("JEV_BUY_HOLD:" + str(gate.get("reason")))
 
-    stacked_m30, gt_daily_v9 = m30_bullish_qualification(price, m30, daily, now)
+    stacked_m30, m30_daily_vwap9_qualified, m30_daily_obv_wma9_qualified = (
+        m30_bullish_qualification(price, m30, daily, now)
+    )
 
     daily_v9 = daily.get("vwap9")
+    daily_obv = daily.get("obv")
+    daily_obv_wma9 = daily.get("obv_wma9")
 
     prev_high_val = daily.get("prev_high")
 
     gt_prev_high = bool(price and prev_high_val and price > prev_high_val)
 
-    # Previous-day high is retained as context only; the user's required
-    # bullish confirmation is M30 alignment + current price > daily VWAP9.
-    bull_confirmed_sim = bool(stacked_m30 and gt_daily_v9)
+    # A simulated bullish confirmation now requires M30 alignment and both
+    # completed-daily gates: price above VWAP9 and OBV above WMA9.
+    bull_confirmed_sim = bool(stacked_m30 and daily_vwap9_passed and daily_obv_wma9_passed)
 
     sim_data = {
 
@@ -999,10 +1062,13 @@ def scan(payload, service, now=None):
 
         "stacked_m30": stacked_m30,
 
-        "price_gt_daily_vwap9": gt_daily_v9,
+        "price_gt_daily_vwap9": m30_daily_vwap9_qualified,
 
-        "daily_vwap9_gate": {"qualified": gt_daily_v9, "basis": daily.get("basis"),
+        "daily_vwap9_gate": {"qualified": daily_vwap9_passed, "basis": daily.get("basis"),
                              "as_of": daily.get("as_of")},
+        "daily_obv_wma9_gate": {"qualified": daily_obv_wma9_passed, "basis": daily.get("basis"),
+                                "as_of": daily.get("as_of"), "obv": daily_obv,
+                                "obv_wma9": daily_obv_wma9},
 
         "price_gt_prev_high": gt_prev_high,
 

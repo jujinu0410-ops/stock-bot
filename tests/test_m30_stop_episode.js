@@ -20,7 +20,7 @@ const sandbox = {
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox, {filename:'UnifiedWatchlists30.js'});
 sandbox.umDirectionContext_M30 = () => ({
-  relation:'DOWN_DOWN',daily_direction:'DOWN',m30_direction:'DOWN',caption:'하락 추세',completed_bar:''
+  relation:'DOWN_DOWN',daily_direction:'DOWN',m30_direction:'DOWN',caption:'하락 추세',completed_bar:'',daily_basis:'COMPLETED_DAILY',daily_as_of:'2026-11-26 15:30:00'
 });
 sandbox.umDailyVwap9Gate_M30 = () => ({qualified:true,valid:true});
 sandbox.umLiveDirection_M30 = () => ({
@@ -88,7 +88,8 @@ const more = sandbox.umPlan_M30(increased,down,d2.state,at);
 assert.match(sandbox.umSignalBrief_M30(more,at),/본전 회복까지 \+7\.4% \/ 0\.82 ATR/);
 assert.equal(sandbox.umPlan_M30(increased,stop,more.state,at).events.length,0);
 const up = {...down,stage:'BUY_SETUP',events:[{key:'BUY_SETUP',stage:'BUY_SETUP'}],
-  jev_gate:{status:'OK',decision:'SEND'}};
+  jev_gate:{status:'OK',decision:'SEND'},
+  technical:{basis:'COMPLETED_DAILY',as_of:'2026-11-26 15:30:00',obv:100,obv_wma9:90}};
 const upAt=new Date(at.getTime()+300000);
 const u1 = sandbox.umPlan_M30(item,up,more.state,upAt);
 const u2 = sandbox.umPlan_M30(item,up,u1.state,new Date(at.getTime()+600000));
